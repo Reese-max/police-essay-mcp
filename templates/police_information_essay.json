@@ -1,0 +1,19 @@
+{
+  "id": "police_information_essay",
+  "name": "警察資訊三等申論模式",
+  "description": "A4、2頁、每頁22行的警察資訊申論練習格紙。行寬以顯示欄位計算，中文字寬度為2、ASCII字元寬度為1。",
+  "paperSize": "A4",
+  "pages": 2,
+  "linesPerPage": 22,
+  "columns": 42,
+  "overflowPolicy": "compress",
+  "fontFamily": "Microsoft JhengHei",
+  "fontSizePt": 14,
+  "lineHeightPt": 28,
+  "marginsMm": {
+    "top": 16,
+    "right": 15,
+    "bottom": 16,
+    "left": 15
+  }
+}

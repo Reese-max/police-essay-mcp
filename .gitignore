@@ -1,0 +1,8 @@
+node_modules/
+dist/
+exports/*.docx
+exports/*.pdf
+exports/*.txt
+data/answers/*.json
+tmp/
+*.log

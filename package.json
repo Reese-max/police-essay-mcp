@@ -1,0 +1,30 @@
+{
+  "name": "police-essay-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP server for fixed-layout Taiwanese civil-service essay answer sheets.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/src/index.js",
+    "test": "tsx --test tests/**/*.test.ts",
+    "check": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "docx": "^9.7.1",
+    "fontkit": "^2.0.4",
+    "pdfkit": "^0.20.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pdfkit": "^0.13.9",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
