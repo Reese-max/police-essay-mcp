@@ -51,8 +51,9 @@ npm test
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 建立文件，或 `write_answer` 寫入 sections。
 3. `read_answer` / `check_layout` 讀取真實行數。
-4. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
-5. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
+4. 只調整格式時使用 `format_section`，不必重新送出文字。
+5. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
+6. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
 
 ## 正式格式
 
@@ -63,7 +64,6 @@ npm test
   "id": "body",
   "heading": "防制措施",
   "headingStyle": { "numbered": true, "bold": true },
-  "text": "第一段\n第二段",
   "paragraphs": [
     {
       "text": "第一段",
@@ -77,6 +77,20 @@ npm test
 }
 ```
 
+`text` 與 `paragraphs` 不必重複提供：可以只傳 `text`，也可以只傳至少一個項目的 `paragraphs`。若要在文字已存在後單獨調整格式，呼叫 `format_section`，例如只把第二段改成粗斜體：
+
+```json
+{
+  "answerId": "ans_…",
+  "sectionId": "body",
+  "paragraphFormats": [
+    { "index": 1, "format": { "bold": true, "italic": true } }
+  ],
+  "expectedVersion": 1
+}
+```
+
 可用對齊值為 `left`、`right`、`justify`、`distributed`。`spaceBeforeLines` 與 `spaceAfterLines` 會實際佔用答題格紙行數；Word 會輸出正式段落屬性，PDF 與 TXT 會依相同欄位模型定位文字。
 
 完整 v1 契約與排版規則請看 [SPECIFICATION.md](SPECIFICATION.md)。
+

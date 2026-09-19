@@ -8,13 +8,17 @@ import {
   createAnswerDocument,
   assertExpectedVersion,
   normalizeSection,
+  paragraphFormatPatchSchema,
   replaceSectionContent,
+  updateSectionFormatting,
   type AnswerDocument,
   type AnswerSection,
   type AnswerSectionInput,
   type AnswerSnapshot,
   type AnswerTemplate,
   layoutReportSchema,
+  headingStyleInputSchema,
+  paragraphFormatInputSchema,
   templateSchema,
 } from "./domain.js";
 import { exportDocx, exportPdf, exportText } from "./exporters.js";
@@ -129,9 +133,10 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
           "1. load_exam_paper：讀模板或既有答案。",
           "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。",
           "3. read_answer / check_layout：查看每頁行數、剩餘行數與溢出。",
-          "4. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
-          "5. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "6. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
+          "5. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
+          "6. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
+          "7. fits=true 後才呼叫 export_docx 或 export_pdf。",
         ].join("\n"),
       }],
     }),
@@ -337,6 +342,56 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       return {
         structuredContent: { section, answer: current.answer, layout: current.layout },
         content: textContent(`已修改「${section.heading ?? section.id}」；${summarizeLayout(current.layout)}`),
+      };
+    },
+  );
+
+  server.registerTool(
+    "format_section",
+    {
+      title: "格式化申論區塊",
+      description: "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        sectionId: z.string().min(1),
+        paragraphFormat: paragraphFormatInputSchema.optional(),
+        headingStyle: headingStyleInputSchema.optional(),
+        paragraphFormats: z.array(paragraphFormatPatchSchema).max(1_000).optional(),
+        expectedVersion: expectedVersionSchema,
+      },
+      outputSchema: sectionOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "更新段落格式並重排…",
+        "openai/toolInvocation/invoked": "段落格式已更新並重新計算行數。",
+      },
+    },
+    async ({ answerId, sectionId, paragraphFormat, headingStyle, paragraphFormats, expectedVersion }) => {
+      if (paragraphFormat === undefined && headingStyle === undefined && (paragraphFormats?.length ?? 0) === 0) {
+        throw new Error("至少提供 paragraphFormat、headingStyle 或一個 paragraphFormats 項目。");
+      }
+      const answer = await store.getAnswer(answerId);
+      assertExpectedVersion(answer, expectedVersion);
+      const target = answer.sections.find((section) => section.id === sectionId);
+      if (!target) throw new Error(`找不到 sectionId ${sectionId}。`);
+      const updatedSections = answer.sections.map((section) =>
+        section.id === sectionId
+          ? updateSectionFormatting(section, { paragraphFormat, headingStyle, paragraphFormats })
+          : section,
+      );
+      const updated = answerDocumentSchema.parse({
+        ...answer,
+        sections: updatedSections,
+        version: answer.version + 1,
+        updatedAt: new Date().toISOString(),
+      });
+      await store.saveAnswer(updated);
+      const current = await loadSnapshot(store, answerId);
+      const section = current.answer.sections.find((item) => item.id === sectionId);
+      if (!section) throw new Error("格式化後找不到 section。");
+      return {
+        structuredContent: { section, answer: current.answer, layout: current.layout },
+        content: textContent(`已更新「${section.heading ?? section.id}」的格式；${summarizeLayout(current.layout)}`),
       };
     },
   );
@@ -585,3 +640,4 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
 
   return server;
 }
+

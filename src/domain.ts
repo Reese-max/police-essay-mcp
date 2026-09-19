@@ -72,10 +72,10 @@ export const templateSchema = z.object({
 
 export type AnswerTemplate = z.infer<typeof templateSchema>;
 
-export const answerSectionInputSchema = z.object({
+const answerSectionInputBaseSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/).optional(),
   heading: z.string().max(200).optional(),
-  text: z.string().max(100_000),
+  text: z.string().max(100_000).optional(),
   paragraphs: z.array(answerParagraphSchema).max(1_000).optional(),
   paragraphFormat: paragraphFormatInputSchema.optional(),
   headingStyle: headingStyleInputSchema.optional(),
@@ -84,13 +84,26 @@ export const answerSectionInputSchema = z.object({
   compressible: z.number().int().min(0).max(5).default(2),
 });
 
-export const answerSectionSchema = answerSectionInputSchema.extend({
+export const answerSectionInputSchema = answerSectionInputBaseSchema.refine(
+  (input) => input.text !== undefined || (input.paragraphs?.length ?? 0) > 0,
+  { message: "必須提供 text，或提供至少一個 paragraphs 項目。" },
+);
+
+export const answerSectionSchema = answerSectionInputBaseSchema.extend({
+  text: z.string().max(100_000),
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/),
   order: z.number().int().nonnegative(),
 });
 
 export type AnswerSection = z.infer<typeof answerSectionSchema>;
 export type AnswerSectionInput = z.input<typeof answerSectionInputSchema>;
+
+export const paragraphFormatPatchSchema = z.object({
+  index: z.number().int().nonnegative(),
+  format: paragraphFormatInputSchema,
+});
+
+export type ParagraphFormatPatch = z.input<typeof paragraphFormatPatchSchema>;
 
 export const answerDocumentSchema = z.object({
   id: z.string().regex(/^ans_[A-Za-z0-9-]+$/),
@@ -214,9 +227,10 @@ export function normalizeSection(
   input: AnswerSectionInput,
   order: number,
 ): AnswerSection {
+  const sourceText = input.text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
   const sourceParagraphs = input.paragraphs?.length
     ? input.paragraphs
-    : input.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraphInput => ({ text }));
+    : sourceText.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraphInput => ({ text }));
   const paragraphs = sourceParagraphs.flatMap((paragraph) =>
     paragraph.text
       .replaceAll("\r\n", "\n")
@@ -254,6 +268,55 @@ export function replaceSectionContent(
       paragraphs: input.paragraphs,
       paragraphFormat: section.paragraphFormat,
       headingStyle: section.headingStyle,
+      required: section.required,
+      priority: section.priority,
+      compressible: section.compressible,
+    },
+    section.order,
+  );
+}
+
+export function updateSectionFormatting(
+  section: AnswerSection,
+  input: {
+    paragraphFormat?: ParagraphFormatInput;
+    headingStyle?: HeadingStyleInput;
+    paragraphFormats?: ParagraphFormatPatch[];
+  },
+): AnswerSection {
+  const sourceParagraphs = section.paragraphs?.length
+    ? section.paragraphs
+    : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text }));
+  const overrides = new Map<number, ParagraphFormatInput>();
+  for (const patch of input.paragraphFormats ?? []) {
+    if (patch.index >= sourceParagraphs.length) {
+      throw new Error(`paragraphFormats index ${patch.index} 超出段落數量 ${sourceParagraphs.length}。`);
+    }
+    if (overrides.has(patch.index)) {
+      throw new Error(`paragraphFormats index ${patch.index} 重複。`);
+    }
+    overrides.set(patch.index, patch.format);
+  }
+
+  const paragraphs = sourceParagraphs.map((paragraph, index) => {
+    const override = overrides.get(index);
+    return override
+      ? { text: paragraph.text, format: { ...paragraph.format, ...override } }
+      : { text: paragraph.text, format: paragraph.format };
+  });
+
+  return normalizeSection(
+    {
+      id: section.id,
+      heading: section.heading,
+      text: section.text,
+      paragraphs,
+      paragraphFormat: input.paragraphFormat === undefined
+        ? section.paragraphFormat
+        : { ...section.paragraphFormat, ...input.paragraphFormat },
+      headingStyle: input.headingStyle === undefined
+        ? section.headingStyle
+        : { ...section.headingStyle, ...input.headingStyle },
       required: section.required,
       priority: section.priority,
       compressible: section.compressible,
@@ -303,3 +366,4 @@ export function assertExpectedVersion(
     );
   }
 }
+

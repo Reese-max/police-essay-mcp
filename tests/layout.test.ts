@@ -9,6 +9,7 @@ import {
   createAnswerDocument,
   headingStyleSchema,
   normalizeSection,
+  updateSectionFormatting,
   type AnswerTemplate,
 } from "../src/domain.js";
 import { characterDisplayWidth, displayWidth, formatHeading, layoutSections, renderTextLine } from "../src/layout.js";
@@ -65,6 +66,28 @@ test("paragraph formatting controls indentation, spacing, alignment, tabs, and h
   assert.equal(secondParagraph.format.alignment, "distributed");
   assert.match(renderTextLine(firstParagraph, formattedTemplate), /^ +第一段$/);
   assert.equal(report.totalLines, 4);
+});
+
+test("paragraphs can be supplied without duplicate text and formatting can be patched independently", () => {
+  const section = normalizeSection({
+    id: "body",
+    paragraphs: [
+      { text: "第一段" },
+      { text: "第二段", format: { bold: true } },
+    ],
+  }, 0);
+  assert.equal(section.text, "第一段\n第二段");
+  assert.equal(section.paragraphs?.length, 2);
+
+  const formatted = updateSectionFormatting(section, {
+    paragraphFormat: { alignment: "justify", leftIndent: 1 },
+    paragraphFormats: [{ index: 1, format: { italic: true } }],
+  });
+  assert.equal(formatted.paragraphFormat?.alignment, "justify");
+  assert.equal(formatted.paragraphFormat?.leftIndent, 1);
+  assert.equal(formatted.paragraphs?.[0]?.format, undefined);
+  assert.equal(formatted.paragraphs?.[1]?.format?.bold, true);
+  assert.equal(formatted.paragraphs?.[1]?.format?.italic, true);
 });
 
 test("exactly 44 full-width answer lines fit two pages", () => {
@@ -132,3 +155,4 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+

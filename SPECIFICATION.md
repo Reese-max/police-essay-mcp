@@ -118,6 +118,8 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 
 `paragraphs` 可讓同一個 section 內的每個段落使用不同格式。若未提供 `paragraphs`，後端會把 `text` 的換行拆成段落並套用 `paragraphFormat` 或模板的 `paragraphDefaults`。`headingStyle.numbered=true` 時，標題會依有標題的 section 順序自動產生編號；若原標題已有 `壹、`、`1、` 等前綴，後端會先移除再重新編號，避免重複。
 
+在寫入輸入中，`text` 與 `paragraphs` 可擇一提供；只提供 `paragraphs` 時，後端會產生 canonical `text` 供儲存與相容性使用。既有文字的格式修改使用 `format_section`，不必重新傳送文字。
+
 段落格式欄位：
 
 | 欄位 | 作用 |
@@ -142,6 +144,7 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `read_answer` | 讀完整 sections、版本、逐行結果與版面報告 | 否 |
 | `write_answer` | 以完整 sections 覆寫答案後重新計算 | 是 |
 | `replace_text` | 替換指定 `sectionId`，保留其他段落 | 是 |
+| `format_section` | 不改文字，只更新 section 或指定 paragraphs 的格式 | 是 |
 | `insert_text` | 在指定段落後插入新 section | 是 |
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
@@ -205,6 +208,8 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；PDF 會嘗試尋找 W
 - 第 45 行起回傳 `overflowLines`，並提供濃縮順序。
 - 中英混排、明確換行與空白行可重現計算。
 - 段落格式可分別套用首行／左右縮排、四種對齊、格線行距、Tab、粗斜體。
+- `format_section` 可在不重送文字的情況下更新整個 section 或指定段落的格式。
+- 建立與插入輸入可只提供 `paragraphs`，不必複製一份相同的 `text`。
 - 標題可依模板或 section 設定自動粗體與中文／阿拉伯數字編號。
 - 版本衝突會被拒絕，不會靜默覆蓋。
 - `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
@@ -218,3 +223,4 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；PDF 會嘗試尋找 W
 - 模型本身的語意評分或採點正確性保證。
 - 多使用者帳號、身份驗證、雲端同步。
 - 互動式 iframe 格紙 UI；目前保留 resources 與 structuredContent，後續可依 MCP Apps 加入。
+
