@@ -7,10 +7,11 @@ import { fileURLToPath } from "node:url";
 import { exportDocx, exportPdf, exportText } from "../src/exporters.js";
 import {
   createAnswerDocument,
+  headingStyleSchema,
   normalizeSection,
   type AnswerTemplate,
 } from "../src/domain.js";
-import { characterDisplayWidth, displayWidth, layoutSections } from "../src/layout.js";
+import { characterDisplayWidth, displayWidth, formatHeading, layoutSections, renderTextLine } from "../src/layout.js";
 import { FileStore } from "../src/storage.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -21,7 +22,49 @@ const template = JSON.parse(
 test("display width counts CJK as two cells and ASCII as one", () => {
   assert.equal(characterDisplayWidth("中"), 2);
   assert.equal(characterDisplayWidth("A"), 1);
+  assert.equal(characterDisplayWidth("\t", 4, 0), 4);
+  assert.equal(characterDisplayWidth("\t", 4, 2), 2);
   assert.equal(displayWidth("中A文"), 5);
+});
+
+test("paragraph formatting controls indentation, spacing, alignment, tabs, and heading numbering", () => {
+  const formattedTemplate: AnswerTemplate = {
+    ...template,
+    headingDefaults: {
+      ...template.headingDefaults,
+      bold: true,
+      numbered: true,
+      numbering: "chinese",
+      separator: "、",
+    },
+  };
+  const section = normalizeSection({
+    id: "intro",
+    heading: "壹、前言",
+    text: "舊文字",
+    headingStyle: { numbered: true },
+    paragraphs: [
+      { text: "第一段", format: { firstLineIndent: 2, alignment: "right", spaceAfterLines: 1 } },
+      { text: "第二\t段", format: { leftIndent: 2, alignment: "distributed", tabSize: 4, bold: true } },
+    ],
+  }, 0);
+  const report = layoutSections(formattedTemplate, [section]);
+  const heading = report.lines[0];
+  const firstParagraph = report.lines[1];
+  const spacer = report.lines[2];
+  const secondParagraph = report.lines[3];
+
+  assert.equal(formatHeading("壹、前言", headingStyleSchema.parse({ numbered: true }), 2), "貳、前言");
+  assert.equal(heading.text, "壹、前言");
+  assert.equal(heading.isHeading, true);
+  assert.equal(heading.format.bold, true);
+  assert.equal(firstParagraph.format.firstLineIndent, 2);
+  assert.equal(firstParagraph.format.alignment, "right");
+  assert.equal(spacer.isSpacer, true);
+  assert.equal(secondParagraph.format.leftIndent, 2);
+  assert.equal(secondParagraph.format.alignment, "distributed");
+  assert.match(renderTextLine(firstParagraph, formattedTemplate), /^ +第一段$/);
+  assert.equal(report.totalLines, 4);
 });
 
 test("exactly 44 full-width answer lines fit two pages", () => {
@@ -58,7 +101,16 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     const answer = createAnswerDocument({
       templateId: template.id,
       title: "測試答案",
-      sections: [{ id: "intro", heading: "壹、前言", text: "這是一段測試文字。" }],
+      sections: [{
+        id: "intro",
+        heading: "壹、前言",
+        headingStyle: { numbered: true, bold: true },
+        text: "這是一段測試文字。\n第二段補充。",
+        paragraphs: [
+          { text: "這是一段測試文字。", format: { firstLineIndent: 2, alignment: "justify" } },
+          { text: "第二段補充。\tTab", format: { leftIndent: 2, alignment: "distributed", tabSize: 4, italic: true } },
+        ],
+      }],
     });
     await store.saveAnswer(answer);
     const loaded = await store.getAnswer(answer.id);

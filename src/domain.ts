@@ -3,6 +3,51 @@ import { z } from "zod";
 
 export const overflowPolicySchema = z.enum(["compress", "report", "reject"]);
 
+export const alignmentSchema = z.enum(["left", "right", "justify", "distributed"]);
+
+export const paragraphFormatSchema = z.object({
+  firstLineIndent: z.number().int().min(0).default(0),
+  leftIndent: z.number().int().min(0).default(0),
+  rightIndent: z.number().int().min(0).default(0),
+  alignment: alignmentSchema.default("left"),
+  spaceBeforeLines: z.number().int().min(0).default(0),
+  spaceAfterLines: z.number().int().min(0).default(0),
+  tabSize: z.number().int().positive().default(4),
+  bold: z.boolean().default(false),
+  italic: z.boolean().default(false),
+});
+
+export const paragraphFormatInputSchema = paragraphFormatSchema.partial();
+export type ParagraphFormat = z.infer<typeof paragraphFormatSchema>;
+export type ParagraphFormatInput = z.input<typeof paragraphFormatInputSchema>;
+
+export const headingStyleSchema = z.object({
+  bold: z.boolean().default(true),
+  italic: z.boolean().default(false),
+  numbered: z.boolean().default(false),
+  numbering: z.enum(["chinese", "arabic"]).default("chinese"),
+  separator: z.string().min(1).max(5).default("、"),
+  firstLineIndent: z.number().int().min(0).default(0),
+  leftIndent: z.number().int().min(0).default(0),
+  rightIndent: z.number().int().min(0).default(0),
+  alignment: alignmentSchema.default("left"),
+  spaceBeforeLines: z.number().int().min(0).default(0),
+  spaceAfterLines: z.number().int().min(0).default(0),
+  tabSize: z.number().int().positive().default(4),
+});
+
+export const headingStyleInputSchema = headingStyleSchema.partial();
+export type HeadingStyle = z.infer<typeof headingStyleSchema>;
+export type HeadingStyleInput = z.input<typeof headingStyleInputSchema>;
+
+export const answerParagraphSchema = z.object({
+  text: z.string().max(100_000),
+  format: paragraphFormatInputSchema.optional(),
+});
+
+export type AnswerParagraph = z.infer<typeof answerParagraphSchema>;
+export type AnswerParagraphInput = z.input<typeof answerParagraphSchema>;
+
 export const templateSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -15,6 +60,8 @@ export const templateSchema = z.object({
   fontFamily: z.string().min(1),
   fontSizePt: z.number().positive(),
   lineHeightPt: z.number().positive(),
+  paragraphDefaults: paragraphFormatInputSchema.optional(),
+  headingDefaults: headingStyleInputSchema.optional(),
   marginsMm: z.object({
     top: z.number().nonnegative(),
     right: z.number().nonnegative(),
@@ -29,6 +76,9 @@ export const answerSectionInputSchema = z.object({
   id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/).optional(),
   heading: z.string().max(200).optional(),
   text: z.string().max(100_000),
+  paragraphs: z.array(answerParagraphSchema).max(1_000).optional(),
+  paragraphFormat: paragraphFormatInputSchema.optional(),
+  headingStyle: headingStyleInputSchema.optional(),
   required: z.boolean().default(false),
   priority: z.number().int().min(1).max(5).default(3),
   compressible: z.number().int().min(0).max(5).default(2),
@@ -62,6 +112,12 @@ export interface LayoutLine {
   text: string;
   sectionId: string;
   displayWidth: number;
+  paragraphIndex: number;
+  isHeading: boolean;
+  isSpacer: boolean;
+  isFirstLineOfParagraph: boolean;
+  isLastLineOfParagraph: boolean;
+  format: ParagraphFormat;
 }
 
 export interface PageLayout {
@@ -104,6 +160,12 @@ export const layoutLineSchema = z.object({
   text: z.string(),
   sectionId: z.string(),
   displayWidth: z.number().int().nonnegative(),
+  paragraphIndex: z.number().int().nonnegative(),
+  isHeading: z.boolean(),
+  isSpacer: z.boolean(),
+  isFirstLineOfParagraph: z.boolean(),
+  isLastLineOfParagraph: z.boolean(),
+  format: paragraphFormatSchema,
 });
 
 export const layoutReportSchema = z.object({
@@ -152,15 +214,52 @@ export function normalizeSection(
   input: AnswerSectionInput,
   order: number,
 ): AnswerSection {
+  const sourceParagraphs = input.paragraphs?.length
+    ? input.paragraphs
+    : input.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraphInput => ({ text }));
+  const paragraphs = sourceParagraphs.flatMap((paragraph) =>
+    paragraph.text
+      .replaceAll("\r\n", "\n")
+      .replaceAll("\r", "\n")
+      .split("\n")
+      .map((text) => ({ text, format: paragraph.format })),
+  );
   return answerSectionSchema.parse({
     id: input.id ?? createId("sec"),
     heading: input.heading,
-    text: input.text,
+    text: paragraphs.map((paragraph) => paragraph.text).join("\n"),
+    paragraphs,
+    paragraphFormat: input.paragraphFormat,
+    headingStyle: input.headingStyle,
     required: input.required ?? false,
     priority: input.priority ?? 3,
     compressible: input.compressible ?? 2,
     order,
   });
+}
+
+export function replaceSectionContent(
+  section: AnswerSection,
+  input: {
+    text: string;
+    paragraphs?: AnswerParagraphInput[];
+    heading?: string;
+  },
+): AnswerSection {
+  return normalizeSection(
+    {
+      id: section.id,
+      heading: input.heading,
+      text: input.text,
+      paragraphs: input.paragraphs,
+      paragraphFormat: section.paragraphFormat,
+      headingStyle: section.headingStyle,
+      required: section.required,
+      priority: section.priority,
+      compressible: section.compressible,
+    },
+    section.order,
+  );
 }
 
 export function createAnswerDocument(input: {

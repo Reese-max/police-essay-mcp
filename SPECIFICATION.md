@@ -11,6 +11,8 @@ v1 的預設模板為：
 - 每頁：22 行
 - 總容量：44 行
 - 預設寬度：42 個顯示欄位；全形中文字占 2 欄，ASCII 字元占 1 欄
+- 支援正式段落格式：首行／左右縮排、左／右／左右／分散對齊、段前／段後格線行距、Tab 定位、粗體與斜體
+- 支援標題預設樣式：自動粗體與中文／阿拉伯數字編號
 - 版面設定全部由 template JSON 提供，不寫死在排版器中
 
 MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修改，但不得自行估算「大約幾行」來取代後端計算。
@@ -40,11 +42,30 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
   "fontFamily": "Microsoft JhengHei",
   "fontSizePt": 14,
   "lineHeightPt": 28,
+  "paragraphDefaults": {
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4,
+    "bold": false,
+    "italic": false
+  },
+  "headingDefaults": {
+    "bold": true,
+    "numbered": false,
+    "numbering": "chinese",
+    "separator": "、"
+  },
   "marginsMm": { "top": 16, "right": 15, "bottom": 16, "left": 15 }
 }
 ```
 
 `columns` 是顯示欄位，不是 JavaScript 字元數。這使中文、英文、數字與標點在同一個計算模型中可重現；未來若試卷欄寬不同，只需新增模板。
+
+格式欄位的縮排與 Tab 單位也是顯示欄位。`spaceBeforeLines` 與 `spaceAfterLines` 代表要保留的格線行數，因此會計入 `totalLines`；這能確保畫面上的正式段落間距不會讓答案在匯出時悄悄超頁。
 
 `compress` 只代表超出時提供可壓縮區塊與預估節省方向；真正的語意濃縮由模型提出新文字，再透過修改 tool 寫回，後端不會靜默截斷答案。
 
@@ -70,6 +91,17 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
       "id": "prevention",
       "heading": "參、防制措施",
       "text": "…",
+      "headingStyle": { "numbered": true, "bold": true },
+      "paragraphs": [
+        {
+          "text": "第一段內容…",
+          "format": { "firstLineIndent": 2, "alignment": "justify" }
+        },
+        {
+          "text": "第二段內容…",
+          "format": { "leftIndent": 2, "spaceBeforeLines": 1 }
+        }
+      ],
       "required": true,
       "priority": 5,
       "compressible": 1,
@@ -83,6 +115,21 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 ```
 
 `required`、`priority`、`compressible` 不會自動刪除或改寫答案；它們會在超出時形成 `compressionHints`，讓模型知道先處理哪一段以及哪些區塊應保留核心採點。
+
+`paragraphs` 可讓同一個 section 內的每個段落使用不同格式。若未提供 `paragraphs`，後端會把 `text` 的換行拆成段落並套用 `paragraphFormat` 或模板的 `paragraphDefaults`。`headingStyle.numbered=true` 時，標題會依有標題的 section 順序自動產生編號；若原標題已有 `壹、`、`1、` 等前綴，後端會先移除再重新編號，避免重複。
+
+段落格式欄位：
+
+| 欄位 | 作用 |
+| --- | --- |
+| `firstLineIndent` | 首行縮排欄數 |
+| `leftIndent` / `rightIndent` | 每行左右縮排欄數 |
+| `alignment` | `left`、`right`、`justify` 或 `distributed` |
+| `spaceBeforeLines` / `spaceAfterLines` | 段前／段後保留的格線行數 |
+| `tabSize` | Tab 的欄位寬度，並同步輸出到 Word Tab stop |
+| `bold` / `italic` | 段落文字樣式 |
+
+標題樣式另支援 `numbered`、`numbering`（`chinese` 或 `arabic`）、`separator`、縮排、對齊、間距與粗斜體。
 
 ## 5. Tools 契約
 
@@ -120,19 +167,21 @@ Prompts：
 ## 7. 排版演算法
 
 1. 依 `order` 排序 sections。
-2. 每個 section 先組合 `heading + "\\n" + text`；保留顯式換行。
-3. 每個段落逐 code point 累加顯示欄位：
+2. 每個有標題的 section 先套用 `headingStyle`，必要時產生自動編號，再把標題視為獨立段落。
+3. 依 `paragraphs`（或由 `text` 換行產生的段落）合併模板、section 與 paragraph 格式。
+4. 每個段落先加入 `spaceBeforeLines`，再依首行／左右縮排計算可用欄寬。
+5. 每個段落逐 code point 累加顯示欄位：
    - CJK、全形標點、emoji 等寬字元：2
    - ASCII、半形標點與一般字元：1
    - combining mark：0
    - tab：4
-4. 下一個字元會超過 `columns` 時，結束目前行並開始下一行。
-5. 將全域行號映射到：
+6. 下一個字元會超過可用欄寬時，結束目前行並開始下一行；Tab 依段落的 `tabSize` 對齊到下一個定位點。
+7. 段落結束後加入 `spaceAfterLines`，再將全域行號映射到：
    - `page = ceil(globalLine / linesPerPage)`
    - `lineOnPage = ((globalLine - 1) mod linesPerPage) + 1`
-6. `capacity = pages * linesPerPage`。
-7. `overflowLines = max(0, totalLines - capacity)`；`remainingLines = max(0, capacity - totalLines)`。
-8. 對超出版按 `compressible` 降冪、`priority` 升冪、目前行數降冪排序，形成提示；後端不自行重寫語意。
+8. `capacity = pages * linesPerPage`。
+9. `overflowLines = max(0, totalLines - capacity)`；`remainingLines = max(0, capacity - totalLines)`。
+10. 對超出版按 `compressible` 降冪、`priority` 升冪、目前行數降冪排序，形成提示；後端不自行重寫語意。
 
 這個演算法只負責「真實占幾行」。語意濃縮仍由模型提出新文字，再透過 `replace_text` 寫回並重新驗證。
 
@@ -142,12 +191,12 @@ Prompts：
 read answer
   → layoutSections(template, sections)
   → fits == true ?
-      → DOCX: 每頁一個 22-row table，固定列高與框線
-      → PDF: A4 page，繪製 22 條橫線與左右邊界，再寫入文字
+      → DOCX: 每頁一個 22-row table，固定列高與框線，並套用段落縮排、對齊、Tab stop、粗體與斜體
+      → PDF: A4 page，繪製 22 條橫線與左右邊界，再依相同欄位模型定位文字與粗體字型
   → fits == false：拒絕輸出，除非 allowOverflow=true
 ```
 
-DOCX 會保留兩頁空白格線，即使答案未填滿；PDF 會嘗試尋找 Windows 的 Microsoft JhengHei 或系統 Noto CJK 字型。若找不到中文字型，工具回傳 `fontWarning`，避免使用者誤以為字型嵌入已完成。
+DOCX 會保留兩頁空白格線，即使答案未填滿；PDF 會嘗試尋找 Windows 的 Microsoft JhengHei／粗體字型或系統 Noto CJK 字型。若找不到一般或粗體中文字型，工具回傳 `fontWarning`；也可分別設定 `ESSAY_MCP_PDF_FONT` 與 `ESSAY_MCP_PDF_BOLD_FONT`。
 
 ## 9. v1 驗收條件
 
@@ -155,6 +204,8 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；PDF 會嘗試尋找 W
 - 44 行剛好填滿時回傳 `fits=true`、兩頁各 `22/22`。
 - 第 45 行起回傳 `overflowLines`，並提供濃縮順序。
 - 中英混排、明確換行與空白行可重現計算。
+- 段落格式可分別套用首行／左右縮排、四種對齊、格線行距、Tab、粗斜體。
+- 標題可依模板或 section 設定自動粗體與中文／阿拉伯數字編號。
 - 版本衝突會被拒絕，不會靜默覆蓋。
 - `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
 - 可透過 `MCP_TRANSPORT=stdio` 接本機 MCP client，也可透過 `http://localhost:8787/mcp` 使用 Streamable HTTP。

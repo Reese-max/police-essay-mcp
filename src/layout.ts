@@ -1,12 +1,45 @@
-import type {
-  AnswerSection,
-  AnswerTemplate,
-  CompressionHint,
-  LayoutLine,
-  LayoutReport,
+import {
+  answerParagraphSchema,
+  headingStyleSchema,
+  paragraphFormatSchema,
+  type AnswerParagraph,
+  type AnswerSection,
+  type AnswerTemplate,
+  type HeadingStyle,
+  type LayoutLine,
+  type ParagraphFormat,
+  type CompressionHint,
+  type LayoutReport,
 } from "./domain.js";
 
 const COMBINING_MARKS = /\p{Mark}/u;
+
+const DEFAULT_PARAGRAPH_FORMAT: ParagraphFormat = {
+  firstLineIndent: 0,
+  leftIndent: 0,
+  rightIndent: 0,
+  alignment: "left",
+  spaceBeforeLines: 0,
+  spaceAfterLines: 0,
+  tabSize: 4,
+  bold: false,
+  italic: false,
+};
+
+const DEFAULT_HEADING_STYLE: HeadingStyle = {
+  bold: true,
+  italic: false,
+  numbered: false,
+  numbering: "chinese",
+  separator: "、",
+  firstLineIndent: 0,
+  leftIndent: 0,
+  rightIndent: 0,
+  alignment: "left",
+  spaceBeforeLines: 0,
+  spaceAfterLines: 0,
+  tabSize: 4,
+};
 
 function isWideCodePoint(codePoint: number): boolean {
   return (
@@ -23,52 +56,199 @@ function isWideCodePoint(codePoint: number): boolean {
   );
 }
 
-export function characterDisplayWidth(character: string): number {
-  if (character === "\t") return 4;
+export function characterDisplayWidth(
+  character: string,
+  tabSize = 4,
+  currentColumn = 0,
+): number {
+  if (character === "\t") {
+    return tabSize - (currentColumn % tabSize);
+  }
   if (character === "\r" || character === "\n") return 0;
   if (COMBINING_MARKS.test(character)) return 0;
   const codePoint = character.codePointAt(0) ?? 0;
   return isWideCodePoint(codePoint) ? 2 : 1;
 }
 
-export function displayWidth(text: string): number {
-  return Array.from(text).reduce(
-    (width, character) => width + characterDisplayWidth(character),
-    0,
+export function displayWidth(
+  text: string,
+  tabSize = 4,
+  startColumn = 0,
+): number {
+  let currentColumn = startColumn;
+  for (const character of Array.from(text)) {
+    currentColumn += characterDisplayWidth(character, tabSize, currentColumn);
+  }
+  return currentColumn - startColumn;
+}
+
+export function expandTabs(text: string, tabSize = 4, startColumn = 0): string {
+  let currentColumn = startColumn;
+  let expanded = "";
+  for (const character of Array.from(text)) {
+    const width = characterDisplayWidth(character, tabSize, currentColumn);
+    if (character === "\t") expanded += " ".repeat(width);
+    else expanded += character;
+    currentColumn += width;
+  }
+  return expanded;
+}
+
+function normalizeNewlines(text: string): string {
+  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+}
+
+function splitParagraphText(text: string): string[] {
+  return normalizeNewlines(text).split("\n");
+}
+
+function sectionParagraphs(section: AnswerSection): AnswerParagraph[] {
+  if (section.paragraphs?.length) return section.paragraphs;
+  return splitParagraphText(section.text).map((text) => ({ text }));
+}
+
+function mergeParagraphFormat(
+  template: AnswerTemplate,
+  section: AnswerSection,
+  paragraphFormat: AnswerParagraph["format"],
+): ParagraphFormat {
+  return paragraphFormatSchema.parse({
+    ...DEFAULT_PARAGRAPH_FORMAT,
+    ...template.paragraphDefaults,
+    ...section.paragraphFormat,
+    ...paragraphFormat,
+  });
+}
+
+function mergeHeadingStyle(template: AnswerTemplate, section: AnswerSection): HeadingStyle {
+  return headingStyleSchema.parse({
+    ...DEFAULT_HEADING_STYLE,
+    ...template.headingDefaults,
+    ...section.headingStyle,
+  });
+}
+
+function chineseNumber(value: number): string {
+  const digits = ["零", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"];
+  if (value < 10) return digits[value] ?? String(value);
+  if (value < 20) return value === 10 ? "拾" : `拾${digits[value - 10]}`;
+  if (value < 100) {
+    const tens = Math.floor(value / 10);
+    const units = value % 10;
+    return `${digits[tens]}拾${units ? digits[units] : ""}`;
+  }
+  return String(value);
+}
+
+function stripHeadingNumber(text: string): string {
+  return text.replace(
+    /^\s*(?:[壹貳參肆伍陸柒捌玖拾佰仟零一二三四五六七八九十百千]+|\d+|[IVX]+)\s*[、．.。:：\-－)）]+\s*/iu,
+    "",
   );
 }
 
-function wrapParagraph(paragraph: string, columns: number): string[] {
-  if (paragraph.length === 0) return [""];
+export function formatHeading(text: string, style: HeadingStyle, ordinal: number): string {
+  if (!style.numbered) return text;
+  const body = stripHeadingNumber(text);
+  const number = style.numbering === "arabic" ? String(ordinal) : chineseNumber(ordinal);
+  return `${number}${style.separator}${body}`;
+}
 
+function wrapParagraph(
+  paragraph: string,
+  format: ParagraphFormat,
+  columns: number,
+): string[] {
   const lines: string[] = [];
   let current = "";
   let currentWidth = 0;
+  let lineIndex = 0;
+
+  while (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0) >= columns) {
+    throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、leftIndent 或 rightIndent。");
+  }
 
   for (const character of Array.from(paragraph)) {
-    const width = characterDisplayWidth(character);
-    if (current.length > 0 && currentWidth + width > columns) {
+    while (true) {
+      const lineIndent = format.leftIndent + (lineIndex === 0 ? format.firstLineIndent : 0);
+      const available = columns - lineIndent - format.rightIndent;
+      const width = characterDisplayWidth(character, format.tabSize, lineIndent + currentWidth);
+      if (current.length === 0 || currentWidth + width <= available) {
+        current += character;
+        currentWidth += width;
+        break;
+      }
       lines.push(current);
       current = "";
       currentWidth = 0;
+      lineIndex += 1;
     }
-    current += character;
-    currentWidth += width;
   }
 
   if (current.length > 0 || lines.length === 0) lines.push(current);
   return lines;
 }
 
-function sectionLines(section: AnswerSection, columns: number): string[] {
-  const source = section.heading
-    ? `${section.heading}\n${section.text}`
-    : section.text;
-  return source
-    .replaceAll("\r\n", "\n")
-    .replaceAll("\r", "\n")
-    .split("\n")
-    .flatMap((paragraph) => wrapParagraph(paragraph, columns));
+export function lineIndentColumns(line: LayoutLine): number {
+  return line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : 0);
+}
+
+function makeLine(
+  lines: LayoutLine[],
+  sectionId: string,
+  paragraphIndex: number,
+  text: string,
+  format: ParagraphFormat,
+  flags: {
+    isHeading?: boolean;
+    isSpacer?: boolean;
+    isFirstLineOfParagraph?: boolean;
+    isLastLineOfParagraph?: boolean;
+  } = {},
+): void {
+  const globalLine = lines.length + 1;
+  const indent = format.leftIndent + (flags.isFirstLineOfParagraph ? format.firstLineIndent : 0);
+  lines.push({
+    globalLine,
+    page: 0,
+    lineOnPage: 0,
+    text,
+    sectionId,
+    displayWidth: flags.isSpacer ? 0 : indent + displayWidth(text, format.tabSize, indent),
+    paragraphIndex,
+    isHeading: flags.isHeading ?? false,
+    isSpacer: flags.isSpacer ?? false,
+    isFirstLineOfParagraph: flags.isFirstLineOfParagraph ?? false,
+    isLastLineOfParagraph: flags.isLastLineOfParagraph ?? false,
+    format,
+  });
+}
+
+function addParagraph(
+  lines: LayoutLine[],
+  sectionId: string,
+  paragraphIndex: number,
+  text: string,
+  format: ParagraphFormat,
+  options: { isHeading?: boolean } = {},
+  columns: number,
+): void {
+  for (let index = 0; index < format.spaceBeforeLines; index += 1) {
+    makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
+  }
+
+  const wrapped = wrapParagraph(text, format, columns);
+  wrapped.forEach((line, index) => {
+    makeLine(lines, sectionId, paragraphIndex, line, format, {
+      isHeading: options.isHeading,
+      isFirstLineOfParagraph: index === 0,
+      isLastLineOfParagraph: index === wrapped.length - 1,
+    });
+  });
+
+  for (let index = 0; index < format.spaceAfterLines; index += 1) {
+    makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
+  }
 }
 
 function compressionHints(
@@ -78,7 +258,7 @@ function compressionHints(
 ): CompressionHint[] {
   if (overflowLines <= 0) return [];
 
-  return sections
+  return [...sections]
     .filter((section) => (sectionLineCounts.get(section.id) ?? 0) > 0)
     .sort((left, right) => {
       if (right.compressible !== left.compressible) {
@@ -106,24 +286,44 @@ export function layoutSections(
 ): LayoutReport {
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
+  let headingOrdinal = 0;
 
   for (const section of [...sections].sort((a, b) => a.order - b.order)) {
-    const wrapped = sectionLines(section, template.columns);
-    sectionLineCounts.set(section.id, wrapped.length);
-    for (const text of wrapped) {
-      const globalLine = lines.length + 1;
-      const page = Math.ceil(globalLine / template.linesPerPage);
-      const lineOnPage = ((globalLine - 1) % template.linesPerPage) + 1;
-      lines.push({
-        globalLine,
-        page,
-        lineOnPage,
-        text,
-        sectionId: section.id,
-        displayWidth: displayWidth(text),
-      });
+    const sectionStart = lines.length;
+    const headingStyle = mergeHeadingStyle(template, section);
+    if (section.heading) {
+      headingOrdinal += 1;
+      addParagraph(
+        lines,
+        section.id,
+        0,
+        formatHeading(section.heading, headingStyle, headingOrdinal),
+        paragraphFormatSchema.parse(headingStyle),
+        { isHeading: true },
+        template.columns,
+      );
     }
+
+    sectionParagraphs(section).forEach((paragraph, index) => {
+      addParagraph(
+        lines,
+        section.id,
+        index + 1,
+        paragraph.text,
+        mergeParagraphFormat(template, section, paragraph.format),
+        {},
+        template.columns,
+      );
+    });
+    sectionLineCounts.set(section.id, lines.length - sectionStart);
   }
+
+  lines.forEach((line, index) => {
+    const globalLine = index + 1;
+    line.globalLine = globalLine;
+    line.page = Math.ceil(globalLine / template.linesPerPage);
+    line.lineOnPage = ((globalLine - 1) % template.linesPerPage) + 1;
+  });
 
   const capacity = template.pages * template.linesPerPage;
   const totalLines = lines.length;
@@ -156,6 +356,45 @@ export function layoutSections(
   };
 }
 
+function addJustificationSpaces(text: string, extra: number, distributed: boolean): string {
+  if (extra <= 0) return text;
+  const characters = Array.from(text);
+  const gapIndexes = distributed
+    ? characters.slice(0, -1).map((_, index) => index)
+    : characters.reduce<number[]>((indexes, character, index) => {
+        if (character === " ") indexes.push(index);
+        return indexes;
+      }, []);
+  if (gapIndexes.length === 0) return text;
+
+  const base = Math.floor(extra / gapIndexes.length);
+  let remainder = extra % gapIndexes.length;
+  const gaps = new Map(gapIndexes.map((index) => {
+    const amount = base + (remainder > 0 ? 1 : 0);
+    remainder -= 1;
+    return [index, amount];
+  }));
+  return characters.map((character, index) => `${character}${gaps.has(index) ? " ".repeat(gaps.get(index) ?? 0) : ""}`).join("");
+}
+
+export function renderTextLine(line: LayoutLine, template: AnswerTemplate): string {
+  if (line.isSpacer) return "";
+  const indent = lineIndentColumns(line);
+  const available = Math.max(0, template.columns - indent - line.format.rightIndent);
+  const expanded = expandTabs(line.text, line.format.tabSize, indent);
+  const contentWidth = displayWidth(expanded, line.format.tabSize, indent);
+  const extra = Math.max(0, available - contentWidth);
+  let content = expanded;
+
+  if ((line.format.alignment === "justify" || line.format.alignment === "distributed") && !line.isLastLineOfParagraph) {
+    content = addJustificationSpaces(content, extra, line.format.alignment === "distributed");
+  } else if (line.format.alignment === "right") {
+    content = `${" ".repeat(extra)}${content}`;
+  }
+
+  return `${" ".repeat(indent)}${content}`;
+}
+
 export function summarizeLayout(report: LayoutReport): string {
   const pages = report.pageUsage
     .slice(0, report.pagesConfigured)
@@ -166,3 +405,7 @@ export function summarizeLayout(report: LayoutReport): string {
   }
   return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。`;
 }
+
+// Runtime validation remains at the domain boundary; these imports also make
+// the intended formatting schemas explicit for future layout extensions.
+void answerParagraphSchema;

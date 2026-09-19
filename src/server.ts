@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   answerDocumentSchema,
+  answerParagraphSchema,
   answerSectionInputSchema,
   answerSectionSchema as storedSectionSchema,
   createAnswerDocument,
   assertExpectedVersion,
   normalizeSection,
+  replaceSectionContent,
   type AnswerDocument,
   type AnswerSection,
   type AnswerSectionInput,
@@ -125,7 +127,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
         text: [
           "# 申論答題紙工作流程",
           "1. load_exam_paper：讀模板或既有答案。",
-          "2. create_answer / write_answer：把答案存成可編輯的 sections。",
+          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。",
           "3. read_answer / check_layout：查看每頁行數、剩餘行數與溢出。",
           "4. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
           "5. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
@@ -205,7 +207,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     "create_answer",
     {
       title: "建立申論答案",
-      description: "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template.",
+      description: "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
       inputSchema: {
         templateId: z.string().default(DEFAULT_TEMPLATE_ID),
         title: z.string().min(1).max(300),
@@ -256,7 +258,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     "write_answer",
     {
       title: "寫入完整申論答案",
-      description: "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; this does not guess line count, it delegates wrapping to the layout engine.",
+      description: "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
       inputSchema: {
         answerId: answerIdSchema,
         sections: z.array(answerSectionInputSchema).max(100),
@@ -291,11 +293,12 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     "replace_text",
     {
       title: "替換申論區塊",
-      description: "Use this when the user wants to revise one existing section without regenerating unrelated sections; the answer is reflowed after replacement.",
+      description: "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
       inputSchema: {
         answerId: answerIdSchema,
         sectionId: z.string().min(1),
         newText: z.string().max(100_000),
+        paragraphs: z.array(answerParagraphSchema).max(1_000).optional(),
         heading: z.string().max(200).nullable().optional(),
         expectedVersion: expectedVersionSchema,
       },
@@ -306,14 +309,18 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
         "openai/toolInvocation/invoked": "段落已修改並重新計算行數。",
       },
     },
-    async ({ answerId, sectionId, newText, heading, expectedVersion }) => {
+    async ({ answerId, sectionId, newText, paragraphs, heading, expectedVersion }) => {
       const answer = await store.getAnswer(answerId);
       assertExpectedVersion(answer, expectedVersion);
       const target = answer.sections.find((section) => section.id === sectionId);
       if (!target) throw new Error(`找不到 sectionId ${sectionId}。`);
       const updatedSections = answer.sections.map((section) =>
         section.id === sectionId
-          ? { ...section, text: newText, ...(heading === undefined ? {} : { heading: heading ?? undefined }) }
+          ? replaceSectionContent(section, {
+              text: newText,
+              paragraphs,
+              heading: heading === undefined ? section.heading : heading ?? undefined,
+            })
           : section,
       );
       const updated = {

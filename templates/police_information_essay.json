@@ -10,6 +10,31 @@
   "fontFamily": "Microsoft JhengHei",
   "fontSizePt": 14,
   "lineHeightPt": 28,
+  "paragraphDefaults": {
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4,
+    "bold": false,
+    "italic": false
+  },
+  "headingDefaults": {
+    "bold": true,
+    "italic": false,
+    "numbered": false,
+    "numbering": "chinese",
+    "separator": "、",
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4
+  },
   "marginsMm": {
     "top": 16,
     "right": 15,
