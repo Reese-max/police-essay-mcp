@@ -94,3 +94,8 @@ npm test
 
 完整 v1 契約與排版規則請看 [SPECIFICATION.md](SPECIFICATION.md)。
 
+## Figma 樣板
+
+[開啟 Police Essay MCP｜申論答題紙樣板](https://www.figma.com/design/SBAKYNQQh3Mzv8MFKFwIrX)
+
+視覺樣板對應 MCP 的固定格線、段落格式化、標題樣式與 `check_layout` 狀態。細節與節點對照請看 [docs/figma-template.md](docs/figma-template.md)。
