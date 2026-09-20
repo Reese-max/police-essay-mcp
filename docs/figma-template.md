@@ -50,3 +50,7 @@ Figma 內的文字、容量數字與連線狀態是展示用內容，不是 MCP 
 2. 以 `Essay Grid Row` 元件維持答題格紙的固定行高與一致間距。
 3. 將格式化檢查器欄位映射到 `format_section` 的 `paragraphFormats`。
 4. 將版面狀態映射到 `check_layout`；只有在 `fits=true` 時才進入 DOCX、PDF 或文字匯出流程。
+
+## 迭代後的安全編修流程
+
+修改內容或格式前，先使用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 取得 before/after snapshot、行數差異與 `fits` 結果；確認後再以相同的 `expectedVersion` 套用正式修改。Figma 畫面中的容量狀態應以 MCP 回傳的 `check_layout` 為準。

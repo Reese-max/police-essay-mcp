@@ -20,6 +20,12 @@ npm start
 Invoke-WebRequest http://127.0.0.1:8787/health
 ```
 
+就緒檢查（會確認預設模板可讀取）：
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8787/readyz
+```
+
 本機 stdio 模式：
 
 ```powershell
@@ -36,6 +42,11 @@ npm start
 - `ESSAY_MCP_EXPORT_DIR`：DOCX/PDF 輸出目錄
 - `ESSAY_MCP_PDF_FONT`：PDF 使用的中文字型檔路徑
 - `ESSAY_MCP_PDF_BOLD_FONT`：PDF 粗體段落使用的中文字型檔路徑
+- `ESSAY_MCP_PDF_ITALIC_FONT`：PDF 斜體段落使用的中文字型檔路徑
+- `MCP_AUTH_TOKEN`：HTTP Bearer token；透過 tunnel 或非本機 HOST 時應設定
+- `MCP_MAX_BODY_BYTES`：HTTP 請求大小上限，預設 2 MB
+- `MCP_REQUEST_TIMEOUT_MS`：HTTP 請求逾時，預設 30 秒
+- `CORS_ORIGIN`：允許的瀏覽器來源；可參考 `.env.example`
 
 ## 驗證
 
@@ -46,14 +57,21 @@ npm test
 
 若要接 ChatGPT Developer Mode，將本機 `/mcp` 透過 HTTPS tunnel 暴露後，使用 tunnel URL 加上 `/mcp` 建立 app；工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
 
+## 安全與部署
+
+HTTP 預設只綁定 `127.0.0.1`。若要透過 tunnel 或其他非本機位址提供服務，請設定 `MCP_AUTH_TOKEN`，並將 `CORS_ORIGIN` 限制為實際前端來源；只有在你明確接受無驗證遠端服務時，才設定 `MCP_ALLOW_ANONYMOUS_REMOTE=true`。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
+
+儲存採原子替換、每份答案有寫入鎖，且儲存時會再次檢查版本；因此併發修改不會默默覆蓋較新的答案。
+
 ## 工具工作流
 
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 建立文件，或 `write_answer` 寫入 sections。
 3. `read_answer` / `check_layout` 讀取真實行數。
-4. 只調整格式時使用 `format_section`，不必重新送出文字。
-5. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
-6. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
+4. 修改前先用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 查看差異。
+5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
+6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
+7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
 
 ## 正式格式
 
@@ -99,3 +117,4 @@ npm test
 [開啟 Police Essay MCP｜申論答題紙樣板](https://www.figma.com/design/SBAKYNQQh3Mzv8MFKFwIrX)
 
 視覺樣板對應 MCP 的固定格線、段落格式化、標題樣式與 `check_layout` 狀態。細節與節點對照請看 [docs/figma-template.md](docs/figma-template.md)。
+
