@@ -12,6 +12,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/src/index.js",
     "test": "tsx --test tests/**/*.test.ts",
+    "test:render": "tsx scripts/render-regression.ts",
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
@@ -28,3 +29,4 @@
     "typescript": "^5.9.0"
   }
 }
+

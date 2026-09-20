@@ -60,8 +60,9 @@ async function readReadiness(_request: IncomingMessage, response: ServerResponse
 }
 
 function setCorsHeaders(response: ServerResponse): void {
+  response.setHeader("vary", "Origin");
   response.setHeader("access-control-allow-origin", corsOrigin);
-  response.setHeader("access-control-allow-headers", "content-type, mcp-session-id, last-event-id");
+  response.setHeader("access-control-allow-headers", "authorization, content-type, mcp-session-id, last-event-id");
   response.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
   response.setHeader("access-control-expose-headers", "mcp-session-id");
 }
@@ -85,7 +86,27 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
   });
   try {
     await server.connect(transport);
-    await transport.handleRequest(request, response);
+    // Pause before handing the request to the transport so the size guard can
+    // observe every chunk without putting IncomingMessage into flowing mode
+    // before the SDK has attached its own body reader.
+    request.pause();
+    const handlePromise = transport.handleRequest(request, response);
+    let bodyBytes = 0;
+    let bodyTooLarge = false;
+    const onData = (chunk: Buffer): void => {
+      bodyBytes += chunk.length;
+      if (bodyBytes > maxBodyBytes && !bodyTooLarge) {
+        bodyTooLarge = true;
+        reject(response, 413, "Request body too large");
+      }
+    };
+    request.on("data", onData);
+    request.resume();
+    try {
+      await handlePromise;
+    } finally {
+      request.off("data", onData);
+    }
   } catch (error) {
     const requestId = randomUUID();
     console.error(`[${requestId}] MCP request failed`, error);
