@@ -128,5 +128,39 @@ export class FileStore {
     }
     return path.join(this.exportDir, normalized);
   }
+
+  async readExport(filename: string): Promise<{ name: string; mimeType: string; data: Buffer }> {
+    // 只允許單一檔名（無路徑分隔符）+ 白名單副檔名；resolve 後再驗一次仍在 exportDir 內。
+    if (!exportFilenamePattern.test(filename)) {
+      throw new Error("Export artifact not found.");
+    }
+    const exportRoot = path.resolve(this.exportDir);
+    const resolved = path.resolve(exportRoot, filename);
+    if (!resolved.startsWith(exportRoot + path.sep)) {
+      throw new Error("Export artifact not found.");
+    }
+    let data: Buffer;
+    try {
+      // lstat/realpath 防 symlink 逃逸：resolve() 是字串運算，不會解開連結。
+      const stats = await fs.lstat(resolved);
+      const real = stats.isFile() ? await fs.realpath(resolved) : "";
+      if (!real.startsWith((await fs.realpath(exportRoot)) + path.sep)) {
+        throw new Error("Export artifact not found.");
+      }
+      data = await fs.readFile(resolved);
+    } catch {
+      throw new Error("Export artifact not found.");
+    }
+    return { name: filename, mimeType: exportMimeType(filename), data };
+  }
+}
+
+const exportFilenamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.(docx|pdf|txt)$/;
+
+export function exportMimeType(filename: string): string {
+  if (filename.endsWith(".docx")) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (filename.endsWith(".pdf")) return "application/pdf";
+  if (filename.endsWith(".txt")) return "text/plain";
+  throw new Error(`Unsupported export extension: ${filename}`);
 }
 

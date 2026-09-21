@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -266,6 +266,70 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     const exportedContent = exported.structuredContent as { path: string; pages: number };
     assert.equal(exportedContent.pages, 2);
     assert.equal((await stat(exportedContent.path)).isFile(), true);
+  } finally {
+    await client?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("export tools return a bounded retrievable artifact resource", async () => {
+  const runtime = await startServer();
+  let client: Client | undefined;
+  try {
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+      requestInit: {
+        headers: { authorization: `Bearer ${authToken}` },
+      },
+    });
+    client = new Client({ name: "police-essay-mcp-export-artifact-test", version: "0.1.0" }, { capabilities: {} });
+    await client.connect(transport);
+
+    const created = await client.callTool({
+      name: "create_answer",
+      arguments: {
+        templateId: "police_information_essay",
+        title: "匯出 artifact 測試",
+        sections: [{ id: "intro", heading: "前言", text: "這是一段測試內容。" }],
+      },
+    });
+    assert.equal(created.isError, undefined);
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+
+    const exported = await client.callTool({
+      name: "export_text",
+      arguments: { answerId, filename: "artifact-round-trip" },
+    });
+    assert.equal(exported.isError, undefined);
+    const structured = exported.structuredContent as { exportUri?: string; path: string; version: number };
+    assert.ok(structured.exportUri, "export_text must return an exportUri artifact handle");
+
+    const blocks = (exported.content ?? []) as Array<{ type: string; uri?: string; mimeType?: string }>;
+    const link = blocks.find((block) => block.type === "resource_link");
+    assert.ok(link, "export_text must include a resource_link content block");
+    assert.equal(link.uri, structured.exportUri);
+
+    const resource = await client.readResource({ uri: structured.exportUri });
+    assert.equal(resource.contents.length, 1);
+    const [artifact] = resource.contents;
+    assert.equal(artifact.uri, structured.exportUri);
+    assert.equal(artifact.mimeType, "text/plain");
+    assert.ok("blob" in artifact && artifact.blob, "artifact must carry the exported bytes as a blob");
+    const onDisk = await readFile(structured.path);
+    assert.equal(Buffer.from(String(artifact.blob), "base64").equals(onDisk), true);
+
+    await assert.rejects(
+      () => client!.readResource({ uri: "essay://exports/missing.docx" }),
+      "nonexistent artifact must fail closed",
+    );
+    await assert.rejects(
+      () => client!.readResource({ uri: "essay://exports/..%2Fsecret.txt" }),
+      "encoded path traversal must fail closed",
+    );
+    await assert.rejects(
+      () => client!.readResource({ uri: "essay://exports/notes.md" }),
+      "unsupported extension must fail closed",
+    );
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);

@@ -1,5 +1,6 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { z } from "zod";
 import {
   answerDocumentSchema,
@@ -24,7 +25,7 @@ import {
 } from "./domain.js";
 import { exportDocx, exportPdf, exportText } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
-import { FileStore } from "./storage.js";
+import { exportMimeType, FileStore } from "./storage.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay";
 
@@ -91,6 +92,7 @@ const exportOutputSchema = z.object({
   version: z.number().int().positive(),
   format: z.enum(["docx", "pdf", "txt"]),
   path: z.string(),
+  exportUri: z.string(),
   pages: z.number().int().positive(),
   layout: layoutReportSchema,
   font: z.string().optional(),
@@ -99,6 +101,16 @@ const exportOutputSchema = z.object({
 
 function textContent(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
+}
+
+function exportArtifactLink(filename: string, uri: string) {
+  return {
+    type: "resource_link" as const,
+    uri,
+    name: filename,
+    mimeType: exportMimeType(filename),
+    description: `下載已匯出的 ${filename}`,
+  };
 }
 
 function ensureUniqueSectionIds(sections: AnswerSection[]): void {
@@ -214,6 +226,27 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
         ].join("\n"),
       }],
     }),
+  );
+
+  // 匯出檔案的可取回 handle：URI 由 export_* 工具結果提供，只能讀 exportDir 內白名單檔名。
+  server.registerResource(
+    "export-artifact",
+    new ResourceTemplate("essay://exports/{filename}", { list: undefined }),
+    {
+      title: "已匯出的申論檔案",
+      description: "export_docx / export_pdf / export_text 產生的檔案；URI 見工具結果的 exportUri。",
+    },
+    async (uri, variables) => {
+      const filename = Array.isArray(variables.filename) ? variables.filename[0] : variables.filename;
+      const artifact = await store.readExport(filename ?? "");
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: artifact.mimeType,
+          blob: artifact.data.toString("base64"),
+        }],
+      };
+    },
   );
 
   server.registerTool(
@@ -740,9 +773,14 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
       const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
+      const exportFilename = path.basename(output.path);
+      const exportUri = `essay://exports/${exportFilename}`;
       return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
+        structuredContent: { answerId, version: current.answer.version, ...output, exportUri, layout: current.layout },
+        content: [
+          ...textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
+          exportArtifactLink(exportFilename, exportUri),
+        ],
       };
     },
   );
@@ -769,9 +807,14 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
       const output = await exportText(current.layout, template, outputPath, allowOverflow);
+      const exportFilename = path.basename(output.path);
+      const exportUri = `essay://exports/${exportFilename}`;
       return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
+        structuredContent: { answerId, version: current.answer.version, ...output, exportUri, layout: current.layout },
+        content: [
+          ...textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
+          exportArtifactLink(exportFilename, exportUri),
+        ],
       };
     },
   );
@@ -798,9 +841,14 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
       const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
+      const exportFilename = path.basename(output.path);
+      const exportUri = `essay://exports/${exportFilename}`;
       return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
+        structuredContent: { answerId, version: current.answer.version, ...output, exportUri, layout: current.layout },
+        content: [
+          ...textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
+          exportArtifactLink(exportFilename, exportUri),
+        ],
       };
     },
   );

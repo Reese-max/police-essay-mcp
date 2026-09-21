@@ -71,7 +71,7 @@ HTTP 預設只綁定 `127.0.0.1`。若要透過 tunnel 或其他非本機位址�
 4. 修改前先用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 查看差異。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
-7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
+7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。匯出結果除本機 `path` 外會回傳 `exportUri`（`essay://exports/<檔名>`）與 `resource_link` content block；remote MCP client 用 `resources/read` 讀取該 URI 即可取回檔案內容，不需存取主機檔案系統。artifact 只能讀取 `ESSAY_MCP_EXPORT_DIR` 內白名單檔名，走同一條 `/mcp` 驗證邊界。
 
 ## 正式格式
 
