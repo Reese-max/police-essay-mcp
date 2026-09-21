@@ -1,6 +1,6 @@
 # police-essay-mcp
 
-「國考申論答題紙排版與 AI 編修引擎」的第一版 MCP server。
+「國考申論答題紙排版與 AI 編修引擎」的 MCP server，包含 ChatGPT Apps SDK 互動畫板。
 
 它把答案保存成有順序的 sections 與可獨立格式化的 paragraphs，透過固定模板計算中英文字寬與實際行數，再提供縮排、對齊、段落間距、Tab、標題粗體／編號、局部修改、溢出檢查與 DOCX/PDF 固定格線輸出。預設模板是 A4、2 頁、每頁 22 行。
 
@@ -57,6 +57,14 @@ npm test
 
 若要接 ChatGPT Developer Mode，將本機 `/mcp` 透過 HTTPS tunnel 暴露後，使用 tunnel URL 加上 `/mcp` 建立 app；工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
 
+### ChatGPT 互動畫板
+
+在對話中說：
+
+> 請使用 Police Essay MCP 建立一份警察資訊三等申論答題紙，然後顯示互動答題紙畫板。
+
+模型會呼叫 `render_answer_sheet`，ChatGPT 會在對話中的 App 畫面載入兩頁固定格線。畫板可重新檢查版面、點選行定位區塊、預覽區塊修改並在確認後套用；「放大畫板」會請宿主切換到較大的顯示模式。它是 ChatGPT 內嵌的 App iframe，不是另外開一個獨立瀏覽器分頁。
+
 ## 安全與部署
 
 HTTP 預設只綁定 `127.0.0.1`。若要透過 tunnel 或其他非本機位址提供服務，請設定 `MCP_AUTH_TOKEN`，並將 `CORS_ORIGIN` 限制為實際前端來源；只有在你明確接受無驗證遠端服務時，才設定 `MCP_ALLOW_ANONYMOUS_REMOTE=true`。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
@@ -71,7 +79,8 @@ HTTP 預設只綁定 `127.0.0.1`。若要透過 tunnel 或其他非本機位址�
 4. 修改前先用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 查看差異。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
-7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
+7. 使用者要觀看或編輯時呼叫 `render_answer_sheet`，顯示互動答題紙畫板。
+8. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。
 
 ## 正式格式
 

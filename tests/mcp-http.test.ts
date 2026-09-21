@@ -206,6 +206,17 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     for (const name of ["preview_write_answer", "preview_replace_text", "preview_format_section", "preview_insert_text", "preview_delete_text"]) {
       assert.ok(toolNames.includes(name), `missing tool ${name}`);
     }
+    const renderTool = tools.tools.find((tool) => tool.name === "render_answer_sheet");
+    assert.ok(renderTool, "missing tool render_answer_sheet");
+    const renderMeta = renderTool._meta as { ui?: { resourceUri?: string } } | undefined;
+    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet.html");
+
+    const resources = await client.listResources();
+    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet.html"));
+    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet.html" });
+    const widgetText = String(widgetResource.contents.find((content) => "text" in content)?.text ?? "");
+    assert.match(widgetText, /警察資訊三等/);
+    assert.match(widgetText, /tools\/call/);
 
     const created = await client.callTool({
       name: "create_answer",
@@ -220,6 +231,15 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.match(createdSnapshot.answer.id, /^ans_/);
     assert.equal(createdSnapshot.answer.version, 1);
     assert.equal(createdSnapshot.layout.fits, true);
+
+    const rendered = await client.callTool({
+      name: "render_answer_sheet",
+      arguments: { answerId: createdSnapshot.answer.id },
+    });
+    assert.equal(rendered.isError, undefined);
+    const renderedSnapshot = rendered.structuredContent as { answer: { id: string }; layout: { lines: unknown[] } };
+    assert.equal(renderedSnapshot.answer.id, createdSnapshot.answer.id);
+    assert.ok(renderedSnapshot.layout.lines.length > 0);
 
     const preview = await client.callTool({
       name: "preview_format_section",

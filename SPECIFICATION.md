@@ -154,6 +154,7 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
+| `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |
 | `export_docx` | 產生 A4 固定格線 Word | 是，建立檔案 |
 | `export_pdf` | 產生 A4 固定格線 PDF | 是，建立檔案 |
 | `export_text` | 產生依實際換行與分頁的純文字 | 是，建立檔案 |
@@ -168,6 +169,7 @@ Resources：
 
 - `essay://templates/police_information_essay`：模板 JSON。
 - `essay://instructions/workflow`：讀取、修改、檢查與匯出的工作流程。
+- `ui://widget/police-essay-answer-sheet.html`：ChatGPT Apps SDK 的互動答題紙畫板資源。
 
 Prompts：
 
@@ -222,6 +224,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
 - 可透過 `MCP_TRANSPORT=stdio` 接本機 MCP client，也可透過 `http://localhost:8787/mcp` 使用 Streamable HTTP。
 - Server 提供 tools、resources、prompts，且工具 schema 與安全標記明確。
+- `render_answer_sheet` 透過 `_meta.ui.resourceUri` 掛載畫板；畫板使用 `structuredContent` 顯示真實行數，並透過 MCP bridge 呼叫版面檢查與預覽／套用修改。
 
 ## 10. 明確不納入 v1
 
@@ -229,5 +232,5 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - 自動判斷考場實際格紙的拍攝透視與字跡大小。
 - 模型本身的語意評分或採點正確性保證。
 - 多使用者帳號、身份驗證、雲端同步。
-- 互動式 iframe 格紙 UI；目前保留 resources 與 structuredContent，後續可依 MCP Apps 加入。
+- 獨立於 ChatGPT 之外的瀏覽器側欄或桌面視窗；目前由 ChatGPT 宿主顯示內嵌 App iframe，並提供宿主支援的放大模式。
 

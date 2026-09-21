@@ -25,6 +25,7 @@ import {
 import { exportDocx, exportPdf, exportText } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore } from "./storage.js";
+import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay";
 
@@ -96,6 +97,11 @@ const exportOutputSchema = z.object({
   font: z.string().optional(),
   fontWarning: z.string().optional(),
 });
+
+const ANSWER_SHEET_UI_META = {
+  ui: { resourceUri: ANSWER_SHEET_WIDGET_URI },
+  "openai/outputTemplate": ANSWER_SHEET_WIDGET_URI,
+} as const;
 
 function textContent(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
@@ -170,8 +176,26 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
     {
       instructions:
-        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。",
+        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。",
     },
+  );
+
+  server.registerResource(
+    "police-information-essay-answer-sheet-widget",
+    ANSWER_SHEET_WIDGET_URI,
+    {
+      title: "警察資訊申論答題紙畫板",
+      description: "在 ChatGPT 內顯示可檢查版面、定位區塊與預覽／套用修改的互動答題紙。",
+      mimeType: "text/html;profile=mcp-app",
+    },
+    async (uri) => ({
+      contents: [{
+        uri: uri.href,
+        mimeType: "text/html;profile=mcp-app",
+        text: POLICE_ESSAY_WIDGET_HTML,
+        _meta: { ui: { prefersBorder: true } },
+      }],
+    }),
   );
 
   server.registerResource(
@@ -210,7 +234,8 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
           "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
           "5. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
           "6. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "7. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "7. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
+          "8. fits=true 後才呼叫 export_docx 或 export_pdf。",
         ].join("\n"),
       }],
     }),
@@ -246,6 +271,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
         layout: layoutReportSchema.optional(),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: ANSWER_SHEET_UI_META,
     },
     async ({ templateId, answerId }) => {
       const template = await store.getTemplate(templateId);
@@ -296,6 +322,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       outputSchema: snapshotOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
+        ...ANSWER_SHEET_UI_META,
         "openai/toolInvocation/invoking": "建立答題紙…",
         "openai/toolInvocation/invoked": "答題紙已建立。",
       },
@@ -321,6 +348,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       inputSchema: { answerId: answerIdSchema },
       outputSchema: snapshotOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: ANSWER_SHEET_UI_META,
     },
     async ({ answerId }) => {
       try {
@@ -715,6 +743,25 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const current = await loadSnapshot(store, answerId);
       const structuredContent = { answerId, version: current.answer.version, layout: current.layout };
       return { structuredContent, content: textContent(summarizeLayout(current.layout)) };
+    },
+  );
+
+  server.registerTool(
+    "render_answer_sheet",
+    {
+      title: "顯示申論答題紙畫板",
+      description: "Use this when the user asks to view, open, display, or edit an answer as a visual two-page answer-sheet canvas in ChatGPT. Call it after create_answer, read_answer, or a content change; it returns the authoritative structured answer and layout for the interactive UI.",
+      inputSchema: { answerId: answerIdSchema },
+      outputSchema: snapshotOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: {
+        ui: { resourceUri: ANSWER_SHEET_WIDGET_URI },
+        "openai/outputTemplate": ANSWER_SHEET_WIDGET_URI,
+      },
+    },
+    async ({ answerId }) => {
+      const current = await loadSnapshot(store, answerId);
+      return { structuredContent: current, content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`) };
     },
   );
 
