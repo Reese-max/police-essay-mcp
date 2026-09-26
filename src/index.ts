@@ -98,15 +98,24 @@ function setCorsHeaders(request: IncomingMessage, response: ServerResponse): voi
   response.setHeader("access-control-expose-headers", "mcp-session-id");
 }
 
+function originDenied(request: IncomingMessage): boolean {
+  const origin = request.headers.origin;
+  if (!origin) return false;
+  if (corsOrigin) return origin !== corsOrigin;
+  // With no CORS grant, browsers cannot read cross-origin responses. The
+  // explicit anonymous loopback mode still rejects browser-origin requests.
+  return allowAnonymousLoopback;
+}
+
 async function handleMcp(request: IncomingMessage, response: ServerResponse): Promise<void> {
   setCorsHeaders(request, response);
-  if (request.headers.origin && request.headers.origin !== corsOrigin) {
-    reject(response, 403, "Origin not allowed");
-    return;
-  }
   const scope = requestScope(request);
   if (!scope) {
     reject(response, 401, "Unauthorized");
+    return;
+  }
+  if (originDenied(request)) {
+    reject(response, 403, "Origin not allowed");
     return;
   }
   const contentLength = Number.parseInt(request.headers["content-length"] ?? "0", 10);
@@ -160,7 +169,7 @@ async function startHttp(): Promise<void> {
     const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "OPTIONS") {
       setCorsHeaders(request, response);
-      if (request.headers.origin && request.headers.origin !== corsOrigin) {
+      if (originDenied(request)) {
         reject(response, 403, "Origin not allowed");
         return;
       }
