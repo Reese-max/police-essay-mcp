@@ -178,7 +178,14 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     ]);
     assert.equal(concurrent.filter((item) => item.status === "fulfilled").length, 1);
     assert.equal(concurrent.filter((item) => item.status === "rejected").length, 1);
-    assert.equal((await store.getAnswer(answer.id)).version, 2);
+    const winner = concurrent[0]?.status === "fulfilled" ? updateA : updateB;
+    const loser = concurrent.find((item) => item.status === "rejected");
+    assert.ok(loser?.status === "rejected");
+    assert.match(String(loser.reason), /Version conflict: expected 1, current version is 2/);
+    const persisted = await store.getAnswer(answer.id);
+    assert.equal(persisted.version, 2);
+    assert.equal(persisted.title, winner.title);
+    assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
 
     const report = layoutSections(template, loaded.sections);
     const docxPath = store.resolveExportPath("test-answer.docx", "docx");
@@ -198,3 +205,63 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
   }
 });
 
+test("FileStore does not block a different answer while one write is paused", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-independent-"));
+  const makeAnswer = (title: string) => createAnswerDocument({
+    templateId: template.id,
+    title,
+    sections: [{ id: "intro", heading: "壹、前言", text: "初稿" }],
+  });
+  const first = makeAnswer("答案 A");
+  const second = makeAnswer("答案 B");
+  let releaseFirst!: () => void;
+  let signalFirstEntered!: () => void;
+  const firstEntered = new Promise<void>((resolve) => { signalFirstEntered = resolve; });
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let pauseFirst = false;
+  class PausingStore extends FileStore {
+    override async getAnswer(answerId: string) {
+      if (pauseFirst && answerId === first.id) {
+        signalFirstEntered();
+        await firstGate;
+      }
+      return super.getAnswer(answerId);
+    }
+  }
+  const store = new PausingStore({
+    templateDir: path.join(projectRoot, "templates"),
+    answerDir: path.join(root, "answers"),
+    exportDir: path.join(root, "exports"),
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let firstPending: Promise<void> | undefined;
+  try {
+    await Promise.all([store.saveAnswer(first), store.saveAnswer(second)]);
+    pauseFirst = true;
+    firstPending = store.saveAnswer(
+      { ...first, title: "答案 A 更新", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await firstEntered;
+
+    const secondPending = store.saveAnswer(
+      { ...second, title: "答案 B 更新", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await Promise.race([
+      secondPending,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Unrelated answer was blocked by the first write.")), 5000);
+      }),
+    ]);
+    const persistedSecond = await store.getAnswer(second.id);
+    assert.equal(persistedSecond.version, 2);
+    assert.equal(persistedSecond.title, "答案 B 更新");
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    pauseFirst = false;
+    releaseFirst();
+    if (firstPending) await firstPending;
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
