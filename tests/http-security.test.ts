@@ -154,6 +154,10 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     });
     assert.equal(created.isError, undefined);
     const answer = created.structuredContent as { answer: { id: string; version: number } };
+    const ownerList = await owner.callTool({ name: "list_answers", arguments: {} });
+    assert.equal(ownerList.isError, undefined);
+    const ownerAnswers = ownerList.structuredContent as { answers: Array<{ id: string }> };
+    assert.ok(ownerAnswers.answers.some((item) => item.id === answer.answer.id));
     reader = await connectClient(runtime.port, readToken);
     const toolNames = (await reader.listTools()).tools.map((tool) => tool.name);
     for (const name of ["list_answers", "read_answer", "check_layout"]) assert.ok(toolNames.includes(name));
