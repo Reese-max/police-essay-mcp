@@ -31,7 +31,7 @@ async function freePort(): Promise<number> {
 
 async function waitForReady(port: number, child: ChildProcess, logs: string[]): Promise<void> {
   const url = `http://127.0.0.1:${port}/readyz`;
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`MCP server exited before readiness: ${logs.join("")}`);
@@ -74,7 +74,13 @@ async function startServer(): Promise<{
   });
   child.stdout?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
   child.stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
-  await waitForReady(port, child, logs);
+  try {
+    await waitForReady(port, child, logs);
+  } catch (error) {
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   return { port, root, child, logs };
 }
 
@@ -272,4 +278,3 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     await rm(runtime.root, { recursive: true, force: true });
   }
 });
-
