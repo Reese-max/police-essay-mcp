@@ -10,7 +10,9 @@ const host = process.env.HOST ?? "127.0.0.1";
 const maxBodyBytes = Number.parseInt(process.env.MCP_MAX_BODY_BYTES ?? "2000000", 10);
 const requestTimeoutMs = Number.parseInt(process.env.MCP_REQUEST_TIMEOUT_MS ?? "30000", 10);
 const authToken = process.env.MCP_AUTH_TOKEN?.trim();
-const corsOrigin = process.env.CORS_ORIGIN ?? "*";
+const readToken = process.env.MCP_READ_TOKEN?.trim();
+const allowAnonymousLoopback = process.env.MCP_ALLOW_ANONYMOUS_LOOPBACK === "true";
+const corsOrigin = process.env.CORS_ORIGIN?.trim();
 const store = new FileStore({
   templateDir: process.env.ESSAY_MCP_TEMPLATE_DIR,
   answerDir: process.env.ESSAY_MCP_ANSWER_DIR,
@@ -25,17 +27,45 @@ function validateRuntimeConfig(): void {
   if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT 必須是 1 到 65535 的整數。");
   if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1_024) throw new Error("MCP_MAX_BODY_BYTES 必須至少為 1024。");
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1_000) throw new Error("MCP_REQUEST_TIMEOUT_MS 必須至少為 1000。");
-  if (!isLoopbackHost(host) && !authToken && process.env.MCP_ALLOW_ANONYMOUS_REMOTE !== "true") {
-    throw new Error("非本機 HOST 必須設定 MCP_AUTH_TOKEN，或明確設定 MCP_ALLOW_ANONYMOUS_REMOTE=true。");
+  if (process.env.MCP_ALLOW_ANONYMOUS_REMOTE === "true") {
+    throw new Error("MCP_ALLOW_ANONYMOUS_REMOTE 已停用；遠端 HTTP 必須設定 MCP_AUTH_TOKEN。");
+  }
+  if (allowAnonymousLoopback && (!isLoopbackHost(host) || authToken || readToken)) {
+    throw new Error("MCP_ALLOW_ANONYMOUS_LOOPBACK 只能在沒有 token 的純 loopback 模式使用。");
+  }
+  if (!authToken && !allowAnonymousLoopback) {
+    throw new Error("HTTP MCP 必須設定 MCP_AUTH_TOKEN；純本機匿名模式須明確設定 MCP_ALLOW_ANONYMOUS_LOOPBACK=true。");
+  }
+  if (readToken && (!authToken || readToken === authToken)) {
+    throw new Error("MCP_READ_TOKEN 必須與 MCP_AUTH_TOKEN 不同，且須同時設定 owner token。");
+  }
+  if (corsOrigin) {
+    let url: URL;
+    try {
+      url = new URL(corsOrigin);
+    } catch {
+      throw new Error("CORS_ORIGIN 必須是單一明確的 HTTPS origin，或本機 HTTP origin。");
+    }
+    if (url.origin !== corsOrigin || (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname)))) {
+      throw new Error("CORS_ORIGIN 必須是單一明確的 HTTPS origin，或本機 HTTP origin。");
+    }
   }
 }
 
-function tokenMatches(request: IncomingMessage): boolean {
-  if (!authToken) return true;
-  const supplied = request.headers.authorization?.replace(/^Bearer\s+/iu, "") ?? "";
-  const expectedBytes = Buffer.from(authToken, "utf8");
+function tokenMatches(supplied: string, expected: string | undefined): boolean {
+  if (!expected) return false;
+  const expectedBytes = Buffer.from(expected, "utf8");
   const suppliedBytes = Buffer.from(supplied, "utf8");
   return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+function requestScope(request: IncomingMessage): "owner" | "read" | undefined {
+  if (allowAnonymousLoopback) return "owner";
+  const supplied = /^Bearer ([^\s]+)$/iu.exec(request.headers.authorization ?? "")?.[1];
+  if (!supplied) return undefined;
+  if (tokenMatches(supplied, authToken)) return "owner";
+  if (tokenMatches(supplied, readToken)) return "read";
+  return undefined;
 }
 
 function reject(response: ServerResponse, status: number, error: string): void {
@@ -59,8 +89,9 @@ async function readReadiness(_request: IncomingMessage, response: ServerResponse
   }
 }
 
-function setCorsHeaders(response: ServerResponse): void {
+function setCorsHeaders(request: IncomingMessage, response: ServerResponse): void {
   response.setHeader("vary", "Origin");
+  if (!corsOrigin || request.headers.origin !== corsOrigin) return;
   response.setHeader("access-control-allow-origin", corsOrigin);
   response.setHeader("access-control-allow-headers", "authorization, content-type, mcp-session-id, last-event-id");
   response.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
@@ -68,8 +99,13 @@ function setCorsHeaders(response: ServerResponse): void {
 }
 
 async function handleMcp(request: IncomingMessage, response: ServerResponse): Promise<void> {
-  setCorsHeaders(response);
-  if (!tokenMatches(request)) {
+  setCorsHeaders(request, response);
+  if (request.headers.origin && request.headers.origin !== corsOrigin) {
+    reject(response, 403, "Origin not allowed");
+    return;
+  }
+  const scope = requestScope(request);
+  if (!scope) {
     reject(response, 401, "Unauthorized");
     return;
   }
@@ -79,7 +115,7 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
     return;
   }
   request.setTimeout(requestTimeoutMs, () => request.destroy(new Error("MCP request timed out")));
-  const server = createEssayMcpServer(store);
+  const server = createEssayMcpServer(store, { readOnly: scope === "read" });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   response.on("close", () => {
     void server.close().catch(() => undefined);
@@ -123,18 +159,22 @@ async function startHttp(): Promise<void> {
   const httpServer = createHttpServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (request.method === "OPTIONS") {
-      setCorsHeaders(response);
+      setCorsHeaders(request, response);
+      if (request.headers.origin && request.headers.origin !== corsOrigin) {
+        reject(response, 403, "Origin not allowed");
+        return;
+      }
       response.writeHead(204);
       response.end();
       return;
     }
     if (requestUrl.pathname === "/health" && request.method === "GET") {
-      setCorsHeaders(response);
+      setCorsHeaders(request, response);
       await readHealth(request, response);
       return;
     }
     if (requestUrl.pathname === "/readyz" && request.method === "GET") {
-      setCorsHeaders(response);
+      setCorsHeaders(request, response);
       await readReadiness(request, response);
       return;
     }
@@ -171,4 +211,3 @@ if (process.env.MCP_TRANSPORT === "stdio") {
 } else {
   await startHttp();
 }
-
