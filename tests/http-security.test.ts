@@ -76,9 +76,12 @@ async function waitForReady(runtime: Awaited<ReturnType<typeof spawnServer>>): P
   throw new Error(`Server did not become ready: ${runtime.logs.join("")}`);
 }
 
-async function connectClient(port: number, token?: string): Promise<Client> {
+async function connectClient(port: number, token?: string, origin?: string): Promise<Client> {
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+  if (origin) headers.origin = origin;
   const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
-    requestInit: token ? { headers: { authorization: `Bearer ${token}` } } : undefined,
+    requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
   });
   const client = new Client({ name: "issue-1-security-test", version: "0.1.0" }, { capabilities: {} });
   await client.connect(transport);
@@ -119,7 +122,7 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
       for (const authorization of [undefined, "Bearer wrong-token"]) {
         const response = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
           method,
-          headers: authorization ? { authorization } : undefined,
+          headers: authorization ? { authorization, origin: "https://untrusted.example" } : { origin: "https://untrusted.example" },
         });
         assert.equal(response.status, 401, `${method} ${authorization ?? "missing token"}`);
       }
@@ -198,6 +201,26 @@ test("anonymous loopback requires explicit opt-in and never enables browser orig
     assert.equal(blocked.headers.get("access-control-allow-origin"), null);
     client = await connectClient(runtime.port);
     assert.ok((await client.listTools()).tools.some((tool) => tool.name === "create_answer"));
+  } finally {
+    await client?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("authenticated same-origin clients work without a CORS grant", async () => {
+  const runtime = await spawnServer({ CORS_ORIGIN: "" });
+  let client: Client | undefined;
+  try {
+    await waitForReady(runtime);
+    const preflight = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+      method: "OPTIONS",
+      headers: { origin: "https://same.example" },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), null);
+    client = await connectClient(runtime.port, ownerToken, "https://same.example");
+    assert.ok((await client.listTools()).tools.some((tool) => tool.name === "read_answer"));
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
