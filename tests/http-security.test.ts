@@ -212,6 +212,23 @@ test("anonymous loopback requires explicit opt-in and never enables browser orig
   }
 });
 
+test("IPv6 loopback CORS origin is accepted", async () => {
+  const origin = "http://[::1]:3000";
+  const runtime = await spawnServer({ CORS_ORIGIN: origin });
+  try {
+    await waitForReady(runtime);
+    const preflight = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+      method: "OPTIONS",
+      headers: { origin },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), origin);
+  } finally {
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
 test("authenticated same-origin clients work without a CORS grant", async () => {
   const runtime = await spawnServer({ CORS_ORIGIN: "" });
   let client: Client | undefined;
