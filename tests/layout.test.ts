@@ -289,8 +289,15 @@ test("FileStore keeps a second stale writer outside the first writer's version r
     assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
   } finally {
     releaseFirst();
-    await Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined));
-    await fs.rm(root, { recursive: true, force: true });
+    try {
+      await within(
+        Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined)),
+        5000,
+        "Overlapping writers did not settle during cleanup.",
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -346,7 +353,10 @@ test("FileStore does not block a different answer while one write is paused", as
   } finally {
     pauseFirst = false;
     releaseFirst();
-    if (firstPending) await Promise.allSettled([firstPending]);
-    await fs.rm(root, { recursive: true, force: true });
+    try {
+      if (firstPending) await within(Promise.allSettled([firstPending]), 5000, "First write did not settle during cleanup.");
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   }
 });
