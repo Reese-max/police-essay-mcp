@@ -279,7 +279,11 @@ test("FileStore keeps a second stale writer outside the first writer's version r
     ]);
     assert.equal(secondEnteredBeforeRelease, false, "A stale second writer read version 1 while the first write was paused.");
     releaseFirst();
-    const outcomes = await Promise.allSettled([firstPending, secondPending]);
+    const outcomes = await within(
+      Promise.allSettled([firstPending, secondPending]),
+      5000,
+      "Overlapping writers did not settle after release.",
+    );
     assert.equal(outcomes[0]?.status, "fulfilled");
     assert.ok(outcomes[1]?.status === "rejected");
     assert.match(String(outcomes[1].reason), /Version conflict: expected 1, current version is 2/);
@@ -330,6 +334,7 @@ test("FileStore does not block a different answer while one write is paused", as
     exportDir: path.join(root, "exports"),
   });
   let firstPending: Promise<void> | undefined;
+  let secondPending: Promise<void> | undefined;
   try {
     await Promise.all([store.saveAnswer(first), store.saveAnswer(second)]);
     pauseFirst = true;
@@ -342,7 +347,7 @@ test("FileStore does not block a different answer while one write is paused", as
       firstPending.then(() => { throw new Error("First write finished before the pause handshake."); }),
     ]), 5000, "First write did not reach its pause handshake.");
 
-    const secondPending = store.saveAnswer(
+    secondPending = store.saveAnswer(
       { ...second, title: "答案 B 更新", version: 2, updatedAt: new Date().toISOString() },
       { expectedVersion: 1 },
     );
@@ -354,7 +359,11 @@ test("FileStore does not block a different answer while one write is paused", as
     pauseFirst = false;
     releaseFirst();
     try {
-      if (firstPending) await within(Promise.allSettled([firstPending]), 5000, "First write did not settle during cleanup.");
+      await within(
+        Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined)),
+        5000,
+        "Independent writes did not settle during cleanup.",
+      );
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
