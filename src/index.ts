@@ -46,7 +46,8 @@ function validateRuntimeConfig(): void {
     } catch {
       throw new Error("CORS_ORIGIN 必須是單一明確的 HTTPS origin，或本機 HTTP origin。");
     }
-    if (url.origin !== corsOrigin || (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname)))) {
+    const hostname = url.hostname === "[::1]" ? "::1" : url.hostname;
+    if (url.origin !== corsOrigin || (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(hostname)))) {
       throw new Error("CORS_ORIGIN 必須是單一明確的 HTTPS origin，或本機 HTTP origin。");
     }
   }
