@@ -184,21 +184,11 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     const loaded = await store.getAnswer(answer.id);
     assert.equal(loaded.version, 1);
 
-    const updateA = { ...loaded, title: "更新 A", version: 2, updatedAt: new Date().toISOString() };
-    const updateB = { ...loaded, title: "更新 B", version: 2, updatedAt: new Date().toISOString() };
-    const concurrent = await Promise.allSettled([
-      store.saveAnswer(updateA, { expectedVersion: 1 }),
-      store.saveAnswer(updateB, { expectedVersion: 1 }),
-    ]);
-    assert.equal(concurrent.filter((item) => item.status === "fulfilled").length, 1);
-    assert.equal(concurrent.filter((item) => item.status === "rejected").length, 1);
-    const winner = concurrent[0]?.status === "fulfilled" ? updateA : updateB;
-    const loser = concurrent.find((item) => item.status === "rejected");
-    assert.ok(loser?.status === "rejected");
-    assert.match(String(loser.reason), /Version conflict: expected 1, current version is 2/);
+    const updated = { ...loaded, title: "更新後答案", version: 2, updatedAt: new Date().toISOString() };
+    await store.saveAnswer(updated, { expectedVersion: 1 });
     const persisted = await store.getAnswer(answer.id);
     assert.equal(persisted.version, 2);
-    assert.equal(persisted.title, winner.title);
+    assert.equal(persisted.title, updated.title);
     assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
 
     const report = layoutSections(template, loaded.sections);
@@ -296,6 +286,7 @@ test("FileStore keeps a second stale writer outside the first writer's version r
     const persisted = await store.getAnswer(answer.id);
     assert.equal(persisted.version, 2);
     assert.equal(persisted.title, "更新 A");
+    assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
   } finally {
     releaseFirst();
     await Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined));
