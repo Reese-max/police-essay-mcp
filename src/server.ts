@@ -162,7 +162,7 @@ function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store = new FileStore()): McpServer {
+export function createEssayMcpServer(store = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -282,7 +282,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const createAnswerTool = server.registerTool(
     "create_answer",
     {
       title: "建立申論答案",
@@ -333,7 +333,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const writeAnswerTool = server.registerTool(
     "write_answer",
     {
       title: "寫入完整申論答案",
@@ -451,7 +451,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const replaceTextTool = server.registerTool(
     "replace_text",
     {
       title: "替換申論區塊",
@@ -500,7 +500,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const formatSectionTool = server.registerTool(
     "format_section",
     {
       title: "格式化申論區塊",
@@ -581,7 +581,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const insertTextTool = server.registerTool(
     "insert_text",
     {
       title: "插入申論區塊",
@@ -652,7 +652,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const deleteTextTool = server.registerTool(
     "delete_text",
     {
       title: "刪除申論區塊",
@@ -718,7 +718,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const exportDocxTool = server.registerTool(
     "export_docx",
     {
       title: "輸出申論 Word",
@@ -747,7 +747,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const exportTextTool = server.registerTool(
     "export_text",
     {
       title: "輸出申論純文字",
@@ -776,7 +776,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const exportPdfTool = server.registerTool(
     "export_pdf",
     {
       title: "輸出申論 PDF",
@@ -804,6 +804,20 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       };
     },
   );
+
+  if (options.readOnly) {
+    for (const tool of [
+      createAnswerTool,
+      writeAnswerTool,
+      replaceTextTool,
+      formatSectionTool,
+      insertTextTool,
+      deleteTextTool,
+      exportDocxTool,
+      exportTextTool,
+      exportPdfTool,
+    ]) tool.remove();
+  }
 
   server.registerPrompt(
     "draft_answer",
@@ -853,4 +867,3 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
 
   return server;
 }
-
