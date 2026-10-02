@@ -312,7 +312,7 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
 
     for (const format of ["docx", "pdf", "txt"] as const) {
       const exported = await owner.callTool({
-        name: `export_${format}`,
+        name: format === "txt" ? "export_text" : `export_${format}`,
         arguments: { answerId, filename: `artifact-round-trip-${format}` },
       });
       assert.equal(exported.isError, undefined, JSON.stringify(exported));
