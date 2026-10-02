@@ -22,6 +22,20 @@ const template = JSON.parse(
   await fs.readFile(path.join(projectRoot, "templates", "police_information_essay.json"), "utf8"),
 ) as AnswerTemplate;
 
+async function within<T>(pending: Promise<T>, milliseconds: number, message: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
 test("display width counts CJK as two cells and ASCII as one", () => {
   assert.equal(characterDisplayWidth("中"), 2);
   assert.equal(characterDisplayWidth("A"), 1);
@@ -170,15 +184,12 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     const loaded = await store.getAnswer(answer.id);
     assert.equal(loaded.version, 1);
 
-    const updateA = { ...loaded, title: "更新 A", version: 2, updatedAt: new Date().toISOString() };
-    const updateB = { ...loaded, title: "更新 B", version: 2, updatedAt: new Date().toISOString() };
-    const concurrent = await Promise.allSettled([
-      store.saveAnswer(updateA, { expectedVersion: 1 }),
-      store.saveAnswer(updateB, { expectedVersion: 1 }),
-    ]);
-    assert.equal(concurrent.filter((item) => item.status === "fulfilled").length, 1);
-    assert.equal(concurrent.filter((item) => item.status === "rejected").length, 1);
-    assert.equal((await store.getAnswer(answer.id)).version, 2);
+    const updated = { ...loaded, title: "更新後答案", version: 2, updatedAt: new Date().toISOString() };
+    await store.saveAnswer(updated, { expectedVersion: 1 });
+    const persisted = await store.getAnswer(answer.id);
+    assert.equal(persisted.version, 2);
+    assert.equal(persisted.title, updated.title);
+    assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
 
     const report = layoutSections(template, loaded.sections);
     const docxPath = store.resolveExportPath("test-answer.docx", "docx");
@@ -198,3 +209,163 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
   }
 });
 
+test("FileStore keeps a second stale writer outside the first writer's version read", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-overlap-"));
+  const answer = createAnswerDocument({
+    templateId: template.id,
+    title: "原始答案",
+    sections: [{ id: "intro", heading: "壹、前言", text: "初稿" }],
+  });
+  let signalFirstRead!: () => void;
+  let signalSecondRead!: () => void;
+  let signalSecondReady!: () => void;
+  let releaseFirst!: () => void;
+  const firstRead = new Promise<void>((resolve) => { signalFirstRead = resolve; });
+  const secondRead = new Promise<void>((resolve) => { signalSecondRead = resolve; });
+  const secondReady = new Promise<void>((resolve) => { signalSecondReady = resolve; });
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let holdReads = false;
+  let readCount = 0;
+  let writeStarts = 0;
+  class BarrierStore extends FileStore {
+    override async ensureDirectories() {
+      await super.ensureDirectories();
+      if (holdReads && ++writeStarts === 2) signalSecondReady();
+    }
+    override async getAnswer(answerId: string) {
+      if (holdReads && answerId === answer.id && readCount > 0) signalSecondRead();
+      const current = await super.getAnswer(answerId);
+      if (holdReads && answerId === answer.id) {
+        readCount++;
+        if (readCount === 1) {
+          signalFirstRead();
+          await firstGate;
+        } else {
+          signalSecondRead();
+        }
+      }
+      return current;
+    }
+  }
+  const store = new BarrierStore({
+    templateDir: path.join(projectRoot, "templates"),
+    answerDir: path.join(root, "answers"),
+    exportDir: path.join(root, "exports"),
+  });
+  let firstPending: Promise<void> | undefined;
+  let secondPending: Promise<void> | undefined;
+  try {
+    await store.saveAnswer(answer);
+    holdReads = true;
+    firstPending = store.saveAnswer(
+      { ...answer, title: "更新 A", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await within(Promise.race([
+      firstRead,
+      firstPending.then(() => { throw new Error("First writer completed before the read barrier."); }),
+    ]), 5000, "First writer did not reach the version read.");
+    secondPending = store.saveAnswer(
+      { ...answer, title: "更新 B", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await within(Promise.race([
+      secondReady,
+      secondPending.then(() => { throw new Error("Second writer finished before reaching the lock."); }),
+    ]), 5000, "Second writer did not reach the lock.");
+    const secondEnteredBeforeRelease = await Promise.race([
+      secondRead.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]);
+    assert.equal(secondEnteredBeforeRelease, false, "A stale second writer read version 1 while the first write was paused.");
+    releaseFirst();
+    const outcomes = await within(
+      Promise.allSettled([firstPending, secondPending]),
+      5000,
+      "Overlapping writers did not settle after release.",
+    );
+    assert.equal(outcomes[0]?.status, "fulfilled");
+    assert.ok(outcomes[1]?.status === "rejected");
+    assert.match(String(outcomes[1].reason), /Version conflict: expected 1, current version is 2/);
+    const persisted = await store.getAnswer(answer.id);
+    assert.equal(persisted.version, 2);
+    assert.equal(persisted.title, "更新 A");
+    assert.deepEqual(await fs.readdir(store.answerDir), [`${answer.id}.json`]);
+  } finally {
+    releaseFirst();
+    try {
+      await within(
+        Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined)),
+        5000,
+        "Overlapping writers did not settle during cleanup.",
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
+test("FileStore does not block a different answer while one write is paused", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-independent-"));
+  const makeAnswer = (title: string) => createAnswerDocument({
+    templateId: template.id,
+    title,
+    sections: [{ id: "intro", heading: "壹、前言", text: "初稿" }],
+  });
+  const first = makeAnswer("答案 A");
+  const second = makeAnswer("答案 B");
+  let releaseFirst!: () => void;
+  let signalFirstEntered!: () => void;
+  const firstEntered = new Promise<void>((resolve) => { signalFirstEntered = resolve; });
+  const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let pauseFirst = false;
+  class PausingStore extends FileStore {
+    override async getAnswer(answerId: string) {
+      if (pauseFirst && answerId === first.id) {
+        signalFirstEntered();
+        await firstGate;
+      }
+      return super.getAnswer(answerId);
+    }
+  }
+  const store = new PausingStore({
+    templateDir: path.join(projectRoot, "templates"),
+    answerDir: path.join(root, "answers"),
+    exportDir: path.join(root, "exports"),
+  });
+  let firstPending: Promise<void> | undefined;
+  let secondPending: Promise<void> | undefined;
+  try {
+    await Promise.all([store.saveAnswer(first), store.saveAnswer(second)]);
+    pauseFirst = true;
+    firstPending = store.saveAnswer(
+      { ...first, title: "答案 A 更新", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await within(Promise.race([
+      firstEntered,
+      firstPending.then(() => { throw new Error("First write finished before the pause handshake."); }),
+    ]), 5000, "First write did not reach its pause handshake.");
+
+    secondPending = store.saveAnswer(
+      { ...second, title: "答案 B 更新", version: 2, updatedAt: new Date().toISOString() },
+      { expectedVersion: 1 },
+    );
+    await within(secondPending, 5000, "Unrelated answer was blocked by the first write.");
+    const persistedSecond = await store.getAnswer(second.id);
+    assert.equal(persistedSecond.version, 2);
+    assert.equal(persistedSecond.title, "答案 B 更新");
+  } finally {
+    pauseFirst = false;
+    releaseFirst();
+    try {
+      await within(
+        Promise.allSettled([firstPending, secondPending].filter((pending): pending is Promise<void> => pending !== undefined)),
+        5000,
+        "Independent writes did not settle during cleanup.",
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+});
