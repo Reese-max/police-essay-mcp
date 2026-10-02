@@ -335,9 +335,8 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
       assert.ok(!structured.exportUri.includes(`artifact-round-trip-${format}`));
       uris.push(structured.exportUri);
 
-      const link = (exported.content ?? []).find((block) => block.type === "resource_link") as
-        | { uri?: string; mimeType?: string }
-        | undefined;
+      const blocks = (exported.content ?? []) as Array<{ type: string; uri?: string; mimeType?: string }>;
+      const link = blocks.find((block) => block.type === "resource_link");
       assert.ok(link);
       assert.equal(link.uri, structured.exportUri);
       assert.equal(link.mimeType, expectedMime[format]);

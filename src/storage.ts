@@ -130,15 +130,7 @@ export class FileStore {
       throw new Error(`Invalid export filename; expected a simple .${extension} filename.`);
     }
     return path.join(this.exportDir, normalized);
-  }  resolveExportPath(filename: string, extension: ExportFormat): string {
-    const normalized = filename.endsWith(`.${extension}`) ? filename : `${filename}.${extension}`;
-    const allowedFilename = new RegExp(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\\.${extension}$`);
-    if (!allowedFilename.test(normalized)) {
-      throw new Error(`Invalid export filename; expected a simple .${extension} filename.`);
-    }
-    return path.join(this.exportDir, normalized);
   }
-  
   async createExportHandle(
     outputPath: string,
     details: { answerId: string; answerVersion: number; format: ExportFormat },
