@@ -315,7 +315,7 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
         name: `export_${format}`,
         arguments: { answerId, filename: `artifact-round-trip-${format}` },
       });
-      assert.equal(exported.isError, undefined);
+      assert.equal(exported.isError, undefined, JSON.stringify(exported));
       const structured = exported.structuredContent as {
         answerId: string;
         version: number;

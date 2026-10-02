@@ -35,7 +35,6 @@ export class FileStore {
       fs.mkdir(this.templateDir, { recursive: true }),
       fs.mkdir(this.answerDir, { recursive: true }),
       fs.mkdir(this.exportDir, { recursive: true }),
-      fs.mkdir(this.artifactDir, { recursive: true }),
     ]);
   }
 
@@ -136,6 +135,7 @@ export class FileStore {
     details: { answerId: string; answerVersion: number; format: ExportFormat },
   ): Promise<{ handle: string; name: string; mimeType: string; expiresAt: string }> {
     await this.ensureDirectories();
+    await fs.mkdir(this.artifactDir, { recursive: true });
     const name = path.basename(outputPath);
     const safeSource = path.resolve(this.resolveExportPath(name, details.format));
     if (path.resolve(outputPath) !== safeSource) throw new Error("Export artifact not found.");
