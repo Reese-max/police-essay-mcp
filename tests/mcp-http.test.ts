@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const authToken = "integration-test-token";
+const readToken = "integration-read-test-token";
 const bodyLimit = 1_024;
 
 async function freePort(): Promise<number> {
@@ -64,6 +65,7 @@ async function startServer(): Promise<{
       HOST: "127.0.0.1",
       PORT: String(port),
       MCP_AUTH_TOKEN: authToken,
+      MCP_READ_TOKEN: readToken,
       MCP_MAX_BODY_BYTES: String(bodyLimit),
       CORS_ORIGIN: "https://example.test",
       ESSAY_MCP_TEMPLATE_DIR: path.join(projectRoot, "templates"),
@@ -274,6 +276,130 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal((await stat(exportedContent.path)).isFile(), true);
   } finally {
     await client?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("export artifacts are owner-only opaque resources with bytes, MIME, and expiry", async () => {
+  const runtime = await startServer();
+  let owner: Client | undefined;
+  let reader: Client | undefined;
+  try {
+    const ownerTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+    });
+    owner = new Client({ name: "police-essay-mcp-export-artifact-owner-test", version: "0.1.0" }, { capabilities: {} });
+    await owner.connect(ownerTransport);
+
+    const created = await owner.callTool({
+      name: "create_answer",
+      arguments: {
+        templateId: "police_information_essay",
+        title: "匯出 artifact 測試",
+        sections: [{ id: "intro", heading: "前言", text: "這是一段測試內容。" }],
+      },
+    });
+    assert.equal(created.isError, undefined);
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+
+    const expectedMime = {
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      pdf: "application/pdf",
+      txt: "text/plain",
+    } as const;
+    const uris: string[] = [];
+
+    for (const format of ["docx", "pdf", "txt"] as const) {
+      const exported = await owner.callTool({
+        name: format === "txt" ? "export_text" : `export_${format}`,
+        arguments: { answerId, filename: `artifact-round-trip-${format}` },
+      });
+      assert.equal(exported.isError, undefined, JSON.stringify(exported));
+      const structured = exported.structuredContent as {
+        answerId: string;
+        version: number;
+        format: string;
+        path: string;
+        exportUri: string;
+        exportExpiresAt: string;
+      };
+      assert.equal(structured.answerId, answerId);
+      assert.equal(structured.version, 1);
+      assert.equal(structured.format, format);
+      const expiresIn = Date.parse(structured.exportExpiresAt) - Date.now();
+      assert.ok(expiresIn > 23 * 60 * 60 * 1000 && expiresIn <= 24 * 60 * 60 * 1000);
+
+      const handle = structured.exportUri.slice("essay://exports/".length);
+      assert.match(handle, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      assert.ok(!structured.exportUri.includes(`artifact-round-trip-${format}`));
+      uris.push(structured.exportUri);
+
+      const blocks = (exported.content ?? []) as Array<{ type: string; uri?: string; mimeType?: string }>;
+      const link = blocks.find((block) => block.type === "resource_link");
+      assert.ok(link);
+      assert.equal(link.uri, structured.exportUri);
+      assert.equal(link.mimeType, expectedMime[format]);
+
+      const resource = await owner.readResource({ uri: structured.exportUri });
+      assert.equal(resource.contents.length, 1);
+      const artifact = resource.contents[0] as { uri: string; mimeType?: string; blob?: string };
+      assert.equal(artifact.uri, structured.exportUri);
+      assert.equal(artifact.mimeType, expectedMime[format]);
+      const encoded = artifact.blob;
+      assert.ok(encoded);
+      const onDisk = await readFile(structured.path);
+      assert.equal(Buffer.from(encoded, "base64").equals(onDisk), true);
+    }
+
+    const unauthenticated = await request(
+      runtime.port,
+      { method: "POST", path: "/mcp", headers: { "content-type": "application/json" } },
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 90,
+        method: "resources/read",
+        params: { uri: uris[0] },
+      }),
+    );
+    assert.equal(unauthenticated.status, 401);
+
+    const readerTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${readToken}` } },
+    });
+    reader = new Client({ name: "police-essay-mcp-export-artifact-reader-test", version: "0.1.0" }, { capabilities: {} });
+    await reader.connect(readerTransport);
+    await assert.rejects(
+      () => reader!.readResource({ uri: uris[0] }),
+      /.+/,
+      "read token must not retrieve owner exports",
+    );
+
+    await assert.rejects(
+      () => owner!.readResource({ uri: "essay://exports/00000000-0000-4000-8000-000000000000" }),
+      /.+/,
+      "unknown handle must fail closed",
+    );
+    await assert.rejects(
+      () => owner!.readResource({ uri: "essay://exports/..%2Fsecret.txt" }),
+      /.+/,
+      "path traversal must fail closed",
+    );
+
+    const expiredHandle = uris[2].slice("essay://exports/".length);
+    const manifestPath = path.join(runtime.root, "exports", ".artifacts", `${expiredHandle}.json`);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { createdAt: number; expiresAt: number };
+    manifest.expiresAt = Date.now() - 1;
+    manifest.createdAt = manifest.expiresAt - 24 * 60 * 60 * 1000;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(
+      () => owner!.readResource({ uri: uris[2] }),
+      /.+/,
+      "expired handle must fail closed",
+    );
+  } finally {
+    await reader?.close().catch(() => undefined);
+    await owner?.close().catch(() => undefined);
     await stopServer(runtime.child);
     await rm(runtime.root, { recursive: true, force: true });
   }

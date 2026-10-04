@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/src/index.js",
-    "test": "tsx --test",
+    "test": "node scripts/run-tests.js",
     "test:render": "tsx scripts/render-regression.ts",
     "check": "tsc --noEmit -p tsconfig.json"
   },
