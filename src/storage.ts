@@ -21,6 +21,7 @@ export class FileStore {
   readonly exportDir: string;
   readonly artifactDir: string;
   private readonly answerWriteTails = new Map<string, Promise<void>>();
+  private readonly exportWriteTails = new Map<string, Promise<void>>();
 
   constructor(options: { templateDir?: string; answerDir?: string; exportDir?: string } = {}) {
     const root = process.cwd();
@@ -130,6 +131,25 @@ export class FileStore {
     }
     return path.join(this.exportDir, normalized);
   }
+
+  async withExportWriteLock<T>(outputPath: string, operation: () => Promise<T>): Promise<T> {
+    // Keep rendering and the immutable artifact copy together. Case folding also
+    // serializes filename aliases on case-insensitive filesystems.
+    const key = path.resolve(outputPath).toLowerCase();
+    const previous = this.exportWriteTails.get(key) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => { release = resolve; });
+    const queued = previous.then(() => current);
+    this.exportWriteTails.set(key, queued);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.exportWriteTails.get(key) === queued) this.exportWriteTails.delete(key);
+    }
+  }
+
   async createExportHandle(
     outputPath: string,
     details: { answerId: string; answerVersion: number; format: ExportFormat },
