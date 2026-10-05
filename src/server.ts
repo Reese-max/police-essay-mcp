@@ -772,27 +772,29 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
-      const artifact = await store.createExportHandle(output.path, {
-        answerId,
-        answerVersion: current.answer.version,
-        format: "docx",
-      });
-      const exportUri = `essay://exports/${artifact.handle}`;
-      return {
-        structuredContent: {
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
           answerId,
-          version: current.answer.version,
-          ...output,
-          exportUri,
-          exportExpiresAt: artifact.expiresAt,
-          layout: current.layout,
-        },
-        content: [
-          ...textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
-          exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
-        ],
-      };
+          answerVersion: current.answer.version,
+          format: "docx",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
 
@@ -817,27 +819,29 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      const output = await exportText(current.layout, template, outputPath, allowOverflow);
-      const artifact = await store.createExportHandle(output.path, {
-        answerId,
-        answerVersion: current.answer.version,
-        format: "txt",
-      });
-      const exportUri = `essay://exports/${artifact.handle}`;
-      return {
-        structuredContent: {
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportText(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
           answerId,
-          version: current.answer.version,
-          ...output,
-          exportUri,
-          exportExpiresAt: artifact.expiresAt,
-          layout: current.layout,
-        },
-        content: [
-          ...textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
-          exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
-        ],
-      };
+          answerVersion: current.answer.version,
+          format: "txt",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
 
@@ -862,27 +866,29 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
-      const artifact = await store.createExportHandle(output.path, {
-        answerId,
-        answerVersion: current.answer.version,
-        format: "pdf",
-      });
-      const exportUri = `essay://exports/${artifact.handle}`;
-      return {
-        structuredContent: {
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
           answerId,
-          version: current.answer.version,
-          ...output,
-          exportUri,
-          exportExpiresAt: artifact.expiresAt,
-          layout: current.layout,
-        },
-        content: [
-          ...textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
-          exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
-        ],
-      };
+          answerVersion: current.answer.version,
+          format: "pdf",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
 

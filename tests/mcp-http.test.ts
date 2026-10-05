@@ -338,6 +338,55 @@ test("independent HTTP MCP clients cannot overwrite the same accepted answer ver
   }
 });
 
+test("concurrent exports sharing a filename retain each answer's immutable artifact", async () => {
+  const runtime = await startServer();
+  const clients: Client[] = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const client = new Client({ name: `essay-export-writer-${index}`, version: "0.1.0" }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+      }));
+      clients.push(client);
+    }
+    for (let pair = 0; pair < 6; pair++) {
+      const texts = [`EXPORT_A_${pair}`, `EXPORT_B_${pair}`];
+      const created = await Promise.all(clients.map((client, index) => client.callTool({
+        name: "create_answer",
+        arguments: { templateId: "police_information_essay", title: `export-${index}-${pair}`,
+          sections: [{ id: "intro", heading: "前言", text: texts[index] }] },
+      })));
+      const answerIds = created.map(result => {
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+        return (result.structuredContent as { answer: { id: string } }).answer.id;
+      });
+      const exported = await Promise.all(clients.map((client, index) => client.callTool({
+        name: "export_text", arguments: { answerId: answerIds[index], filename: `shared-export-${pair}` },
+      })));
+      const uris: string[] = [];
+      for (let index = 0; index < exported.length; index++) {
+        const result = exported[index];
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+        const structured = result.structuredContent as { answerId: string; version: number; exportUri: string };
+        assert.equal(structured.answerId, answerIds[index]);
+        assert.equal(structured.version, 1);
+        uris.push(structured.exportUri);
+        const resource = await clients[index].readResource({ uri: structured.exportUri });
+        const artifact = resource.contents[0] as { mimeType: string; blob: string };
+        assert.equal(artifact.mimeType, "text/plain");
+        const text = Buffer.from(artifact.blob, "base64").toString("utf8");
+        assert.ok(text.includes(texts[index]), `artifact must contain its own answer: ${text}`);
+        assert.ok(!text.includes(texts[1 - index]), "artifact must not contain the competing answer");
+      }
+      assert.notEqual(uris[0], uris[1]);
+    }
+  } finally {
+    await Promise.all(clients.map(client => client.close().catch(() => undefined)));
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
 test("export artifacts are owner-only opaque resources with bytes, MIME, and expiry", async () => {
   const runtime = await startServer();
   let owner: Client | undefined;
