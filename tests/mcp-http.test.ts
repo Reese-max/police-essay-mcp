@@ -281,6 +281,63 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
   }
 });
 
+test("independent HTTP MCP clients cannot overwrite the same accepted answer version", async () => {
+  const runtime = await startServer();
+  const clients: Client[] = [];
+  try {
+    for (const name of ["writer-a", "writer-b", "independent-writer"]) {
+      const client = new Client({ name, version: "0.1.0" }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+      }));
+      clients.push(client);
+    }
+    for (let round = 0; round < 10; round++) {
+      const create = async (client: Client, title: string) => {
+        const result = await client.callTool({ name: "create_answer", arguments: {
+          templateId: "police_information_essay", title,
+          sections: [{ id: "intro", text: "初稿" }],
+        } });
+        assert.equal(result.isError, undefined);
+        return (result.structuredContent as { answer: { id: string } }).answer.id;
+      };
+      const answerId = await create(clients[0], `重疊作答 ${round}`);
+      const otherId = await create(clients[2], `獨立作答 ${round}`);
+      const edit = (client: Client, id: string, text: string) => client.callTool({
+        name: "write_answer", arguments: { answerId: id, expectedVersion: 1,
+          sections: [{ id: "intro", text }],
+        },
+      });
+      // Distinct SDK clients issue distinct HTTP requests to the child process;
+      // the direct FileStore barrier tests separately pin the atomic critical section.
+      const results = await Promise.all([
+        edit(clients[0], answerId, "writer A"),
+        edit(clients[1], answerId, "writer B"),
+        edit(clients[2], otherId, "independent writer"),
+      ]);
+      const shared = results.slice(0, 2);
+      assert.equal(shared.filter(result => !result.isError).length, 1);
+      const rejected = shared.find(result => result.isError);
+      assert.ok(rejected);
+      assert.match(JSON.stringify(rejected.content), /Version conflict: expected 1, current version is 2/);
+      assert.equal(results[2].isError, undefined);
+      const winner = shared.find(result => !result.isError)!.structuredContent as {
+        answer: { version: number; sections: Array<{ text: string }> };
+      };
+      const persisted = JSON.parse(await readFile(path.join(runtime.root, "answers", `${answerId}.json`), "utf8"));
+      assert.equal(persisted.version, 2);
+      assert.equal(persisted.sections[0].text, winner.answer.sections[0].text);
+      const independent = JSON.parse(await readFile(path.join(runtime.root, "answers", `${otherId}.json`), "utf8"));
+      assert.equal(independent.version, 2);
+      assert.equal(independent.sections[0].text, "independent writer");
+    }
+  } finally {
+    await Promise.all(clients.map(client => client.close().catch(() => undefined)));
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
 test("export artifacts are owner-only opaque resources with bytes, MIME, and expiry", async () => {
   const runtime = await startServer();
   let owner: Client | undefined;
