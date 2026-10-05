@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
@@ -13,6 +14,12 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ownerToken = "issue-1-owner-test-token";
 const readToken = "issue-1-read-test-token";
+
+// Every request in this file targets loopback or a LAN interface; ambient
+// proxy settings would reroute the remote-path probes and make them flaky.
+for (const name of Object.keys(process.env)) {
+  if (/^(?:https?|all)_proxy$/iu.test(name)) delete process.env[name];
+}
 
 async function freePort(): Promise<number> {
   const server = net.createServer();
@@ -76,16 +83,28 @@ async function waitForReady(runtime: Awaited<ReturnType<typeof spawnServer>>): P
   throw new Error(`Server did not become ready: ${runtime.logs.join("")}`);
 }
 
-async function connectClient(port: number, token?: string, origin?: string): Promise<Client> {
+async function connectClient(port: number, token?: string, origin?: string, hostname = "127.0.0.1"): Promise<Client> {
   const headers: Record<string, string> = {};
   if (token) headers.authorization = `Bearer ${token}`;
   if (origin) headers.origin = origin;
-  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+  const transport = new StreamableHTTPClientTransport(new URL(`http://${hostname}:${port}/mcp`), {
     requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
   });
   const client = new Client({ name: "issue-1-security-test", version: "0.1.0" }, { capabilities: {} });
   await client.connect(transport);
   return client;
+}
+
+// A tunnel or reverse proxy terminates remote connections and forwards them to
+// this listener, so requests arriving on a non-loopback interface stand in for
+// the real remote path. Returns undefined on hosts with no external address.
+function nonLoopbackAddress(): string | undefined {
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) return address.address;
+    }
+  }
+  return undefined;
 }
 
 test("HTTP rejects missing credentials at startup even when a tunnel targets loopback", async () => {
@@ -125,6 +144,7 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
           headers: authorization ? { authorization, origin: "https://untrusted.example" } : { origin: "https://untrusted.example" },
         });
         assert.equal(response.status, 401, `${method} ${authorization ?? "missing token"}`);
+        assert.match(response.headers.get("www-authenticate") ?? "", /^Bearer\s/, `${method} ${authorization ?? "missing token"} challenge`);
       }
     }
     assert.deepEqual(await readdir(path.join(runtime.root, "answers")), []);
@@ -184,6 +204,45 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     const snapshot = unchanged.structuredContent as { answer: { version: number; sections: Array<{ text: string }> } };
     assert.equal(snapshot.answer.version, 1);
     assert.equal(snapshot.answer.sections[0].text, "Original answer");
+  } finally {
+    await reader?.close().catch(() => undefined);
+    await owner?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("remote-path requests without owner credentials get a Bearer-challenged 401 before storage", async () => {
+  // HOST=0.0.0.0 is the shape a tunnel or LAN exposure takes; dialing a real
+  // non-loopback address proves the boundary on the path remote callers use.
+  const runtime = await spawnServer({ HOST: "0.0.0.0" });
+  let owner: Client | undefined;
+  let reader: Client | undefined;
+  try {
+    await waitForReady(runtime);
+    const remoteHost = nonLoopbackAddress() ?? "127.0.0.1";
+    for (const method of ["GET", "POST", "DELETE"]) {
+      for (const authorization of [undefined, "Bearer wrong-token"]) {
+        const response = await fetch(`http://${remoteHost}:${runtime.port}/mcp`, {
+          method,
+          headers: authorization ? { authorization } : {},
+        });
+        assert.equal(response.status, 401, `remote ${method} ${authorization ?? "missing token"}`);
+        assert.match(response.headers.get("www-authenticate") ?? "", /^Bearer\s/, `remote ${method} ${authorization ?? "missing token"} challenge`);
+      }
+    }
+    assert.deepEqual(await readdir(path.join(runtime.root, "answers")), []);
+    assert.deepEqual(await readdir(path.join(runtime.root, "exports")), []);
+
+    owner = await connectClient(runtime.port, ownerToken, undefined, remoteHost);
+    const ownerList = await owner.callTool({ name: "list_answers", arguments: {} });
+    assert.equal(ownerList.isError, undefined);
+
+    reader = await connectClient(runtime.port, readToken, undefined, remoteHost);
+    const toolNames = (await reader.listTools()).tools.map((tool) => tool.name);
+    for (const name of ["create_answer", "write_answer", "delete_text", "export_text"]) {
+      assert.ok(!toolNames.includes(name), `${name} exposed to remote read credential`);
+    }
   } finally {
     await reader?.close().catch(() => undefined);
     await owner?.close().catch(() => undefined);
