@@ -112,6 +112,9 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
   setCorsHeaders(request, response);
   const scope = requestScope(request);
   if (!scope) {
+    // RFC 9110 §15.5.1 / RFC 6750 §3: a 401 response must carry a Bearer
+    // challenge so remote connectors can discover the credential scheme.
+    response.setHeader("www-authenticate", 'Bearer realm="police-essay-mcp"');
     reject(response, 401, "Unauthorized");
     return;
   }
