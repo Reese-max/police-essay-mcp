@@ -95,11 +95,18 @@ async function connectClient(port: number, token?: string, origin?: string, host
   return client;
 }
 
-// A tunnel or reverse proxy terminates remote connections and forwards them to
-// this listener, so requests arriving on a non-loopback interface stand in for
-// the real remote path. Returns undefined on hosts with no external address.
-function nonLoopbackAddress(): string | undefined {
-  for (const addresses of Object.values(os.networkInterfaces())) {
+type InterfaceAddress = {
+  address: string;
+  family: string;
+  internal: boolean;
+};
+
+type InterfaceMap = Record<string, readonly InterfaceAddress[] | undefined>;
+
+// A host's non-loopback IPv4 address can exercise LAN or local-overlay routing.
+// That is useful coverage, but it is not evidence of a real HTTPS tunnel.
+function nonLoopbackAddress(interfaces: InterfaceMap = os.networkInterfaces()): string | undefined {
+  for (const addresses of Object.values(interfaces)) {
     for (const address of addresses ?? []) {
       if (address.family === "IPv4" && !address.internal) return address.address;
     }
@@ -212,18 +219,34 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
   }
 });
 
-test("remote-path requests without owner credentials get a Bearer-challenged 401 before storage", async () => {
-  // HOST=0.0.0.0 is the shape a tunnel or LAN exposure takes; dialing a real
-  // non-loopback address proves the boundary on the path remote callers use.
+test("nonLoopbackAddress selects only an external IPv4 interface", () => {
+  const syntheticInterfaces: InterfaceMap = {
+    loopback: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
+    ipv6: [{ address: "2001:db8::1", family: "IPv6", internal: false }],
+    lan: [{ address: "192.0.2.25", family: "IPv4", internal: false }],
+  };
+
+  assert.equal(nonLoopbackAddress(syntheticInterfaces), "192.0.2.25");
+  assert.equal(nonLoopbackAddress({ loopback: syntheticInterfaces.loopback, ipv6: syntheticInterfaces.ipv6 }), undefined);
+});
+
+test("LAN-path requests without owner credentials get a Bearer-challenged 401 before storage", async (t) => {
+  // HOST=0.0.0.0 plus a real non-loopback dial exercises a LAN/overlay path.
+  // It deliberately does not claim to exercise TLS or a public tunnel.
+  const remoteHost = nonLoopbackAddress();
+  if (!remoteHost) {
+    t.skip("LAN-path integration NOT_RUN: no eligible non-loopback IPv4 interface");
+    return;
+  }
+
   const runtime = await spawnServer({ HOST: "0.0.0.0" });
   let owner: Client | undefined;
   let reader: Client | undefined;
   try {
     await waitForReady(runtime);
-    const remoteHost = nonLoopbackAddress() ?? "127.0.0.1";
     for (const method of ["GET", "POST", "DELETE"]) {
       for (const authorization of [undefined, "Bearer wrong-token"]) {
-        const response = await fetch(`http://${remoteHost}:${runtime.port}/mcp`, {
+        const response: Response = await fetch(`http://${remoteHost}:${runtime.port}/mcp`, {
           method,
           headers: authorization ? { authorization } : {},
         });
