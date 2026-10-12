@@ -12,6 +12,8 @@ import {
   type LayoutReport,
 } from "./domain.js";
 
+import { wrapOriginalPaper } from "./original-paper.js";
+
 const COMBINING_MARKS = /\p{Mark}/u;
 const ZERO_WIDTH_CHARACTERS = /[\u200b-\u200d\ufe0e\ufe0f]/u;
 
@@ -263,13 +265,15 @@ function addParagraph(
   text: string,
   format: ParagraphFormat,
   options: { isHeading?: boolean } = {},
-  columns: number,
+  template: AnswerTemplate,
 ): void {
   for (let index = 0; index < format.spaceBeforeLines; index += 1) {
     makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
   }
 
-  const wrapped = wrapParagraph(text, format, columns);
+  const wrapped = template.paperProfile
+    ? wrapOriginalPaper(text, format, template)
+    : wrapParagraph(text, format, template.columns);
   wrapped.forEach((line, index) => {
     makeLine(lines, sectionId, paragraphIndex, line, format, {
       isHeading: options.isHeading,
@@ -335,7 +339,7 @@ export function layoutSections(
         formatHeading(section.heading, headingStyle, headingOrdinal),
         paragraphFormatSchema.parse(headingStyle),
         { isHeading: true },
-        template.columns,
+        template,
       );
     }
 
@@ -347,7 +351,7 @@ export function layoutSections(
         paragraph.text,
         mergeParagraphFormat(template, section, paragraph.format),
         {},
-        template.columns,
+        template,
       );
     });
     sectionLineCounts.set(section.id, lines.length - sectionStart);
@@ -446,4 +450,5 @@ export function summarizeLayout(report: LayoutReport): string {
 // Runtime validation remains at the domain boundary; these imports also make
 // the intended formatting schemas explicit for future layout extensions.
 void answerParagraphSchema;
+
 

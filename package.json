@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/src/index.js",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "node scripts/run-tests.js",
     "test:render": "tsx scripts/render-regression.ts",
     "check": "tsc --noEmit -p tsconfig.json"
   },
@@ -23,10 +23,11 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^24.0.0",
     "@types/pdfkit": "^0.13.9",
+    "jsdom": "^26.1.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
   }
 }
-

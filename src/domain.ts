@@ -57,6 +57,7 @@ export const templateSchema = z.object({
   name: z.string().min(1),
   description: z.string().min(1),
   paperSize: z.literal("A4"),
+  paperProfile: z.literal("original_166").optional(),
   pages: z.number().int().positive(),
   linesPerPage: z.number().int().positive(),
   columns: z.number().int().positive(),
@@ -390,4 +391,5 @@ export function assertExpectedVersion(
     );
   }
 }
+
 

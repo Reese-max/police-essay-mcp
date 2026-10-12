@@ -22,10 +22,10 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 1. 答案一定隸屬於一個模板與一組有順序的 sections。
 2. 每個 section 都有穩定 `id`、文字、必要性、採點優先級與可壓縮程度。
 3. 每次讀取、寫入或局部修改，都可以得到同一套 `LayoutReport`。
-4. `totalLines` 由固定欄寬的 deterministic wrapping 計算；不得用 token 數或模型估計替代。
+4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，166 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
 5. `fits=true` 才代表符合模板的頁數／行數限制。
 6. 局部修改使用 `expectedVersion` 時，版本不一致必須拒絕，避免舊內容覆蓋新內容。
-7. DOCX 與 PDF 預設拒絕輸出溢出版；只有明確指定 `allowOverflow=true` 才能輸出供除錯使用的溢出版。
+7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，166 原稿紙始終拒絕超頁與 override。
 
 ## 3. 模板資料結構
 
@@ -234,3 +234,10 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - 多使用者帳號、身份驗證、雲端同步。
 - 獨立於 ChatGPT 之外的瀏覽器側欄或桌面視窗；目前由 ChatGPT 宿主顯示內嵌 App iframe，並提供宿主支援的放大模式。
 
+
+
+## 原稿紙畫板整合
+
+`render_answer_sheet` 回傳最新答案、版本及 LayoutReport。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
+
+畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式，改變段落數需另在對話中處理。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。

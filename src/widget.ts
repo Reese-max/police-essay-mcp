@@ -30,6 +30,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .notice.error { color: #b91c1c; }
     .sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 385px), 1fr)); gap: 16px; align-items: start; }
     .paper { overflow: hidden; border: 1px solid #d7dee9; border-radius: 14px; background: #fff; box-shadow: 0 10px 30px rgba(15, 23, 42, .07); }
+    .original-paper svg { display: block; width: 100%; height: auto; }
+    .original-paper g[data-section-id]:hover, .original-paper g.selected { cursor: pointer; fill: #1d4ed8; }
+    .original-paper g:focus { outline: 1px solid #2563eb; }
     .paper.overflow { border-color: #fca5a5; }
     .paper-head { display: flex; justify-content: space-between; border-bottom: 1px solid #e5eaf1; padding: 12px 14px 10px; }
     .paper-title { font-size: 13px; font-weight: 800; }
@@ -127,6 +130,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       let state = null;
       let selectedSectionId = "";
       let pendingEdit = null;
+      let editEpoch = 0;
+      let applying = false;
+      let hostOrigin;
 
       const byId = (id) => document.getElementById(id);
       const pages = byId("pages");
@@ -155,16 +161,21 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       function extract(value) {
         const candidate = value && (value.structuredContent || value.result?.structuredContent || value);
-        return candidate && candidate.answer && candidate.layout ? candidate : null;
+        return candidate && candidate.answer && candidate.layout ? { ...candidate, readOnly: value?._meta?.readOnly ?? window.openai?.toolResponseMetadata?.readOnly ?? true, paperSvgPages: value?._meta?.paperSvgPages ?? window.openai?.toolResponseMetadata?.paperSvgPages } : null;
       }
 
       function request(method, params) {
         return new Promise((resolve, reject) => {
           const id = nextId++;
-          pending.set(id, { resolve, reject });
+          const timer = setTimeout(() => {
+            pending.delete(id);
+            reject(new Error("宿主未回應。請重新顯示答案確認狀態，再繼續操作。"));
+          }, 30000);
+          pending.set(id, { resolve, reject, timer });
           try {
-            window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, "*");
+            window.parent.postMessage({ jsonrpc: "2.0", id, method, params }, hostOrigin || "*");
           } catch (error) {
+            clearTimeout(timer);
             pending.delete(id);
             reject(error);
           }
@@ -172,7 +183,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function callTool(name, argumentsValue) {
-        const result = await request("tools/call", { name, arguments: argumentsValue });
+        let result;
+        if (window.openai?.callTool) {
+          let timer;
+          try { result = await Promise.race([window.openai.callTool(name, argumentsValue), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("宿主未回應。請重新顯示答案確認狀態，再繼續操作。")), 30000); })]); }
+          finally { clearTimeout(timer); }
+        } else result = await request("tools/call", { name, arguments: argumentsValue });
         if (result?.isError) throw new Error(result.content?.[0]?.text || "工具呼叫失敗");
         return result;
       }
@@ -186,6 +202,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       function selectSection(sectionId) {
         if (!state) return;
+        editEpoch += 1;
         const section = state.answer.sections.find((item) => item.id === sectionId) || state.answer.sections[0];
         selectedSectionId = section?.id || "";
         sectionSelect.value = selectedSectionId;
@@ -194,11 +211,11 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         pendingEdit = null;
         previewText.textContent = "";
         previewText.className = "preview";
-        previewButton.disabled = !section;
+        previewButton.disabled = !section || state.readOnly || applying;
         applyButton.disabled = true;
         count.textContent = section ? "此區塊會依答題紙欄寬重新計算行數。" : "";
-        document.querySelectorAll(".answer-line.selected").forEach((row) => row.classList.remove("selected"));
-        document.querySelectorAll(".answer-line").forEach((row) => {
+        document.querySelectorAll(".answer-line.selected, .original-paper g.selected").forEach((row) => row.classList.remove("selected"));
+        document.querySelectorAll(".answer-line, .original-paper g[data-section-id]").forEach((row) => {
           if (row.dataset.sectionId === selectedSectionId) row.classList.add("selected");
         });
       }
@@ -211,9 +228,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           sectionSelect.append(option);
         }
         const hasSections = (state?.answer.sections.length || 0) > 0;
-        sectionSelect.disabled = !hasSections;
-        headingInput.disabled = !hasSections;
-        textInput.disabled = !hasSections;
+        sectionSelect.disabled = !hasSections || applying;
+        headingInput.disabled = !hasSections || state.readOnly || applying;
+        textInput.disabled = !hasSections || state.readOnly || applying;
         if (hasSections) selectSection(selectedSectionId || state.answer.sections[0].id);
         else {
           headingInput.value = "";
@@ -225,9 +242,13 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       function renderSnapshot(snapshot) {
+        if (state?.answer.id === snapshot.answer.id && snapshot.answer.version < state.answer.version) return;
+        editEpoch += 1;
         state = snapshot;
+        byId("refresh").disabled = false;
+        byId("check").disabled = false;
         const layout = snapshot.layout;
-        const configuredPages = Math.max(layout.pagesConfigured, layout.pagesUsed);
+        const configuredPages = layout.pagesConfigured;
         title.textContent = snapshot.answer.title + " · " + snapshot.answer.id;
         status.textContent = layout.fits ? "版面符合" : "超出版面容量 " + layout.overflowLines + " 行";
         status.className = layout.fits ? "status ok" : "status overflow";
@@ -248,6 +269,16 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           head.append(makeElement("div", "paper-title", "第 " + pageNumber + " 頁"));
           head.append(makeElement("div", "paper-caption", pageNumber > layout.pagesConfigured ? "超出設定頁數" : layout.linesPerPage + " 行 × " + layout.columns + " 格"));
           paper.append(head);
+          if (snapshot.paperSvgPages?.[pageNumber-1]) {
+            const body = makeElement("div", "original-paper");
+            const svg = new DOMParser().parseFromString(snapshot.paperSvgPages[pageNumber-1], "image/svg+xml").documentElement;
+            body.append(document.importNode(svg, true));
+            body.querySelectorAll("g[data-section-id]").forEach(row => {
+              row.addEventListener("click", () => selectSection(row.dataset.sectionId));
+              row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSection(row.dataset.sectionId); } });
+            });
+            paper.append(body); pages.append(paper); continue;
+          }
           const body = makeElement("div", "paper-body");
           const pageLines = linesByPage.get(pageNumber) || new Map();
           for (let lineNumber = 1; lineNumber <= layout.linesPerPage; lineNumber += 1) {
@@ -274,7 +305,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         const button = byId("refresh");
         setBusy(button, true);
         try {
-          const result = await callTool("render_answer_sheet", { answerId: state.answer.id });
+          const answerId = state.answer.id;
+          const result = await callTool("render_answer_sheet", { answerId });
+          if (state?.answer.id !== answerId) return;
           const snapshot = extract(result);
           if (!snapshot) throw new Error("工具沒有回傳可顯示的答題紙資料。");
           renderSnapshot(snapshot);
@@ -290,10 +323,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         const button = byId("check");
         setBusy(button, true);
         try {
-          const result = await callTool("check_layout", { answerId: state.answer.id });
-          const layoutResult = result?.structuredContent || result?.result?.structuredContent;
-          const snapshot = extract(result) || (layoutResult?.layout ? { answer: state.answer, layout: layoutResult.layout } : null);
-          if (!snapshot) throw new Error("工具沒有回傳版面資料。");
+          const answerId = state.answer.id;
+          await callTool("check_layout", { answerId });
+          const result = await callTool("render_answer_sheet", { answerId });
+          if (state?.answer.id !== answerId) return;
+          const snapshot = extract(result);
+          if (!snapshot) throw new Error("工具沒有回傳最新答案與版面資料。");
           renderSnapshot(snapshot);
         } catch (error) {
           setNotice(error instanceof Error ? error.message : "版面檢查失敗。", true);
@@ -303,40 +338,61 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       async function previewEdit() {
-        if (!state || !selectedSectionId) return;
+        if (!state || !selectedSectionId || state.readOnly || applying) return;
+        const epoch = editEpoch;
         setBusy(previewButton, true);
         try {
-          const args = { answerId: state.answer.id, sectionId: selectedSectionId, expectedVersion: state.answer.version, newText: textInput.value, heading: headingInput.value.trim() || null };
+          const section = state.answer.sections.find(s => s.id === selectedSectionId);
+          const args = { answerId: state.answer.id, sectionId: selectedSectionId, expectedVersion: state.answer.version, newText: textInput.value, heading: headingInput.value || null };
+          if (section?.paragraphs?.length) {
+            const texts = textInput.value.split("\n");
+            if (texts.length !== section.paragraphs.length) throw new Error("段落數已改變，請在對話中修改以保留各段格式。");
+            args.paragraphs = texts.map((text, i) => ({text, ...(section.paragraphs[i].format ? {format: section.paragraphs[i].format} : {})}));
+            delete args.newText;
+          }
           const result = await callTool("preview_replace_text", args);
           const preview = result?.structuredContent || result?.result?.structuredContent;
+          if (epoch !== editEpoch) return;
           if (!preview) throw new Error("工具沒有回傳預覽資料。");
-          pendingEdit = args;
+          pendingEdit = { args, epoch };
           previewText.textContent = preview.summary?.join("；") || "預覽完成，可套用。";
           previewText.className = preview.after?.layout?.fits ? "preview good" : "preview bad";
           applyButton.disabled = false;
         } catch (error) {
+          if (epoch !== editEpoch) return;
           pendingEdit = null;
           applyButton.disabled = true;
           previewText.textContent = error instanceof Error ? error.message : "預覽失敗。";
           previewText.className = "preview bad";
         } finally {
           setBusy(previewButton, false);
+          previewButton.disabled = state?.readOnly || applying || !selectedSectionId;
         }
       }
 
       async function applyEdit() {
-        if (!pendingEdit) return;
+        if (!pendingEdit || pendingEdit.epoch !== editEpoch || state?.readOnly || applying) return;
+        const edit = pendingEdit;
+        applying = true;
+        headingInput.disabled = true; textInput.disabled = true; sectionSelect.disabled = true; previewButton.disabled = true;
         setBusy(applyButton, true);
         try {
-          const result = await callTool("replace_text", pendingEdit);
+          const result = await callTool("replace_text", edit.args);
           const snapshot = result?.structuredContent || result?.result?.structuredContent;
           if (!snapshot?.answer || !snapshot?.layout) throw new Error("工具沒有回傳更新後的答題紙資料。");
           pendingEdit = null;
-          renderSnapshot(snapshot);
+          // Fetch the current snapshot and regenerated SVG after a committed edit.
+          const rendered = extract(await callTool("render_answer_sheet", { answerId: snapshot.answer.id }));
+          renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
           setNotice("修改已套用並重新計算版面。", false);
         } catch (error) {
           setNotice(error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
         } finally {
+          applying = false;
+          sectionSelect.disabled = !state?.answer.sections.length;
+          headingInput.disabled = state?.readOnly || !selectedSectionId;
+          textInput.disabled = state?.readOnly || !selectedSectionId;
+          previewButton.disabled = state?.readOnly || !selectedSectionId;
           setBusy(applyButton, false);
           applyButton.disabled = true;
         }
@@ -355,31 +411,52 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       window.addEventListener("message", (event) => {
         if (event.source !== window.parent) return;
         const message = event.data || {};
+        if (message.jsonrpc !== "2.0") return;
+        if (hostOrigin && event.origin !== hostOrigin) return;
         if (message.id !== undefined && pending.has(message.id)) {
+          if (!hostOrigin && event.origin !== "null") hostOrigin = event.origin;
           const requestState = pending.get(message.id);
           pending.delete(message.id);
+          clearTimeout(requestState.timer);
           if (message.error) requestState.reject(new Error(message.error.message || "宿主呼叫失敗"));
           else requestState.resolve(message.result);
           return;
         }
+        if (message.method === "ui/resource-teardown" && message.id !== undefined) {
+          for (const requestState of pending.values()) { clearTimeout(requestState.timer); requestState.reject(new Error("畫板已關閉")); }
+          pending.clear();
+          window.parent.postMessage({jsonrpc:"2.0",id:message.id,result:{}}, hostOrigin || "*");
+          return;
+        }
         if (message.method === "ui/notifications/tool-result") {
-          const snapshot = extract(message.params?.structuredContent || message.params);
+          const snapshot = extract(message.params);
           if (snapshot) renderSnapshot(snapshot);
         }
       });
 
       sectionSelect.addEventListener("change", () => selectSection(sectionSelect.value));
-      headingInput.addEventListener("input", () => { pendingEdit = null; applyButton.disabled = true; previewText.textContent = ""; });
-      textInput.addEventListener("input", () => { pendingEdit = null; applyButton.disabled = true; previewText.textContent = ""; });
+      headingInput.addEventListener("input", () => { editEpoch += 1; pendingEdit = null; applyButton.disabled = true; previewText.textContent = ""; });
+      textInput.addEventListener("input", () => { editEpoch += 1; pendingEdit = null; applyButton.disabled = true; previewText.textContent = ""; });
       byId("refresh").addEventListener("click", refresh);
       byId("check").addEventListener("click", checkLayout);
       byId("fullscreen").addEventListener("click", fullscreen);
       previewButton.addEventListener("click", previewEdit);
       applyButton.addEventListener("click", applyEdit);
 
+      byId("refresh").disabled = true; byId("check").disabled = true;
+      window.addEventListener("openai:set_globals", event => {
+        const snapshot = extract(event.detail?.globals?.toolOutput);
+        if (snapshot) renderSnapshot(snapshot);
+      });
+      if (!window.openai?.callTool && window.parent !== window) {
+        request("ui/initialize", { appInfo: { name: "police-essay-answer-sheet", version: "0.1.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" })
+          .then(() => window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, hostOrigin || "*"))
+          .catch(error => setNotice(error.message, true));
+      }
       const initial = extract(window.openai?.toolOutput);
       if (initial) renderSnapshot(initial);
     })();
   </script>
 </body>
 </html>`;
+

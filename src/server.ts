@@ -1,4 +1,4 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
@@ -25,6 +25,7 @@ import {
 import { exportDocx, exportPdf, exportText } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore } from "./storage.js";
+import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay";
@@ -92,6 +93,8 @@ const exportOutputSchema = z.object({
   version: z.number().int().positive(),
   format: z.enum(["docx", "pdf", "txt"]),
   path: z.string(),
+  exportUri: z.string(),
+  exportExpiresAt: z.string(),
   pages: z.number().int().positive(),
   layout: layoutReportSchema,
   font: z.string().optional(),
@@ -99,12 +102,22 @@ const exportOutputSchema = z.object({
 });
 
 const ANSWER_SHEET_UI_META = {
-  ui: { resourceUri: ANSWER_SHEET_WIDGET_URI },
+  ui: { resourceUri: ANSWER_SHEET_WIDGET_URI, visibility: ["model", "app"] },
   "openai/outputTemplate": ANSWER_SHEET_WIDGET_URI,
 } as const;
 
 function textContent(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
+}
+
+function exportArtifactLink(name: string, uri: string, mimeType: string) {
+  return {
+    type: "resource_link" as const,
+    uri,
+    name,
+    mimeType,
+    description: `下載已匯出的 ${name}`,
+  };
 }
 
 function ensureUniqueSectionIds(sections: AnswerSection[]): void {
@@ -168,7 +181,7 @@ function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store = new FileStore()): McpServer {
+export function createEssayMcpServer(store = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -241,6 +254,27 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     }),
   );
 
+  server.registerResource(
+    "export-artifact",
+    new ResourceTemplate("essay://exports/{handle}", { list: undefined }),
+    {
+      title: "已匯出的申論檔案",
+      description: "export_docx / export_pdf / export_text 產生的限時檔案；URI 見工具結果的 exportUri。",
+    },
+    async (uri, variables) => {
+      if (options.readOnly) throw new Error("Export artifact not found.");
+      const handle = Array.isArray(variables.handle) ? variables.handle[0] : variables.handle;
+      const artifact = await store.readExport(handle ?? "");
+      return {
+        contents: [{
+          uri: uri.href,
+          mimeType: artifact.mimeType,
+          blob: artifact.data.toString("base64"),
+        }],
+      };
+    },
+  );
+
   server.registerTool(
     "list_templates",
     {
@@ -308,7 +342,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const createAnswerTool = server.registerTool(
     "create_answer",
     {
       title: "建立申論答案",
@@ -361,7 +395,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const writeAnswerTool = server.registerTool(
     "write_answer",
     {
       title: "寫入完整申論答案",
@@ -430,6 +464,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
         expectedVersion: expectedVersionSchema,
       }),
       outputSchema: changePreviewOutputSchema,
+      _meta: { ui: { visibility: ["model", "app"] } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ answerId, sectionId, newText, paragraphs, heading, expectedVersion }) => {
@@ -479,7 +514,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const replaceTextTool = server.registerTool(
     "replace_text",
     {
       title: "替換申論區塊",
@@ -492,6 +527,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       outputSchema: sectionOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
+        ui: { visibility: ["model", "app"] },
         "openai/toolInvocation/invoking": "修改指定段落並重排…",
         "openai/toolInvocation/invoked": "段落已修改並重新計算行數。",
       },
@@ -528,7 +564,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const formatSectionTool = server.registerTool(
     "format_section",
     {
       title: "格式化申論區塊",
@@ -609,7 +645,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const insertTextTool = server.registerTool(
     "insert_text",
     {
       title: "插入申論區塊",
@@ -680,7 +716,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     },
   );
 
-  server.registerTool(
+  const deleteTextTool = server.registerTool(
     "delete_text",
     {
       title: "刪除申論區塊",
@@ -737,6 +773,7 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       description: "Use this when the user wants exact page usage, remaining capacity, overflow count, or compression priorities for a saved answer.",
       inputSchema: { answerId: answerIdSchema },
       outputSchema: layoutOutputSchema,
+      _meta: { ui: { visibility: ["model", "app"] } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async ({ answerId }) => {
@@ -750,22 +787,24 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
     "render_answer_sheet",
     {
       title: "顯示申論答題紙畫板",
-      description: "Use this when the user asks to view, open, display, or edit an answer as a visual two-page answer-sheet canvas in ChatGPT. Call it after create_answer, read_answer, or a content change; it returns the authoritative structured answer and layout for the interactive UI.",
+      description: "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
       inputSchema: { answerId: answerIdSchema },
       outputSchema: snapshotOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: {
-        ui: { resourceUri: ANSWER_SHEET_WIDGET_URI },
-        "openai/outputTemplate": ANSWER_SHEET_WIDGET_URI,
-      },
+      _meta: ANSWER_SHEET_UI_META,
     },
     async ({ answerId }) => {
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`) };
+      const template = await store.getTemplate(current.answer.templateId);
+      return {
+        structuredContent: current,
+        content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`),
+        _meta: { readOnly: Boolean(options.readOnly), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
+      };
     },
   );
 
-  server.registerTool(
+  const exportDocxTool = server.registerTool(
     "export_docx",
     {
       title: "輸出申論 Word",
@@ -786,15 +825,33 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
-      return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
-      };
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
+          answerId,
+          answerVersion: current.answer.version,
+          format: "docx",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
 
-  server.registerTool(
+  const exportTextTool = server.registerTool(
     "export_text",
     {
       title: "輸出申論純文字",
@@ -815,15 +872,33 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      const output = await exportText(current.layout, template, outputPath, allowOverflow);
-      return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
-      };
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportText(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
+          answerId,
+          answerVersion: current.answer.version,
+          format: "txt",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
 
-  server.registerTool(
+  const exportPdfTool = server.registerTool(
     "export_pdf",
     {
       title: "輸出申論 PDF",
@@ -844,13 +919,45 @@ export function createEssayMcpServer(store = new FileStore()): McpServer {
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
-      return {
-        structuredContent: { answerId, version: current.answer.version, ...output, layout: current.layout },
-        content: textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
-      };
+      return store.withExportWriteLock(outputPath, async () => {
+        const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
+        const artifact = await store.createExportHandle(output.path, {
+          answerId,
+          answerVersion: current.answer.version,
+          format: "pdf",
+        });
+        const exportUri = `essay://exports/${artifact.handle}`;
+        return {
+          structuredContent: {
+            answerId,
+            version: current.answer.version,
+            ...output,
+            exportUri,
+            exportExpiresAt: artifact.expiresAt,
+            layout: current.layout,
+          },
+          content: [
+            ...textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
+            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+          ],
+        };
+      });
     },
   );
+
+  if (options.readOnly) {
+    for (const tool of [
+      createAnswerTool,
+      writeAnswerTool,
+      replaceTextTool,
+      formatSectionTool,
+      insertTextTool,
+      deleteTextTool,
+      exportDocxTool,
+      exportTextTool,
+      exportPdfTool,
+    ]) tool.remove();
+  }
 
   server.registerPrompt(
     "draft_answer",

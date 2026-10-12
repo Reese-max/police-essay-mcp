@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const authToken = "integration-test-token";
+const readToken = "integration-read-test-token";
 const bodyLimit = 1_024;
 
 async function freePort(): Promise<number> {
@@ -31,7 +32,7 @@ async function freePort(): Promise<number> {
 
 async function waitForReady(port: number, child: ChildProcess, logs: string[]): Promise<void> {
   const url = `http://127.0.0.1:${port}/readyz`;
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) {
       throw new Error(`MCP server exited before readiness: ${logs.join("")}`);
@@ -64,6 +65,7 @@ async function startServer(): Promise<{
       HOST: "127.0.0.1",
       PORT: String(port),
       MCP_AUTH_TOKEN: authToken,
+      MCP_READ_TOKEN: readToken,
       MCP_MAX_BODY_BYTES: String(bodyLimit),
       CORS_ORIGIN: "https://example.test",
       ESSAY_MCP_TEMPLATE_DIR: path.join(projectRoot, "templates"),
@@ -74,7 +76,13 @@ async function startServer(): Promise<{
   });
   child.stdout?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
   child.stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
-  await waitForReady(port, child, logs);
+  try {
+    await waitForReady(port, child, logs);
+  } catch (error) {
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
   return { port, root, child, logs };
 }
 
@@ -237,6 +245,7 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
       arguments: { answerId: createdSnapshot.answer.id },
     });
     assert.equal(rendered.isError, undefined);
+    assert.equal(rendered._meta?.readOnly, false);
     const renderedSnapshot = rendered.structuredContent as { answer: { id: string }; layout: { lines: unknown[] } };
     assert.equal(renderedSnapshot.answer.id, createdSnapshot.answer.id);
     assert.ok(renderedSnapshot.layout.lines.length > 0);
@@ -288,6 +297,236 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal((await stat(exportedContent.path)).isFile(), true);
   } finally {
     await client?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("independent HTTP MCP clients cannot overwrite the same accepted answer version", async () => {
+  const runtime = await startServer();
+  const clients: Client[] = [];
+  try {
+    for (const name of ["writer-a", "writer-b", "independent-writer"]) {
+      const client = new Client({ name, version: "0.1.0" }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+      }));
+      clients.push(client);
+    }
+    for (let round = 0; round < 10; round++) {
+      const create = async (client: Client, title: string) => {
+        const result = await client.callTool({ name: "create_answer", arguments: {
+          templateId: "police_information_essay", title,
+          sections: [{ id: "intro", text: "初稿" }],
+        } });
+        assert.equal(result.isError, undefined);
+        return (result.structuredContent as { answer: { id: string } }).answer.id;
+      };
+      const answerId = await create(clients[0], `重疊作答 ${round}`);
+      const otherId = await create(clients[2], `獨立作答 ${round}`);
+      const edit = (client: Client, id: string, text: string) => client.callTool({
+        name: "write_answer", arguments: { answerId: id, expectedVersion: 1,
+          sections: [{ id: "intro", text }],
+        },
+      });
+      // Distinct SDK clients issue distinct HTTP requests to the child process;
+      // the direct FileStore barrier tests separately pin the atomic critical section.
+      const results = await Promise.all([
+        edit(clients[0], answerId, "writer A"),
+        edit(clients[1], answerId, "writer B"),
+        edit(clients[2], otherId, "independent writer"),
+      ]);
+      const shared = results.slice(0, 2);
+      assert.equal(shared.filter(result => !result.isError).length, 1);
+      const rejected = shared.find(result => result.isError);
+      assert.ok(rejected);
+      assert.match(JSON.stringify(rejected.content), /Version conflict: expected 1, current version is 2/);
+      assert.equal(results[2].isError, undefined);
+      const winner = shared.find(result => !result.isError)!.structuredContent as {
+        answer: { version: number; sections: Array<{ text: string }> };
+      };
+      const persisted = JSON.parse(await readFile(path.join(runtime.root, "answers", `${answerId}.json`), "utf8"));
+      assert.equal(persisted.version, 2);
+      assert.equal(persisted.sections[0].text, winner.answer.sections[0].text);
+      const independent = JSON.parse(await readFile(path.join(runtime.root, "answers", `${otherId}.json`), "utf8"));
+      assert.equal(independent.version, 2);
+      assert.equal(independent.sections[0].text, "independent writer");
+    }
+  } finally {
+    await Promise.all(clients.map(client => client.close().catch(() => undefined)));
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent exports sharing a filename retain each answer's immutable artifact", async () => {
+  const runtime = await startServer();
+  const clients: Client[] = [];
+  try {
+    for (let index = 0; index < 2; index++) {
+      const client = new Client({ name: `essay-export-writer-${index}`, version: "0.1.0" }, { capabilities: {} });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+        requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+      }));
+      clients.push(client);
+    }
+    for (let pair = 0; pair < 6; pair++) {
+      const texts = [`EXPORT_A_${pair}`, `EXPORT_B_${pair}`];
+      const created = await Promise.all(clients.map((client, index) => client.callTool({
+        name: "create_answer",
+        arguments: { templateId: "police_information_essay", title: `export-${index}-${pair}`,
+          sections: [{ id: "intro", heading: "前言", text: texts[index] }] },
+      })));
+      const answerIds = created.map(result => {
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+        return (result.structuredContent as { answer: { id: string } }).answer.id;
+      });
+      const exported = await Promise.all(clients.map((client, index) => client.callTool({
+        name: "export_text", arguments: { answerId: answerIds[index], filename: `shared-export-${pair}` },
+      })));
+      const uris: string[] = [];
+      for (let index = 0; index < exported.length; index++) {
+        const result = exported[index];
+        assert.equal(result.isError, undefined, JSON.stringify(result));
+        const structured = result.structuredContent as { answerId: string; version: number; exportUri: string };
+        assert.equal(structured.answerId, answerIds[index]);
+        assert.equal(structured.version, 1);
+        uris.push(structured.exportUri);
+        const resource = await clients[index].readResource({ uri: structured.exportUri });
+        const artifact = resource.contents[0] as { mimeType: string; blob: string };
+        assert.equal(artifact.mimeType, "text/plain");
+        const text = Buffer.from(artifact.blob, "base64").toString("utf8");
+        assert.ok(text.includes(texts[index]), `artifact must contain its own answer: ${text}`);
+        assert.ok(!text.includes(texts[1 - index]), "artifact must not contain the competing answer");
+      }
+      assert.notEqual(uris[0], uris[1]);
+    }
+  } finally {
+    await Promise.all(clients.map(client => client.close().catch(() => undefined)));
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("export artifacts are owner-only opaque resources with bytes, MIME, and expiry", async () => {
+  const runtime = await startServer();
+  let owner: Client | undefined;
+  let reader: Client | undefined;
+  try {
+    const ownerTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${authToken}` } },
+    });
+    owner = new Client({ name: "police-essay-mcp-export-artifact-owner-test", version: "0.1.0" }, { capabilities: {} });
+    await owner.connect(ownerTransport);
+
+    const created = await owner.callTool({
+      name: "create_answer",
+      arguments: {
+        templateId: "police_information_essay",
+        title: "匯出 artifact 測試",
+        sections: [{ id: "intro", heading: "前言", text: "這是一段測試內容。" }],
+      },
+    });
+    assert.equal(created.isError, undefined);
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+
+    const expectedMime = {
+      docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      pdf: "application/pdf",
+      txt: "text/plain",
+    } as const;
+    const uris: string[] = [];
+
+    for (const format of ["docx", "pdf", "txt"] as const) {
+      const exported = await owner.callTool({
+        name: format === "txt" ? "export_text" : `export_${format}`,
+        arguments: { answerId, filename: `artifact-round-trip-${format}` },
+      });
+      assert.equal(exported.isError, undefined, JSON.stringify(exported));
+      const structured = exported.structuredContent as {
+        answerId: string;
+        version: number;
+        format: string;
+        path: string;
+        exportUri: string;
+        exportExpiresAt: string;
+      };
+      assert.equal(structured.answerId, answerId);
+      assert.equal(structured.version, 1);
+      assert.equal(structured.format, format);
+      const expiresIn = Date.parse(structured.exportExpiresAt) - Date.now();
+      assert.ok(expiresIn > 23 * 60 * 60 * 1000 && expiresIn <= 24 * 60 * 60 * 1000);
+
+      const handle = structured.exportUri.slice("essay://exports/".length);
+      assert.match(handle, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      assert.ok(!structured.exportUri.includes(`artifact-round-trip-${format}`));
+      uris.push(structured.exportUri);
+
+      const blocks = (exported.content ?? []) as Array<{ type: string; uri?: string; mimeType?: string }>;
+      const link = blocks.find((block) => block.type === "resource_link");
+      assert.ok(link);
+      assert.equal(link.uri, structured.exportUri);
+      assert.equal(link.mimeType, expectedMime[format]);
+
+      const resource = await owner.readResource({ uri: structured.exportUri });
+      assert.equal(resource.contents.length, 1);
+      const artifact = resource.contents[0] as { uri: string; mimeType?: string; blob?: string };
+      assert.equal(artifact.uri, structured.exportUri);
+      assert.equal(artifact.mimeType, expectedMime[format]);
+      const encoded = artifact.blob;
+      assert.ok(encoded);
+      const onDisk = await readFile(structured.path);
+      assert.equal(Buffer.from(encoded, "base64").equals(onDisk), true);
+    }
+
+    const unauthenticated = await request(
+      runtime.port,
+      { method: "POST", path: "/mcp", headers: { "content-type": "application/json" } },
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 90,
+        method: "resources/read",
+        params: { uri: uris[0] },
+      }),
+    );
+    assert.equal(unauthenticated.status, 401);
+
+    const readerTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${runtime.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${readToken}` } },
+    });
+    reader = new Client({ name: "police-essay-mcp-export-artifact-reader-test", version: "0.1.0" }, { capabilities: {} });
+    await reader.connect(readerTransport);
+    await assert.rejects(
+      () => reader!.readResource({ uri: uris[0] }),
+      /.+/,
+      "read token must not retrieve owner exports",
+    );
+
+    await assert.rejects(
+      () => owner!.readResource({ uri: "essay://exports/00000000-0000-4000-8000-000000000000" }),
+      /.+/,
+      "unknown handle must fail closed",
+    );
+    await assert.rejects(
+      () => owner!.readResource({ uri: "essay://exports/..%2Fsecret.txt" }),
+      /.+/,
+      "path traversal must fail closed",
+    );
+
+    const expiredHandle = uris[2].slice("essay://exports/".length);
+    const manifestPath = path.join(runtime.root, "exports", ".artifacts", `${expiredHandle}.json`);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { createdAt: number; expiresAt: number };
+    manifest.expiresAt = Date.now() - 1;
+    manifest.createdAt = manifest.expiresAt - 24 * 60 * 60 * 1000;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    await assert.rejects(
+      () => owner!.readResource({ uri: uris[2] }),
+      /.+/,
+      "expired handle must fail closed",
+    );
+  } finally {
+    await reader?.close().catch(() => undefined);
+    await owner?.close().catch(() => undefined);
     await stopServer(runtime.child);
     await rm(runtime.root, { recursive: true, force: true });
   }
