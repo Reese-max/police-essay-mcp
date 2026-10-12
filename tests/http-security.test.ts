@@ -197,6 +197,9 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     assert.ok(answers.answers.some((item) => item.id === answer.answer.id));
     const read = await reader.callTool({ name: "read_answer", arguments: { answerId: answer.answer.id } });
     assert.equal(read.isError, undefined);
+    const rendered = await reader.callTool({ name: "render_answer_sheet", arguments: { answerId: answer.answer.id } });
+    assert.equal(rendered.isError, undefined);
+    assert.equal(rendered._meta?.readOnly, true);
     for (const [name, args] of [
       ["write_answer", { answerId: answer.answer.id, sections: [], expectedVersion: 1 }],
       ["delete_text", { answerId: answer.answer.id, sectionId: "intro", expectedVersion: 1 }],
@@ -356,3 +359,4 @@ test("stdio remains available without HTTP credentials", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+

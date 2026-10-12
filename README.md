@@ -1,6 +1,6 @@
 # police-essay-mcp
 
-「國考申論答題紙排版與 AI 編修引擎」的第一版 MCP server。
+「國考申論答題紙排版與 AI 編修引擎」的 MCP server，包含 ChatGPT Apps SDK 互動畫板。
 
 它把答案保存成有順序的 sections 與可獨立格式化的 paragraphs，透過固定模板計算中英文字寬與實際行數，再提供縮排、對齊、段落間距、Tab、標題粗體／編號、局部修改、溢出檢查與 DOCX/PDF 固定格線輸出。預設模板是 A4、2 頁、每頁 22 行。
 
@@ -131,3 +131,9 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板的 `export_docx`、`export_pdf`、`export_text` 均拒絕超頁及 `allowOverflow: true`。
 
 驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper166-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper166-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
+
+## 互動畫板
+
+呼叫 `render_answer_sheet` 開啟已儲存答案。166 模式的畫板使用原稿紙及字型輪廓，閱讀端不必下載字型；一般模式顯示行數與區塊編輯預覽。可點選一行定位區塊、預覽修改、再套用；`expectedVersion` 保護既有答案。唯讀連線停用編輯。Word 定稿仍須依原稿紙工作流實際渲染驗收。
+
+畫板支援 MCP Apps 初始化與宿主工具呼叫，也支援宿主提供的 `window.openai.callTool`。未收到宿主回應時顯示逾時，不會自動重送修改。

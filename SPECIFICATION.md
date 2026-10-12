@@ -22,10 +22,10 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 1. 答案一定隸屬於一個模板與一組有順序的 sections。
 2. 每個 section 都有穩定 `id`、文字、必要性、採點優先級與可壓縮程度。
 3. 每次讀取、寫入或局部修改，都可以得到同一套 `LayoutReport`。
-4. `totalLines` 由固定欄寬的 deterministic wrapping 計算；不得用 token 數或模型估計替代。
+4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，166 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
 5. `fits=true` 才代表符合模板的頁數／行數限制。
 6. 局部修改使用 `expectedVersion` 時，版本不一致必須拒絕，避免舊內容覆蓋新內容。
-7. DOCX 與 PDF 預設拒絕輸出溢出版；只有明確指定 `allowOverflow=true` 才能輸出供除錯使用的溢出版。
+7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，166 原稿紙始終拒絕超頁與 override。
 
 ## 3. 模板資料結構
 
@@ -154,6 +154,7 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
+| `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |
 | `export_docx` | 產生 A4 固定格線 Word | 是，建立檔案 |
 | `export_pdf` | 產生 A4 固定格線 PDF | 是，建立檔案 |
 | `export_text` | 產生依實際換行與分頁的純文字 | 是，建立檔案 |
@@ -168,6 +169,7 @@ Resources：
 
 - `essay://templates/police_information_essay`：模板 JSON。
 - `essay://instructions/workflow`：讀取、修改、檢查與匯出的工作流程。
+- `ui://widget/police-essay-answer-sheet.html`：ChatGPT Apps SDK 的互動答題紙畫板資源。
 
 Prompts：
 
@@ -222,6 +224,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
 - 可透過 `MCP_TRANSPORT=stdio` 接本機 MCP client，也可透過 `http://localhost:8787/mcp` 使用 Streamable HTTP。
 - Server 提供 tools、resources、prompts，且工具 schema 與安全標記明確。
+- `render_answer_sheet` 透過 `_meta.ui.resourceUri` 掛載畫板；畫板使用 `structuredContent` 顯示真實行數，並透過 MCP bridge 呼叫版面檢查與預覽／套用修改。
 
 ## 10. 明確不納入 v1
 
@@ -229,5 +232,12 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - 自動判斷考場實際格紙的拍攝透視與字跡大小。
 - 模型本身的語意評分或採點正確性保證。
 - 多使用者帳號、身份驗證、雲端同步。
-- 互動式 iframe 格紙 UI；目前保留 resources 與 structuredContent，後續可依 MCP Apps 加入。
+- 獨立於 ChatGPT 之外的瀏覽器側欄或桌面視窗；目前由 ChatGPT 宿主顯示內嵌 App iframe，並提供宿主支援的放大模式。
 
+
+
+## 原稿紙畫板整合
+
+`render_answer_sheet` 回傳最新答案、版本及 LayoutReport。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
+
+畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式，改變段落數需另在對話中處理。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。

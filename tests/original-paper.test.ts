@@ -50,3 +50,14 @@ test('166 asset does not appear as a template and invalid formatting does not pe
   assert.equal((await store.listAnswers()).length,0);
  } finally { await fs.rm(dir,{recursive:true,force:true}); }
 });
+
+test('166 canvas preview keeps two original pages even when content overflows', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {
+ const {originalPaperPreview}=await import('../src/original-paper.js');
+ const answer=createAnswerDocument({templateId:template.id,title:'測試',sections:[{id:'part_1',text:Array(80).fill('資料探勘').join('\n')}]});
+ const report=layoutSections(template,answer.sections);
+ const pages=originalPaperPreview(template,report);
+ assert.equal(report.fits,false);assert.equal(pages.length,2);
+ assert.equal(pages.map(svg=>(svg.match(/data-section-id=/g)||[]).length).reduce((a,b)=>a+b,0),44);
+ assert.ok(pages.every(svg=>svg.includes('data:image/jpeg;base64,')&&svg.includes('<path d=')));
+ assert.ok(pages.every(svg=>!svg.includes('<text')));
+});

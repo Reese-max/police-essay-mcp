@@ -65,3 +65,28 @@ export function wrapOriginalPaper(text: string, format: ParagraphFormat, templat
   if (current || !lines.length) lines.push(current);
   return lines;
 }
+
+/** Glyph outlines give the browser the same paper/font geometry without downloading a font. */
+export function originalPaperPreview(template: AnswerTemplate, report: import('./domain.js').LayoutReport): string[] {
+  validateOriginalPaper(template);
+  const face = font();
+  const scale = template.fontSizePt / face.unitsPerEm;
+  const escape = (value: string) => value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));
+  return Array.from({length: template.pages}, (_, index) => {
+    const [x,y,right,bottom] = originalPaper.imageRect;
+    const groups = report.lines.filter(l => l.page === index+1 && l.text && !l.isSpacer).map(line => {
+      const row = originalPaper.rows[line.lineOnPage-1];
+      let pen = 130.32 + (line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : 0)) * template.fontSizePt / 2;
+      const run = face.layout(line.text);
+      const paths = run.glyphs.map((glyph: {path: {toSVG(): string}}, i: number) => {
+        const position = run.positions[i];
+        const d = glyph.path.toSVG();
+        const path = `<path d="${escape(d)}" transform="translate(${pen+position.xOffset*scale} ${row[1]-3.5-position.yOffset*scale}) scale(${scale} ${-scale})"/>`;
+        pen += position.xAdvance * scale;
+        return path;
+      }).join('');
+      return `<g data-section-id="${escape(line.sectionId)}" role="button" tabindex="0" aria-label="${escape(line.text)}"><rect x="130.32" y="${row[0]}" width="365.68" height="${row[1]-row[0]}" fill="none" pointer-events="all"/>${paths}</g>`;
+    }).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595.3 841.9" role="img" aria-label="第${index+1}頁原稿紙"><rect width="595.3" height="841.9" fill="white"/><image href="data:image/jpeg;base64,${originalPaper.imageBase64}" x="${x}" y="${y}" width="${right-x}" height="${bottom-y}"/><g fill="#111111">${groups}</g></svg>`;
+  });
+}
