@@ -1,6 +1,10 @@
 import { promises as fs, createWriteStream, existsSync } from "node:fs";
 import path from "node:path";
 import {
+  Header,
+  ImageRun,
+  HorizontalPositionRelativeFrom,
+  VerticalPositionRelativeFrom,
   AlignmentType,
   BorderStyle,
   Document,
@@ -30,7 +34,13 @@ function pageLines(report: LayoutReport, page: number): LayoutLine[] {
   return report.lines.filter((line) => line.page === page);
 }
 
+import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath } from "./original-paper.js";
+
 function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
+  if (template.paperProfile) {
+    validateOriginalPaper(template);
+    if (!report.fits || allowOverflow) throw new Error("166 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
+  }
   if (!report.fits && !allowOverflow && template.overflowPolicy !== "report") {
     throw new Error(
       `答案超出模板容量 ${report.overflowLines} 行；模板策略為 ${template.overflowPolicy}，請先修改答案或以 allowOverflow=true 明確輸出溢出版。`,
@@ -53,7 +63,7 @@ function docxAlignment(alignment: LayoutLine["format"]["alignment"]): (typeof Al
 }
 
 function gridColumnTwips(template: AnswerTemplate): number {
-  return pointsToTwips(gridMetrics(template).columnWidthPt);
+  return pointsToTwips(template.paperProfile ? template.fontSizePt / 2 : gridMetrics(template).columnWidthPt);
 }
 
 function makeTabStops(template: AnswerTemplate, tabSize: number): Array<{ type: (typeof TabStopType)[keyof typeof TabStopType]; position: number }> {
@@ -79,6 +89,7 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragra
   };
   return new Paragraph({
     alignment: docxAlignment(format.alignment),
+    ...(template.paperProfile ? { autoSpaceEastAsianText: false, widowControl: false } : {}),
     indent: {
       left: gridColumnTwips(template) * format.leftIndent,
       right: gridColumnTwips(template) * format.rightIndent,
@@ -112,13 +123,13 @@ function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: 
     const line = lines[index];
     const cell = new TableCell({
       verticalAlign: VerticalAlign.CENTER,
-      margins: { top: 0, bottom: 0, left: 80, right: 80 },
+      margins: { top: 0, bottom: 0, left: template.paperProfile ? 0 : 80, right: template.paperProfile ? 0 : 80 },
       children: [makeLineParagraph(template, line)],
     });
     return new TableRow({
       cantSplit: true,
       height: {
-        value: pointsToTwips(gridMetrics(template).rowHeightPt),
+        value: pointsToTwips(template.paperProfile ? originalPaper.rows[index][1] - originalPaper.rows[index][0] : gridMetrics(template).rowHeightPt),
         rule: HeightRule.EXACT,
       },
       children: [cell],
@@ -129,12 +140,12 @@ function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: 
     width: { size: 100, type: WidthType.PERCENTAGE },
       columnWidths: [pointsToTwips(gridMetrics(template).contentWidthPt)],
     borders: {
-      top: { style: BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
-      bottom: { style: BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
-      left: { style: BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
-      right: { style: BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
-      insideHorizontal: { style: BorderStyle.SINGLE, size: 4, color: "C8C8C8" },
-      insideVertical: { style: BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
+      top: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
+      bottom: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
+      left: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
+      right: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
+      insideHorizontal: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "C8C8C8" },
+      insideVertical: { style: template.paperProfile ? BorderStyle.NONE : BorderStyle.SINGLE, size: 4, color: "A0A0A0" },
     },
     rows,
   });
@@ -149,7 +160,7 @@ export async function exportDocx(
   const pages = outputPageCount(report, template, allowOverflow);
   const children: Array<Table | Paragraph> = [];
   for (let page = 1; page <= pages; page += 1) {
-    if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [] }));
+    if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [], ...(template.paperProfile ? { spacing: { before: 0, after: 0, line: 1, lineRule: LineRuleType.EXACT }, run: { size: 2 } } : {}) }));
     children.push(makeDocxPageTable(template, pageLines(report, page), page));
   }
 
@@ -168,11 +179,12 @@ export async function exportDocx(
             margin: {
               top: mmToTwips(template.marginsMm.top),
               right: mmToTwips(template.marginsMm.right),
-              bottom: mmToTwips(template.marginsMm.bottom),
+              bottom: mmToTwips(template.paperProfile ? 190 * 25.4 / 72 : template.marginsMm.bottom),
               left: mmToTwips(template.marginsMm.left),
             },
           },
         },
+        ...(template.paperProfile ? { headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ type: "jpg", data: originalPaperImage(), transformation: { width: (originalPaper.imageRect[2] - originalPaper.imageRect[0]) * 4 / 3, height: (originalPaper.imageRect[3] - originalPaper.imageRect[1]) * 4 / 3 }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[0] * 12700) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[1] * 12700) }, behindDocument: true, allowOverlap: true } })] })] }) } } : {}),
         children,
       },
     ],
@@ -231,6 +243,8 @@ function drawPdfPage(
   const bottom = metrics.bottomPt;
   const rowHeight = metrics.rowHeightPt;
 
+  if (template.paperProfile) document.image(originalPaperImage(), originalPaper.imageRect[0], originalPaper.imageRect[1], { width: originalPaper.imageRect[2] - originalPaper.imageRect[0], height: originalPaper.imageRect[3] - originalPaper.imageRect[1] });
+  if (!template.paperProfile) {
   document.lineWidth(0.5).strokeColor("#a0a0a0");
   for (let row = 0; row <= template.linesPerPage; row += 1) {
     const y = top + row * rowHeight;
@@ -239,7 +253,8 @@ function drawPdfPage(
   document.moveTo(left, top).lineTo(left, bottom).stroke();
   document.moveTo(right, top).lineTo(right, bottom).stroke();
 
-  const gridWidth = metrics.columnWidthPt;
+  }
+  const gridWidth = template.paperProfile ? template.fontSizePt / 2 : metrics.columnWidthPt;
   for (let row = 0; row < template.linesPerPage; row += 1) {
     const line = lines[row];
     if (!line?.text || line.isSpacer) continue;
@@ -249,11 +264,11 @@ function drawPdfPage(
     else document.font("Helvetica");
     document.fontSize(template.fontSizePt).fillColor("#111111");
     const indent = lineIndentColumns(line);
-    const x = left + gridWidth * indent + 4;
-    const width = Math.max(1, gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
+    const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
+    const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
     const alignment = line.format.alignment === "distributed" ? "justify" : line.format.alignment;
     const text = expandTabs(line.text, line.format.tabSize, indent);
-    document.text(text, x, top + row * rowHeight + (rowHeight - template.fontSizePt) / 2, {
+    document.text(text, x, template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2, {
       width,
       height: rowHeight,
       lineBreak: false,
@@ -269,7 +284,7 @@ export async function exportPdf(
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
   const pages = outputPageCount(report, template, allowOverflow);
-  let fontPath = findPdfFont();
+  let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
   let boldFontPath = findPdfFont(true);
   let italicFontPath = findPdfItalicFont();
   let regularFont: unknown;
@@ -290,6 +305,7 @@ export async function exportPdf(
       regularFont = openPdfFont(fontPath);
       document.font(regularFont as never);
     } catch {
+      if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
       fontPath = undefined;
       document.font("Helvetica");
     }
@@ -322,7 +338,7 @@ export async function exportPdf(
 
   const warnings: string[] = [];
   if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
-  if (fontPath && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
+  if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
   if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
     warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
   }
@@ -351,4 +367,5 @@ export async function exportText(
   await fs.writeFile(outputPath, `${pageTexts.join("\n\f\n")}\n`, "utf8");
   return { path: outputPath, pages, format: "txt" };
 }
+
 

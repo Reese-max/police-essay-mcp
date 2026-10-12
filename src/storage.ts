@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { layoutSections } from "./layout.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
@@ -82,6 +83,11 @@ export class FileStore {
     await this.ensureDirectories();
     const normalized = answerDocumentSchema.parse(answer);
     const answerId = safeId(normalized.id);
+    // Keep invalid 166 formatting/font settings from being persisted before reflow.
+    // Overflow is still saved so the caller can preview and revise the answer.
+    if (normalized.templateId === "police_information_essay_166") {
+      layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
+    }
     await this.withAnswerWriteLock(answerId, async () => {
       const filename = path.join(this.answerDir, `${answerId}.json`);
       let current: AnswerDocument | undefined;
@@ -307,3 +313,4 @@ export function exportMimeType(filename: string): string {
   if (filename.endsWith(".txt")) return "text/plain";
   throw new Error(`Unsupported export extension: ${filename}`);
 }
+
