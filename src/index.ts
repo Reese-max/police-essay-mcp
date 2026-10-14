@@ -34,8 +34,8 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT 必須是 1 到 65535 的整數。");
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1_024) throw new Error("MCP_MAX_BODY_BYTES 必須至少為 1024。");
     if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1_000) throw new Error("MCP_REQUEST_TIMEOUT_MS 必須至少為 1000。");
-    if (allowAnonymousRemote && (oauth.mode !== "bearer" || authToken || readToken || allowAnonymousLoopback)) {
-      throw new Error("MCP_ALLOW_ANONYMOUS_REMOTE 只能在 AUTH_MODE=bearer、沒有任何 token 且未啟用 loopback 匿名模式時使用。");
+    if (allowAnonymousRemote && (oauth.mode !== "bearer" || authToken || readToken || allowAnonymousLoopback || corsOrigin)) {
+      throw new Error("MCP_ALLOW_ANONYMOUS_REMOTE 只能在 AUTH_MODE=bearer、沒有任何 token、未設定 CORS_ORIGIN 且未啟用 loopback 匿名模式時使用。");
     }
     if (allowAnonymousLoopback && (oauth.mode !== "bearer" || !isLoopbackHost(host) || authToken || readToken)) {
       throw new Error("MCP_ALLOW_ANONYMOUS_LOOPBACK 只能在沒有 token 的純 loopback 模式使用。");

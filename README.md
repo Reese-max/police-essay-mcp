@@ -47,7 +47,7 @@ npm start
 - `MCP_AUTH_TOKEN`：HTTP owner Bearer token；所有 HTTP 模式預設都必須設定，包含 tunnel 代理的 loopback
 - `MCP_READ_TOKEN`：可選的獨立唯讀 Bearer token，只提供讀取與不寫入的預覽工具
 - `MCP_ALLOW_ANONYMOUS_LOOPBACK`：只有在完全沒有 tunnel／代理的純本機 loopback 用途，才能明確設為 `true`，且不得同時設定 token
-- `MCP_ALLOW_ANONYMOUS_REMOTE`：明確設為 `true` 時，遠端 `/mcp` 不需任何認證即可讀寫、刪除與匯出全部答案；只能搭配 `AUTH_MODE=bearer` 且不設任何 token，瀏覽器 Origin 請求仍會被拒絕
+- `MCP_ALLOW_ANONYMOUS_REMOTE`：明確設為 `true` 時，遠端 `/mcp` 不需任何認證即可讀寫、刪除與匯出全部答案；只能搭配 `AUTH_MODE=bearer`，且不得設定非空白的 owner／read token、`CORS_ORIGIN` 或 `MCP_ALLOW_ANONYMOUS_LOOPBACK`；帶瀏覽器 Origin 的請求一律拒絕
 - `MCP_MAX_BODY_BYTES`：HTTP 請求大小上限，預設 2 MB
 - `MCP_REQUEST_TIMEOUT_MS`：HTTP 請求逾時，預設 30 秒
 - `CORS_ORIGIN`：可選的單一可信 HTTPS origin（或本機 HTTP origin）；未設定時不允許跨來源瀏覽器請求
@@ -59,11 +59,11 @@ npm run check
 npm test
 ```
 
-若要接 ChatGPT Developer Mode，先確認連接器能對每次 `/mcp` GET／POST／DELETE 請求提供 owner Bearer credential，或由可信 access gateway 驗證使用者後代送 credential。確認 HTTPS tunnel 本身的存取控制，再使用 tunnel URL 加上 `/mcp` 建立 app。若連接器無法提供這項驗證，請勿公開 tunnel；可改用本機 stdio。工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
+若要接 ChatGPT Developer Mode，先確認連接器能對每次 `/mcp` GET／POST／DELETE 請求提供 owner Bearer credential，或由可信 access gateway 驗證使用者後代送 credential。確認 HTTPS tunnel 本身的存取控制，再使用 tunnel URL 加上 `/mcp` 建立 app。若連接器無法提供這項驗證，請勿公開 tunnel；可改用本機 stdio。唯一例外是擁有者明確接受風險並啟用 `MCP_ALLOW_ANONYMOUS_REMOTE=true`，此時 app 以無認證連線，任何知道網址的人都能讀寫全部答案。工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
 
 ## 安全與部署
 
-HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，因此 HTTP 預設沒有 owner token 就拒絕啟動。使用高熵隨機 token，勿放進 URL 或提交到 Git。可另外設定不同的 `MCP_READ_TOKEN` 給唯讀客戶端；此 token 無法呼叫建立、修改、刪除或匯出工具，也不能讀取匯出 artifact resource。`MCP_ALLOW_ANONYMOUS_LOOPBACK=true` 僅保留給沒有 tunnel／代理的純本機使用，非 loopback `HOST` 會拒絕此模式。`MCP_ALLOW_ANONYMOUS_REMOTE=true` 會讓任何能連到服務的人匿名讀寫全部答案，只應在擁有者明確接受此風險時使用，啟動時會記錄警告。缺少或無效 credential 的 `/mcp` 請求會在進入 MCP handler 前回傳 401，並附 `WWW-Authenticate: Bearer` challenge，讓連接器能辨識所需的 credential 類型。CORS 只接受明確設定的可信來源，而且不能代替認證。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
+HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，因此 HTTP 預設沒有 owner token 就拒絕啟動。使用高熵隨機 token，勿放進 URL 或提交到 Git。可另外設定不同的 `MCP_READ_TOKEN` 給唯讀客戶端；此 token 無法呼叫建立、修改、刪除或匯出工具，也不能讀取匯出 artifact resource。`MCP_ALLOW_ANONYMOUS_LOOPBACK=true` 僅保留給沒有 tunnel／代理的純本機使用，非 loopback `HOST` 會拒絕此模式。`MCP_ALLOW_ANONYMOUS_REMOTE=true` 會讓任何能連到服務的人匿名讀寫全部答案，只應在擁有者明確接受此風險時使用，啟動時會記錄警告。除匿名模式外，缺少或無效 credential 的 `/mcp` 請求會在進入 MCP handler 前回傳 401，並附 `WWW-Authenticate: Bearer` challenge，讓連接器能辨識所需的 credential 類型。CORS 只接受明確設定的可信來源，而且不能代替認證。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
 
 儲存採原子替換、每份答案有寫入鎖，且儲存時會再次檢查版本；因此併發修改不會默默覆蓋較新的答案。
 

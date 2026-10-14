@@ -299,10 +299,14 @@ test("anonymous loopback requires explicit opt-in and never enables browser orig
 
 test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and still blocks browser origins", async () => {
   for (const overrides of <Record<string, string>[]>[
-    { HOST: "0.0.0.0", MCP_ALLOW_ANONYMOUS_REMOTE: "true" },
-    { HOST: "0.0.0.0", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true" },
-    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", MCP_ALLOW_ANONYMOUS_LOOPBACK: "true" },
-    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", AUTH_MODE: "oauth",
+    { HOST: "0.0.0.0", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", MCP_ALLOW_ANONYMOUS_LOOPBACK: "true" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "https://trusted.example" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", AUTH_MODE: "oauth",
+      OAUTH_RESOURCE_URL: "https://mcp.example/mcp", OAUTH_ISSUERS: "https://issuer.example", OAUTH_JWKS_URI: "https://issuer.example/jwks" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", AUTH_MODE: "both",
       OAUTH_RESOURCE_URL: "https://mcp.example/mcp", OAUTH_ISSUERS: "https://issuer.example", OAUTH_JWKS_URI: "https://issuer.example/jwks" },
   ]) {
     const runtime = await spawnServer(overrides);
@@ -328,15 +332,21 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     assert.match(runtime.logs.join(""), /MCP_ALLOW_ANONYMOUS_REMOTE=true/u);
     const preflight = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, { method: "OPTIONS", headers: { origin: "https://outside.example" } });
     assert.equal(preflight.status, 403);
-    const browser = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
-      method: "POST",
-      headers: { origin: "https://outside.example", "content-type": "application/json", accept: "application/json, text/event-stream" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
-    });
-    assert.equal(browser.status, 403);
+    for (const method of ["GET", "POST", "DELETE"]) {
+      const browser = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+        method,
+        headers: { origin: "https://outside.example", "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) : undefined,
+      });
+      assert.equal(browser.status, 403, `${method} with browser origin`);
+    }
     client = await connectClient(runtime.port);
-    const toolNames = (await client.listTools()).tools.map((tool) => tool.name);
-    assert.equal(toolNames.length, 21);
+    const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    assert.deepEqual(toolNames, [
+      "check_layout", "create_answer", "delete_text", "export_docx", "export_pdf", "export_text", "format_section", "insert_text",
+      "list_answers", "list_templates", "load_exam_paper", "preview_delete_text", "preview_format_section", "preview_insert_text",
+      "preview_replace_text", "preview_write_answer", "read_answer", "reflow_answer", "render_answer_sheet", "replace_text", "write_answer",
+    ]);
     const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);
     assert.equal((await readdir(path.join(runtime.root, "answers"))).length, 1);
