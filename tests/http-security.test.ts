@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -157,6 +158,21 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     assert.deepEqual(await readdir(path.join(runtime.root, "answers")), []);
     assert.deepEqual(await readdir(path.join(runtime.root, "exports")), []);
 
+    for (const token of [ownerToken, readToken]) {
+      const proxied = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${token}`, "content-type": "application/json", accept: "application/json, text/event-stream",
+          forwarded: "for=203.0.113.1;host=public.example;proto=https", "x-forwarded-host": "public.example", via: "1.1 gateway",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      });
+      assert.equal(proxied.status, 200, "authenticated proxy request");
+      const payload = await proxied.text();
+      assert.match(payload, /read_answer/);
+      assert.equal(payload.includes('"name":"create_answer"'), token === ownerToken);
+    }
+
     const trusted = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
       method: "OPTIONS",
       headers: { origin: "https://trusted.example" },
@@ -292,6 +308,65 @@ test("anonymous loopback requires explicit opt-in and never enables browser orig
     assert.ok((await client.listTools()).tools.some((tool) => tool.name === "create_answer"));
   } finally {
     await client?.close().catch(() => undefined);
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("anonymous loopback rejects public hosts and forwarded requests before storage", async () => {
+  const runtime = await spawnServer({ MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_LOOPBACK: "true", CORS_ORIGIN: "" });
+  try {
+    await waitForReady(runtime);
+    const endpoint = `http://127.0.0.1:${runtime.port}/mcp`;
+    // node:http preserves Host overrides; Node's fetch can silently replace them.
+    const send = async (method: string, headers: Record<string, string>, body?: string) => {
+      const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
+        const req = http.request(endpoint, { method, headers, timeout: 5_000 }, resolve);
+        req.on("error", reject);
+        req.on("timeout", () => req.destroy(new Error("Security probe timed out")));
+        req.end(body);
+      });
+      let payload = "";
+      for await (const chunk of response) payload += chunk;
+      return { status: response.statusCode, headers: response.headers, body: payload };
+    };
+    const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: {
+      name: "create_answer", arguments: { templateId: "police_information_essay", title: "Must not be created" },
+    } });
+    const unsafeHeaders: Record<string, string>[] = [
+      { host: "public.example" },
+      { host: `127.0.0.1.public.example:${runtime.port}` },
+      { host: "localhost:0" },
+      { forwarded: "for=203.0.113.1;host=public.example;proto=https" },
+      { "x-forwarded-host": "public.example" },
+      { "x-forwarded-for": "203.0.113.1" },
+      { "x-forwarded-proto": "https" },
+      { "x-forwarded-port": "443" },
+      { via: "1.1 gateway" },
+      { forwarded: "" },
+    ];
+    for (const headers of unsafeHeaders) {
+      for (const method of ["POST", "GET", "DELETE"]) {
+        const response = await send(method,
+          { ...headers, "content-type": "application/json", accept: "application/json, text/event-stream" },
+          method === "POST" ? body : undefined,
+        );
+        assert.equal(response.status, 401, `${method} ${JSON.stringify(headers)} must fail before MCP`);
+        assert.match(response.headers["www-authenticate"] ?? "", /^Bearer\s/);
+        assert.equal(response.headers["access-control-allow-origin"], undefined);
+        assert.deepEqual(await readdir(path.join(runtime.root, "answers")), []);
+        assert.deepEqual(await readdir(path.join(runtime.root, "exports")), []);
+      }
+    }
+    for (const host of ["127.0.0.1", "localhost", "[::1]", `127.0.0.1:${runtime.port}`, `LOCALHOST:${runtime.port}`, `[::1]:${runtime.port}`]) {
+      const response = await send("POST",
+        { host, "content-type": "application/json", accept: "application/json, text/event-stream" },
+        JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+      );
+      assert.equal(response.status, 200, `direct loopback ${host}`);
+      assert.match(response.body, /create_answer/);
+    }
+  } finally {
     await stopServer(runtime.child);
     await rm(runtime.root, { recursive: true, force: true });
   }
