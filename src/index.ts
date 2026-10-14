@@ -22,6 +22,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   const authToken = env.MCP_AUTH_TOKEN?.trim();
   const readToken = env.MCP_READ_TOKEN?.trim();
   const allowAnonymousLoopback = env.MCP_ALLOW_ANONYMOUS_LOOPBACK === "true";
+  const allowAnonymousRemote = env.MCP_ALLOW_ANONYMOUS_REMOTE === "true";
   const corsOrigin = env.CORS_ORIGIN?.trim();
   const checkReadiness = createReadinessCheck(store, { requirePaperFont: env.REQUIRE_PAPER_FONT === "true", fontPath: () => env.ESSAY_MCP_PAPER_FONT });
 
@@ -33,13 +34,13 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("PORT 必須是 1 到 65535 的整數。");
     if (!Number.isInteger(maxBodyBytes) || maxBodyBytes < 1_024) throw new Error("MCP_MAX_BODY_BYTES 必須至少為 1024。");
     if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1_000) throw new Error("MCP_REQUEST_TIMEOUT_MS 必須至少為 1000。");
-    if (env.MCP_ALLOW_ANONYMOUS_REMOTE === "true") {
-      throw new Error("MCP_ALLOW_ANONYMOUS_REMOTE 已停用；遠端 HTTP 必須設定 MCP_AUTH_TOKEN。");
+    if (allowAnonymousRemote && (oauth.mode !== "bearer" || authToken || readToken || allowAnonymousLoopback)) {
+      throw new Error("MCP_ALLOW_ANONYMOUS_REMOTE 只能在 AUTH_MODE=bearer、沒有任何 token 且未啟用 loopback 匿名模式時使用。");
     }
     if (allowAnonymousLoopback && (oauth.mode !== "bearer" || !isLoopbackHost(host) || authToken || readToken)) {
       throw new Error("MCP_ALLOW_ANONYMOUS_LOOPBACK 只能在沒有 token 的純 loopback 模式使用。");
     }
-    if (oauth.mode !== "oauth" && !authToken && !allowAnonymousLoopback) {
+    if (oauth.mode !== "oauth" && !authToken && !allowAnonymousLoopback && !allowAnonymousRemote) {
       throw new Error("HTTP MCP 必須設定 MCP_AUTH_TOKEN；純本機匿名模式須明確設定 MCP_ALLOW_ANONYMOUS_LOOPBACK=true。");
     }
     if (readToken && (!authToken || readToken === authToken)) {
@@ -70,7 +71,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   }
 
   function requestScope(request: IncomingMessage): "owner" | "read" | undefined {
-    if (allowAnonymousLoopback) return "owner";
+    if (allowAnonymousLoopback || allowAnonymousRemote) return "owner";
     const supplied = /^Bearer ([^\s]+)$/iu.exec(request.headers.authorization ?? "")?.[1];
     if (!supplied) return undefined;
     if (oauth.mode === "oauth") return undefined;
@@ -115,8 +116,8 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     if (!origin) return false;
     if (corsOrigin) return origin !== corsOrigin;
     // With no CORS grant, browsers cannot read cross-origin responses. The
-    // explicit anonymous loopback mode still rejects browser-origin requests.
-    return allowAnonymousLoopback;
+    // explicit anonymous modes still reject browser-origin requests.
+    return allowAnonymousLoopback || allowAnonymousRemote;
   }
 
   async function authenticate(request: IncomingMessage, response: ServerResponse): Promise<{
@@ -237,6 +238,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
 
   try { validateRuntimeConfig(); }
   catch (error) { console.error((error as Error).message); throw error; }
+  if (allowAnonymousRemote) console.error("警告：MCP_ALLOW_ANONYMOUS_REMOTE=true，/mcp 接受未認證的遠端讀寫請求。");
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "OPTIONS") {
