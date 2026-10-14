@@ -298,6 +298,26 @@ test("anonymous loopback requires explicit opt-in and never enables browser orig
 });
 
 test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and still blocks browser origins", async () => {
+  // Only the exact string "true" opts in; anything else falls back to the token requirement.
+  for (const overrides of <Record<string, string>[]>[
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "TRUE", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true ", CORS_ORIGIN: "" },
+  ]) {
+    const runtime = await spawnServer(overrides);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const exit = await Promise.race([
+        once(runtime.child, "exit"),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Server did not fail closed")), 90_000); }),
+      ]);
+      assert.notEqual(exit[0], 0);
+      assert.match(runtime.logs.join(""), /MCP_AUTH_TOKEN/u);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      await stopServer(runtime.child);
+      await rm(runtime.root, { recursive: true, force: true });
+    }
+  }
   for (const overrides of <Record<string, string>[]>[
     { HOST: "0.0.0.0", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
     { HOST: "0.0.0.0", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
@@ -325,7 +345,8 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     }
   }
 
-  const runtime = await spawnServer({ HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" });
+  // Whitespace-only tokens keep the existing "unset" semantics.
+  const runtime = await spawnServer({ HOST: "0.0.0.0", MCP_AUTH_TOKEN: "   ", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" });
   let client: Client | undefined;
   try {
     await waitForReady(runtime);
@@ -350,6 +371,15 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);
     assert.equal((await readdir(path.join(runtime.root, "answers"))).length, 1);
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+    const written = await client.callTool({ name: "write_answer", arguments: { answerId, expectedVersion: 1, sections: [{ id: "intro", text: "Anonymous edit" }] } });
+    assert.equal((written.structuredContent as { answer: { version: number } }).answer.version, 2);
+    const exported = await client.callTool({ name: "export_text", arguments: { answerId } });
+    assert.equal(exported.isError, undefined);
+    const exportUri = (exported.structuredContent as { exportUri: string }).exportUri;
+    const resource = await client.readResource({ uri: exportUri });
+    const content = resource.contents[0] as { text?: string; blob?: string };
+    assert.match(content.text ?? Buffer.from(content.blob ?? "", "base64").toString("utf8"), /Anonymous edit/u);
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
