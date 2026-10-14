@@ -59,3 +59,10 @@ npx tsx scripts/generate-contract-from-base.ts C:\Users\Administrator\work\pem-w
 | Refresh／rotation／撤銷／取消登入 | 待查證 | 待查證 |
 | 額度／費用／超量行為／停止條件 | 待查證 | 待查證 |
 | 真實 ChatGPT linking 與到期續用收據 | 待查證 | 待查證 |
+
+## Known limitations (accepted, reviewed 2026-10-14)
+
+- JWKS fetch failure or cooldown returns `401 invalid_token` (fail closed) rather than 503; a client may re-authorize needlessly during an IdP outage.
+- A key rotation where the IdP signs with a new `kid` before publishing it can be delayed by at most one `OAUTH_JWKS_BACKOFF_SECONDS` window (default 30s, max 300s).
+- The path-insertion well-known route is fixed to `/mcp`; `OAUTH_RESOURCE_URL` must end in `/mcp`.
+- `OAUTH_REQUIRE_AT_JWT` and `OAUTH_JWKS_BACKOFF_SECONDS` reject unrecognised values at startup instead of silently ignoring them.

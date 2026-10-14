@@ -41,3 +41,13 @@ export function createReadinessCheck(store: EssayStore, options: {
     } finally { if (timeout) clearTimeout(timeout); }
   };
 }
+
+/**
+ * google-gax can leave a floating promise that rejects when credentials cannot be loaded; Node would then
+ * terminate the whole instance (dropping in-flight requests) instead of /readyz answering 503. Only rejections
+ * whose stack is inside the Google auth/gRPC client are contained; every other unhandled rejection stays fatal.
+ */
+export function isCloudSdkRejection(reason: unknown): boolean {
+  const stack = reason instanceof Error ? reason.stack ?? "" : "";
+  return /[\\/]node_modules[\\/](google-gax|google-auth-library)[\\/]/.test(stack);
+}

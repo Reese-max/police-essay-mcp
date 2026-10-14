@@ -38,9 +38,14 @@ export function oauthConfiguration(env = process.env) {
   // One pinned JWKS URI must be authoritative for every allowed issuer.
   const jwksUri = trustedUrl(env.OAUTH_JWKS_URI ?? "");
   const refreshBackoffMs = Number(env.OAUTH_JWKS_BACKOFF_SECONDS ?? "30") * 1000;
-  if (!Number.isFinite(refreshBackoffMs) || refreshBackoffMs <= 0) throw new Error("OAUTH_JWKS_BACKOFF_SECONDS must be positive.");
+  if (!Number.isFinite(refreshBackoffMs) || refreshBackoffMs <= 0 || refreshBackoffMs > 300_000) throw new Error("OAUTH_JWKS_BACKOFF_SECONDS must be between 1 and 300.");
   return { mode: mode as "oauth" | "both", resource, issuers, jwksUri, refreshBackoffMs,
-    requireAtJwt: env.OAUTH_REQUIRE_AT_JWT === "true" };
+    requireAtJwt: strictBoolean(env.OAUTH_REQUIRE_AT_JWT, "OAUTH_REQUIRE_AT_JWT") };
+}
+function strictBoolean(value: string | undefined, name: string): boolean {
+  if (value === undefined || value === "" || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error(`${name} must be "true" or "false".`);
 }
 export function protectedResourceMetadata(config: { resource: string; issuers: string[] }) {
   return { resource: config.resource, authorization_servers: config.issuers,
@@ -101,7 +106,7 @@ export function createOAuthVerifier(config: { issuers: string[]; resource: strin
       const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
       const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
       if (!["RS256", "ES256"].includes(header.alg) || typeof header.kid !== "string"
-        || (config.requireAtJwt && header.typ !== "at+jwt")
+        || (config.requireAtJwt && !(typeof header.typ === "string" && ["at+jwt", "application/at+jwt"].includes(header.typ.toLowerCase())))
         || !header.kid || header.crit !== undefined || header.b64 !== undefined) throw new OAuthError();
       const seconds = now() / 1000, skew = 30;
       const audience = typeof claims.aud === "string" ? [claims.aud] : claims.aud;

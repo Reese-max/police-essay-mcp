@@ -4,9 +4,9 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createEssayMcpServer } from "./server.js";
-import { CloudStore, createRuntimeStore } from "./cloud-storage.js";
+import { createRuntimeStore } from "./runtime-store.js";
 import { initializeRuntimeFont, validateRuntimeFont } from "./runtime-font.js";
-import { createReadinessCheck } from "./readiness.js";
+import { createReadinessCheck, isCloudSdkRejection } from "./readiness.js";
 
 import type { EssayStore } from "./storage.js";
 import { createOAuthVerifier, oauthConfiguration, OAuthError, oauthChallenge,
@@ -45,7 +45,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     if (readToken && (!authToken || readToken === authToken)) {
       throw new Error("MCP_READ_TOKEN 必須與 MCP_AUTH_TOKEN 不同，且須同時設定 owner token。");
     }
-    if (verifyOAuth && !(store instanceof CloudStore) && !/^[a-f0-9]{64}$/.test(env.OAUTH_FILE_OWNER_KEY ?? "")) {
+    if (verifyOAuth && !store.forPrincipal && !/^[a-f0-9]{64}$/.test(env.OAUTH_FILE_OWNER_KEY ?? "")) {
       throw new Error("OAuth FileStore requires OAUTH_FILE_OWNER_KEY for its single owner.");
     }
     if (corsOrigin) {
@@ -130,7 +130,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
         if (!token) throw new OAuthError();
         const principal = await verifyOAuth(token);
         requireScope(principal, "essay.read");
-        if (!(store instanceof CloudStore) && principal.ownerKey !== env.OAUTH_FILE_OWNER_KEY) throw new OAuthError();
+        if (!store.forPrincipal && principal.ownerKey !== env.OAUTH_FILE_OWNER_KEY) throw new OAuthError();
         return { scope: principal.scopes.includes("essay.write") ? "owner" : "read", principal };
       } catch (error) {
         const failure = error instanceof OAuthError ? error : new OAuthError();
@@ -160,7 +160,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       return;
     }
     request.setTimeout(requestTimeoutMs, () => request.destroy(new Error("MCP request timed out")));
-    const requestStore = principal && store instanceof CloudStore
+    const requestStore = principal && store.forPrincipal
       ? store.forPrincipal(principal.ownerKey, !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export")) : store;
     const server = createEssayMcpServer(requestStore, principal
       ? { readOnly: !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export"), scopes: principal.scopes }
@@ -283,7 +283,11 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
 }
 
 async function startHttp(): Promise<void> {
-  const store = createRuntimeStore();
+  process.on("unhandledRejection", (reason) => {
+    if (!isCloudSdkRejection(reason)) throw reason;
+    console.error(`[${randomUUID()}] cloud_sdk_unhandled_rejection`);
+  });
+  const store = await createRuntimeStore();
   const handler = createHttpHandler(store);
   try {
     await initializeRuntimeFont();
@@ -304,7 +308,7 @@ async function startHttp(): Promise<void> {
 }
 
 async function startStdio(): Promise<void> {
-  const store = createRuntimeStore();
+  const store = await createRuntimeStore();
   if (process.env.REQUIRE_PAPER_FONT === "true") {
     await validateRuntimeFont(await store.getTemplate("police_information_essay_166"));
   }

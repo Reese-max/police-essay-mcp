@@ -1,4 +1,3 @@
-import { Storage } from "@google-cloud/storage";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -26,7 +25,7 @@ export async function initializeRuntimeFont(storage?: StorageClient, env = proce
     throw new Error("Runtime font requires a GCS URI, fixed generation and the approved SHA-256.");
   }
   if (match[1] === env.ESSAY_ARTIFACT_BUCKET) throw new Error("Runtime font requires a dedicated bucket separate from artifacts.");
-  const file = (storage ?? new Storage()).bucket(match[1]).file(match[2], { generation: env.PAPER_FONT_GENERATION });
+  const file = (storage ?? new (await import("@google-cloud/storage")).Storage()).bucket(match[1]).file(match[2], { generation: env.PAPER_FONT_GENERATION });
   const [metadata] = await file.getMetadata();
   if (String(metadata.generation) !== env.PAPER_FONT_GENERATION || Number(metadata.size) > 16 * 1024 * 1024) {
     throw new Error("Runtime font generation or size mismatch.");

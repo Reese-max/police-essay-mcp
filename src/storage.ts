@@ -39,6 +39,8 @@ export interface EssayStore {
     format: ExportFormat; expiresAt: string; data: Buffer;
   }>;
   checkReadiness?(): Promise<void>;
+  /** Present on stores that isolate data per authenticated principal (cloud backend). */
+  forPrincipal?(ownerKey: string, readOnly: boolean): EssayStore;
 }
 
 export class StoreNotFoundError extends Error {

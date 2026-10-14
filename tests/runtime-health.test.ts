@@ -6,7 +6,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CloudStore } from "../src/cloud-storage.js";
-import { createReadinessCheck } from "../src/readiness.js";
+import { createReadinessCheck, isCloudSdkRejection } from "../src/readiness.js";
 import { initializeRuntimeFont, validateRuntimeFont } from "../src/runtime-font.js";
 import { ORIGINAL_PAPER_FONT_SHA256, validatedOriginalPaperFont } from "../src/original-paper.js";
 import { FileStore } from "../src/storage.js";
@@ -164,4 +164,15 @@ test("wrong-family font independently fails after the SHA-256 gate succeeds", as
     assert.throws(() => validatedOriginalPaperFont(wrong), /TW-MOE-Std-Kai/);
     assert.equal(hashes(), 1, "real fontkit family validation runs after successful mocked hash");
   } finally { await fs.rm(directory, { recursive: true, force: true }); }
+});
+
+test("only Google auth/gRPC client rejections are contained, everything else stays fatal", () => {
+  const sdk = new Error("Could not load the default credentials.");
+  sdk.stack = "Error: x" + String.fromCharCode(10) + "    at GoogleAuth.getApplicationDefaultAsync (" + String.raw`C:\app\node_modules\google-auth-library\build\src\auth\googleauth.js:285:15` + ")";
+  const gax = new Error("stub"); gax.stack = "Error: x" + String.fromCharCode(10) + "    at GrpcClient.createStub (/app/node_modules/google-gax/build/src/grpc.js:391:23)";
+  assert.equal(isCloudSdkRejection(sdk), true);
+  assert.equal(isCloudSdkRejection(gax), true);
+  assert.equal(isCloudSdkRejection(new Error("boom")), false);
+  assert.equal(isCloudSdkRejection("string rejection"), false);
+  assert.equal(isCloudSdkRejection(undefined), false);
 });

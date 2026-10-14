@@ -303,13 +303,17 @@ test("OAUTH_REQUIRE_AT_JWT is opt-in and configurable backoff defaults to 30 sec
   const defaults = oauthConfiguration(env);
   assert.equal(defaults.refreshBackoffMs, 30_000); assert.equal(defaults.requireAtJwt, false);
   assert.equal(oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: "7" }).refreshBackoffMs, 7000);
-  for (const value of ["0", "-1", "NaN", "Infinity"]) assert.throws(() => oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: value }), /positive/);
+  for (const value of ["0", "-1", "NaN", "Infinity", "301", "3600"]) assert.throws(() => oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: value }), /between 1 and 300/);
+  assert.equal(oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: "300" }).refreshBackoffMs, 300_000);
+  for (const value of ["TRUE", "1", "yes"]) assert.throws(() => oauthConfiguration({ ...env, OAUTH_REQUIRE_AT_JWT: value }), /must be "true" or "false"/);
+  assert.equal(oauthConfiguration({ ...env, OAUTH_REQUIRE_AT_JWT: "false" }).requireAtJwt, false);
   const config = oauthConfiguration({ ...env, OAUTH_REQUIRE_AT_JWT: "true" });
   assert.ok(config.mode !== "bearer");
   const fetchKeys: typeof fetch = async () => new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] }));
   const strict = createOAuthVerifier(config, { now: () => time, fetch: fetchKeys });
   for (const typ of [undefined, "JWT", "id+jwt"]) await assert.rejects(strict(jwt({}, { typ })), OAuthError);
-  await strict(jwt({}, { typ: "at+jwt" }));
+  for (const typ of ["at+jwt", "AT+JWT", "application/at+jwt", "Application/AT+JWT"]) await strict(jwt({}, { typ }));
+  for (const typ of [123, null, ["at+jwt"]] as unknown[]) await assert.rejects(strict(jwt({}, { typ } as never)), OAuthError);
   await createOAuthVerifier(defaults, { now: () => time, fetch: fetchKeys })(jwt({}, { typ: "JWT" }));
 });
 
