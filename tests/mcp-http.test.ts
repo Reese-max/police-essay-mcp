@@ -294,7 +294,7 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal(exported.isError, undefined);
     const exportedContent = exported.structuredContent as { path: string; pages: number };
     assert.equal(exportedContent.pages, 2);
-    assert.equal((await stat(exportedContent.path)).isFile(), true);
+    await assert.rejects(stat(exportedContent.path), /ENOENT/);
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
@@ -475,8 +475,10 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
       assert.equal(artifact.mimeType, expectedMime[format]);
       const encoded = artifact.blob;
       assert.ok(encoded);
-      const onDisk = await readFile(structured.path);
-      assert.equal(Buffer.from(encoded, "base64").equals(onDisk), true);
+      await assert.rejects(readFile(structured.path), /ENOENT/);
+      const manifest = JSON.parse(await readFile(path.join(runtime.root, "exports", ".artifacts", handle + ".json"), "utf8"));
+      const persisted = await readFile(path.join(runtime.root, "exports", ".artifacts", manifest.artifactFilename));
+      assert.equal(Buffer.from(encoded, "base64").equals(persisted), true);
     }
 
     const unauthenticated = await request(

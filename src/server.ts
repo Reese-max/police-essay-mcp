@@ -22,9 +22,9 @@ import {
   paragraphFormatInputSchema,
   templateSchema,
 } from "./domain.js";
-import { exportDocx, exportPdf, exportText } from "./exporters.js";
+import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
-import { FileStore } from "./storage.js";
+import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
 import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
@@ -132,7 +132,7 @@ function snapshot(answer: AnswerDocument, template: AnswerTemplate): AnswerSnaps
   return { answer, layout: layoutSections(template, answer.sections) };
 }
 
-async function loadSnapshot(store: FileStore, answerId: string): Promise<AnswerSnapshot> {
+async function loadSnapshot(store: EssayStore, answerId: string): Promise<AnswerSnapshot> {
   const answer = await store.getAnswer(answerId);
   const template = await store.getTemplate(answer.templateId);
   return snapshot(answer, template);
@@ -152,7 +152,7 @@ function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): 
 }
 
 async function makeChangePreview(
-  store: FileStore,
+  store: EssayStore,
   operation: "write" | "replace" | "format" | "insert" | "delete",
   before: AnswerSnapshot,
   afterAnswer: AnswerDocument,
@@ -181,7 +181,7 @@ function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
+export function createEssayMcpServer(store: EssayStore = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -389,7 +389,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         const current = await loadSnapshot(store, answerId);
         return { structuredContent: current, content: textContent(`已讀取「${current.answer.title}」；${summarizeLayout(current.layout)}`) };
       } catch (error) {
-        if (error instanceof Error && error.message.includes("ENOENT")) throw new Error(noAnswerFoundMessage(answerId));
+        if (isStoreNotFound(error)) throw new Error(noAnswerFoundMessage(answerId));
         throw error;
       }
     },
@@ -825,12 +825,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "docx",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -872,12 +873,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportText(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "txt",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -919,12 +921,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "pdf",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {

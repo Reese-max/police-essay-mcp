@@ -19,6 +19,16 @@
 - 現有 HTTP app 的 `MCP_AUTH_TOKEN` / `MCP_READ_TOKEN` 是**固定 Bearer token**，不是完整 OAuth 2.1 Authorization Server；不可把 Cloud Run 的 IAM ID token 當成此應用的 token，也不能因為沒有 OAuth 就改成無認證公開。
 - 目前 ChatGPT App 是 App-backed；Plugin Creator 更新技能／說明文件不會重新設定現有 App 的 MCP URL。
 
+## Round A 本機實作設定
+
+- HTTP 的 `STORAGE_BACKEND=file|cloud` 預設為 `file`；stdio 一律使用 FileStore。cloud 缺設定立即拒絕啟動，不回退本地。
+- cloud 必填：`GOOGLE_CLOUD_PROJECT`、`ESSAY_FIRESTORE_DATABASE`（例如 `(default)`）、`ESSAY_ENVIRONMENT`、`ESSAY_OWNER_KEY`（64 字元 SHA-256）與 `ESSAY_ARTIFACT_BUCKET`。ADC 由執行環境提供，程式不載入 SA key 檔。固定 Bearer 只允許 `staging` 的合成 owner；production 的 OAuth principal 驗證留待後續階段。
+- 答案上限為正規化 JSON 的 700 KiB；artifact 上限為 16 MiB。答案及完整版本修改紀錄在同一 transaction 提交，歷史版本尚未設定自動刪除。
+- 匯出使用獨立 `/tmp` 目錄；成功及失敗皆清理。輸出契約保留 `path`，它代表已清理的暫存位置；請以 `exportUri` 下載 artifact。24 小時邏輯到期立即拒讀，GCS lifecycle 實體刪除是非同步。
+- 私有字型下載須同時設定 `PAPER_FONT_GCS_URI=gs://...`、`PAPER_FONT_GENERATION` 與 `PAPER_FONT_SHA256=e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98`。下載至 `/tmp/fonts`，驗證既有 MOE hash/family 後才監聽；也可直接設定既有 `ESSAY_MCP_PAPER_FONT`，啟動時驗證。
+- `/readyz` 每次讀取兩模板及已設定的 166 字型；cloud 儲存檢查成功快取 5 秒，依賴檢查 3 秒逾時後回 503。空 artifact bucket 可驗證 list 權限，第一個 owner artifact 出現後也驗證 object get。
+- Docker 兩階段共用 `NODE_IMAGE`。預設 Node 24 tag；取得建置收據後須以 `--build-arg NODE_IMAGE=node:24-...@sha256:...` 固定已驗證 digest。
+
 ## 分階段
 
 ### Phase A — 本地與私人 Cloud Run staging（僅使用合成測試答案）
@@ -42,7 +52,8 @@ gcloud run deploy police-essay-mcp-staging \
   --no-allow-unauthenticated \
   --service-account "police-essay-run@${PROJECT_ID}.iam.gserviceaccount.com" \
   --set-secrets "MCP_AUTH_TOKEN=police-essay-owner-token:latest" \
-  --set-env-vars "HOST=0.0.0.0,PORT=8080" \
+  --port 8080 \
+  --set-env-vars "HOST=0.0.0.0" \
   --cpu 1 --memory 512Mi \
   --concurrency 1 --min-instances 0 --max-instances 1 \
   --timeout 60

@@ -17,11 +17,12 @@ export function originalPaperFontPath(): string {
   if (!fontPath) throw new Error("166 原稿紙須設定 ESSAY_MCP_PAPER_FONT，指向教育部標準楷書完整字型。");
   return fontPath;
 }
+export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
 let cachedFont: { path: string; face: ReturnType<typeof fontkit.openSync> } | undefined;
 function font() {
   const fontPath = originalPaperFontPath();
   if (cachedFont?.path === fontPath) return cachedFont.face;
-  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98") throw new Error("166 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
+  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) throw new Error("166 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
   const opened = fontkit.openSync(fontPath);
   if (opened.familyName !== "TW-MOE-Std-Kai") throw new Error("166 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
   cachedFont = { path: fontPath, face: opened };

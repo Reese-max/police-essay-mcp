@@ -2,8 +2,10 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createEssayMcpServer, DEFAULT_TEMPLATE_ID } from "./server.js";
-import { FileStore } from "./storage.js";
+import { createEssayMcpServer } from "./server.js";
+import { createRuntimeStore } from "./cloud-storage.js";
+import { initializeRuntimeFont, validateRuntimeFont } from "./runtime-font.js";
+import { createReadinessCheck } from "./readiness.js";
 
 const port = Number.parseInt(process.env.PORT ?? "8787", 10);
 const host = process.env.HOST ?? "127.0.0.1";
@@ -13,11 +15,8 @@ const authToken = process.env.MCP_AUTH_TOKEN?.trim();
 const readToken = process.env.MCP_READ_TOKEN?.trim();
 const allowAnonymousLoopback = process.env.MCP_ALLOW_ANONYMOUS_LOOPBACK === "true";
 const corsOrigin = process.env.CORS_ORIGIN?.trim();
-const store = new FileStore({
-  templateDir: process.env.ESSAY_MCP_TEMPLATE_DIR,
-  answerDir: process.env.ESSAY_MCP_ANSWER_DIR,
-  exportDir: process.env.ESSAY_MCP_EXPORT_DIR,
-});
+const store = createRuntimeStore();
+const checkReadiness = createReadinessCheck(store);
 
 function isLoopbackHost(value: string): boolean {
   return value === "127.0.0.1" || value === "localhost" || value === "::1";
@@ -81,10 +80,11 @@ async function readHealth(_request: IncomingMessage, response: ServerResponse): 
 
 async function readReadiness(_request: IncomingMessage, response: ServerResponse): Promise<void> {
   try {
-    await store.getTemplate(DEFAULT_TEMPLATE_ID);
+    await checkReadiness();
     response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({ ok: true, ready: true }));
   } catch {
+    console.error(`[${randomUUID()}] readiness_dependency_failed`);
     response.writeHead(503, { "content-type": "application/json; charset=utf-8" });
     response.end(JSON.stringify({ ok: false, ready: false }));
   }
@@ -158,7 +158,7 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
     }
   } catch (error) {
     const requestId = randomUUID();
-    console.error(`[${requestId}] MCP request failed`, error);
+    console.error(`[${requestId}] MCP request failed`);
     if (!response.headersSent) response.writeHead(500, { "content-type": "application/json; charset=utf-8" });
     if (!response.writableEnded) {
       response.end(JSON.stringify({ error: "MCP request failed", requestId }));
@@ -167,7 +167,18 @@ async function handleMcp(request: IncomingMessage, response: ServerResponse): Pr
 }
 
 async function startHttp(): Promise<void> {
-  validateRuntimeConfig();
+  try { validateRuntimeConfig(); }
+  catch (error) {
+    // These configuration messages are authored here and contain no supplied values.
+    console.error((error as Error).message);
+    throw error;
+  }
+  try {
+    await initializeRuntimeFont();
+    if (process.env.ESSAY_MCP_PAPER_FONT) {
+      await validateRuntimeFont(await store.getTemplate("police_information_essay_166"));
+    }
+  } catch { throw new Error("Runtime font initialization failed."); }
   await store.ensureDirectories();
   const httpServer = createHttpServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
@@ -219,8 +230,10 @@ async function startStdio(): Promise<void> {
   await server.connect(transport);
 }
 
-if (process.env.MCP_TRANSPORT === "stdio") {
-  await startStdio();
-} else {
-  await startHttp();
+try {
+  if (process.env.MCP_TRANSPORT === "stdio") await startStdio();
+  else await startHttp();
+} catch {
+  console.error("startup_failed");
+  process.exitCode = 1;
 }
