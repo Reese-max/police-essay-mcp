@@ -1,0 +1,377 @@
+{
+  "sourceCommit": "18cb1760160d2849039277c13546f168a0956329",
+  "sourceSha256": {
+    "domain.ts": "fb80686c7d4fd5aa05848101cb5f532e312e18e876b8929997209debde1c711f",
+    "exporters.ts": "c67d43b60799cbd949f498f313cd1fe73e6a3d21866cde14b3a0c9f883ffaa50",
+    "layout.ts": "d417dec5c39b797aced3a9bf0e5941fd9fa3d22f877caa3577a4fb2a9137428d",
+    "metrics.ts": "b2b78caed49e2153b21770da0e6177ad30d06549dbe0c4928b455ac83d2b74f5",
+    "original-paper.ts": "877dcb64e3f6a9395c9137a418a3c765183c2ac74117d4c99135b06985f2a663",
+    "server.ts": "93613de385f1904000a118ada46629417ed94c0cc7e2c743543068c057c52d1f",
+    "storage.ts": "671837a8b6660b9d2e6002542861410b117ee4afdfab56d59f511a7e6fd82ef1",
+    "widget.ts": "2dea636e3a9355b6bdbb20faf7a75beb721f2bc3c378ba9c0ff1e61a74e8adc0"
+  },
+  "contract": {
+    "owner": {
+      "tools": [
+        {
+          "name": "check_layout",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "create_answer",
+          "inputSchemaSha256": "a0c2bd0774f285a1c1f6bb402e0c509b90fcf1e20d7e73013bb05e8c52644566",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "delete_text",
+          "inputSchemaSha256": "d0468d3808c44926eb57af2d9ce60bc4469026de987499bf76706e59eecb33af",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": true,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "export_docx",
+          "inputSchemaSha256": "5690a0471bbdf3d705a09bb07cf66c511fecec7bf630a890c663be4d2e19b106",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "export_pdf",
+          "inputSchemaSha256": "5690a0471bbdf3d705a09bb07cf66c511fecec7bf630a890c663be4d2e19b106",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "export_text",
+          "inputSchemaSha256": "5690a0471bbdf3d705a09bb07cf66c511fecec7bf630a890c663be4d2e19b106",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "format_section",
+          "inputSchemaSha256": "49cd2518dc6f64ac400df6456fb5a4a74cbf80692e0376e523705d9a0b49facd",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "insert_text",
+          "inputSchemaSha256": "44a55422a4cf25d74a081b016d283bbe7debc0ab17ad928f1c13a2f373051856",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "list_answers",
+          "inputSchemaSha256": "7a014b717a77aac971ea0ab5c0ff47bb13e6cae7ef9442d9dedb15ce36381b15",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "list_templates",
+          "inputSchemaSha256": "7a014b717a77aac971ea0ab5c0ff47bb13e6cae7ef9442d9dedb15ce36381b15",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "load_exam_paper",
+          "inputSchemaSha256": "8f3e60d88b58614ecb4cbd43dfa214eee2fde99a6a9b927f74205d884b48e034",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_delete_text",
+          "inputSchemaSha256": "d0468d3808c44926eb57af2d9ce60bc4469026de987499bf76706e59eecb33af",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_format_section",
+          "inputSchemaSha256": "49cd2518dc6f64ac400df6456fb5a4a74cbf80692e0376e523705d9a0b49facd",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_insert_text",
+          "inputSchemaSha256": "44a55422a4cf25d74a081b016d283bbe7debc0ab17ad928f1c13a2f373051856",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_replace_text",
+          "inputSchemaSha256": "1d801ff8b2e2a7532fd0c0c52a29bcac9640720ef8492c13143a26557f61b7c0",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_write_answer",
+          "inputSchemaSha256": "d43217e97999b932179289e291c6712f636891a03ec1555ad7dcce6650142578",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "read_answer",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "reflow_answer",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "render_answer_sheet",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "replace_text",
+          "inputSchemaSha256": "1d801ff8b2e2a7532fd0c0c52a29bcac9640720ef8492c13143a26557f61b7c0",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "write_answer",
+          "inputSchemaSha256": "d43217e97999b932179289e291c6712f636891a03ec1555ad7dcce6650142578",
+          "annotations": {
+            "readOnlyHint": false,
+            "destructiveHint": false,
+            "idempotentHint": false,
+            "openWorldHint": false
+          }
+        }
+      ],
+      "resources": [
+        {
+          "name": "answer-sheet-workflow",
+          "uri": "essay://instructions/workflow"
+        },
+        {
+          "name": "police-information-essay-answer-sheet-widget",
+          "uri": "ui://widget/police-essay-answer-sheet.html"
+        },
+        {
+          "name": "police-information-essay-template",
+          "uri": "essay://templates/police_information_essay"
+        }
+      ],
+      "resourceTemplates": [
+        {
+          "name": "export-artifact",
+          "uriTemplate": "essay://exports/{handle}"
+        }
+      ],
+      "prompts": [
+        "compress_answer",
+        "draft_answer"
+      ]
+    },
+    "reader": {
+      "tools": [
+        {
+          "name": "check_layout",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "list_answers",
+          "inputSchemaSha256": "7a014b717a77aac971ea0ab5c0ff47bb13e6cae7ef9442d9dedb15ce36381b15",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "list_templates",
+          "inputSchemaSha256": "7a014b717a77aac971ea0ab5c0ff47bb13e6cae7ef9442d9dedb15ce36381b15",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "load_exam_paper",
+          "inputSchemaSha256": "8f3e60d88b58614ecb4cbd43dfa214eee2fde99a6a9b927f74205d884b48e034",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_delete_text",
+          "inputSchemaSha256": "d0468d3808c44926eb57af2d9ce60bc4469026de987499bf76706e59eecb33af",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_format_section",
+          "inputSchemaSha256": "49cd2518dc6f64ac400df6456fb5a4a74cbf80692e0376e523705d9a0b49facd",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_insert_text",
+          "inputSchemaSha256": "44a55422a4cf25d74a081b016d283bbe7debc0ab17ad928f1c13a2f373051856",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_replace_text",
+          "inputSchemaSha256": "1d801ff8b2e2a7532fd0c0c52a29bcac9640720ef8492c13143a26557f61b7c0",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "preview_write_answer",
+          "inputSchemaSha256": "d43217e97999b932179289e291c6712f636891a03ec1555ad7dcce6650142578",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "read_answer",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "reflow_answer",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        },
+        {
+          "name": "render_answer_sheet",
+          "inputSchemaSha256": "17f5f6db40f047a47a57f2dbba7ec6f4d652f43f1ea71003df7adac46d380d99",
+          "annotations": {
+            "readOnlyHint": true,
+            "destructiveHint": false,
+            "openWorldHint": false
+          }
+        }
+      ],
+      "resources": [
+        {
+          "name": "answer-sheet-workflow",
+          "uri": "essay://instructions/workflow"
+        },
+        {
+          "name": "police-information-essay-answer-sheet-widget",
+          "uri": "ui://widget/police-essay-answer-sheet.html"
+        },
+        {
+          "name": "police-information-essay-template",
+          "uri": "essay://templates/police_information_essay"
+        }
+      ],
+      "resourceTemplates": [
+        {
+          "name": "export-artifact",
+          "uriTemplate": "essay://exports/{handle}"
+        }
+      ],
+      "prompts": [
+        "compress_answer",
+        "draft_answer"
+      ]
+    }
+  }
+}

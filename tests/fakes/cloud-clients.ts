@@ -98,6 +98,7 @@ export class MemoryStorage {
   failDelete = false;
   failRead = false;
   failMetadata = false;
+  saveResponseLost?: "same" | "different" | "different-size";
   uploads = 0;
   downloads = 0;
   deletions = 0;
@@ -108,15 +109,17 @@ export class MemoryStorage {
       const get = () => {
         if (this.failRead) throw new Error("synthetic storage read failure");
         const object = this.objects.get(key);
-        if (!object || (options.generation && options.generation !== object.generation)) throw new Error("Object not found.");
+        if (!object || (options.generation && options.generation !== object.generation)) throw Object.assign(new Error("Object not found."), { code: 404 });
         return object;
       };
       return {
         save: async (data: Buffer, options: { preconditionOpts: { ifGenerationMatch: number } }) => {
           this.uploads++;
           if (this.failUpload) throw new Error("synthetic upload failure");
-          if (options.preconditionOpts.ifGenerationMatch !== 0 || this.objects.has(key)) throw new Error("Object precondition failed.");
-          this.objects.set(key, { data: Buffer.from(data), generation: String(this.nextGeneration++) });
+          if (options.preconditionOpts.ifGenerationMatch !== 0 || this.objects.has(key)) throw Object.assign(new Error("Object precondition failed."), { code: 412 });
+          this.objects.set(key, { data: this.saveResponseLost === "different" ? Buffer.alloc(data.length, 120)
+            : this.saveResponseLost === "different-size" ? Buffer.alloc(data.length + 1, 120) : Buffer.from(data), generation: String(this.nextGeneration++) });
+          if (this.saveResponseLost) throw Object.assign(new Error("lost response, retry precondition failed"), { code: 412 });
         },
         getMetadata: async () => {
           if (this.failMetadata) throw new Error("synthetic metadata failure");

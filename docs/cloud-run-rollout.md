@@ -112,3 +112,29 @@ gcloud run deploy police-essay-mcp-staging \
 - https://cloud.google.com/run/pricing
 - https://developers.openai.com/plugins/deploy/submission
 - https://help.openai.com/en/articles/12584461-developer-mode-and-mcp-apps-in-chatgpt
+
+
+## Round B 儲存與本機驗收
+
+ESSAY_ARTIFACT_BUCKET 必須是專用 artifact bucket；infra/gcs-artifacts-lifecycle.json 的 age=1 規則作用於整個 bucket。PAPER_FONT_GCS_URI 必須使用另一個專用字型 bucket，程式在下載前拒絕兩者相同。REQUIRE_PAPER_FONT=true 會在啟動與 readiness 缺少核准字型時 fail closed；預設 false 保留非 166 環境。
+
+字型成功驗證依 path/mtime/size 快取；模板 readiness 快取 5 秒；逾時不堆疊未完成的 storage probe。Firestore/GCS 失敗只回分類錯誤，內部紀錄只有 requestId/classification。412 save 重試僅在既有 generation 的 size/SHA-256 一致時視為成功，否則針對 generation 補償刪除；補償失敗／generation 未知仍靠 lifecycle 清理，絕不發布 handle。答案/revision 的保留清理尚未新增。
+
+本機命令（無雲端部署）：
+
+~~~sh
+npm run check
+npm test
+npm run build
+node --import tsx scripts/check-mcp-contract.ts
+node --import tsx scripts/check-package.ts
+# Docker 不可用時明確輸出 PACKAGE_STATIC_OK，實際 context 為未驗證。
+# emulator image 須先在已授權環境預載；腳本不 pull、不呼叫 gcloud。
+bash scripts/run-firestore-emulator-tests.sh
+~~~
+
+契約 fixture 來自 main 18cb1760160d2849039277c13546f168a0956329 的歷史 src/，並保留來源 SHA-256，不能以目前程式重生 fixture。基準對照命令為 git show 18cb176:src/server.ts；工具名稱、inputSchema hash、annotations 與 resources/prompts 固定為 owner 21/read 12。
+
+Firestore emulator 測試未設定 FIRESTORE_EMULATOR_HOST 時明確 skip；只允許 loopback，使用 demo-police-essay 與每次隨機 owner，清理僅限該 owner 的測試資料。測試真正 SDK 的 transaction/create/revision/文件上限；updatedAt query 與設定檔保留 updatedAt index 的靜態檢查都有斷言。Emulator 不強制正式 Firestore 的索引設定，因此正式索引部署與查詢相容性仍須雲端驗收。
+
+OAuth 設定、單一 FileStore owner 與 provider 尚缺驗收見 [OAuth provider 要求](oauth-provider-requirements.md)。

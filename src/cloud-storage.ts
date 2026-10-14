@@ -17,6 +17,26 @@ export const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export type FirestoreClient = Pick<Firestore, "doc" | "collection" | "runTransaction">;
 export type StorageClient = Pick<Storage, "bucket">;
 
+class StoreConflictError extends Error {}
+export class StoreUnavailableError extends Error {
+  constructor() { super("儲存暫時故障"); }
+}
+function errorCode(error: unknown): number | undefined {
+  return Number((error as { code?: unknown })?.code) || undefined;
+}
+function logStorageFailure(classification: string): void {
+  console.error(JSON.stringify({ requestId: randomUUID(), classification }));
+}
+async function backend<T>(operation: () => Promise<T>, missing = false): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    if (error instanceof StoreConflictError || error instanceof StoreNotFoundError || error instanceof StoreUnavailableError) throw error;
+    if (missing && [404, 5].includes(errorCode(error)!)) throw new StoreNotFoundError("找不到");
+    logStorageFailure("storage_unavailable");
+    throw new StoreUnavailableError();
+  }
+}
+
 const manifestSchema = z.object({
   schemaVersion: z.literal(1), handle: z.string().regex(exportArtifactHandlePattern),
   ownerKey: z.string(), answerId: z.string(), answerVersion: z.number().int().positive(),
@@ -48,6 +68,10 @@ export class CloudStore implements EssayStore {
       answerDir: path.join(os.tmpdir(), "essay-cloud-unused"), exportDir: os.tmpdir() });
   }
 
+  forPrincipal(ownerKey: string, readOnly: boolean): CloudStore {
+    return new CloudStore({ ...this.options, ownerKey, readOnly });
+  }
+
   async ensureDirectories(): Promise<void> { /* Cloud persistence needs no local directories. */ }
   getTemplate(id: string) { return this.files.getTemplate(id); }
   async listTemplates() {
@@ -66,14 +90,16 @@ export class CloudStore implements EssayStore {
     if (!value || (value as { ownerKey?: string }).ownerKey !== this.options.ownerKey) {
       throw new StoreNotFoundError("Answer not found.");
     }
-    return answerDocumentSchema.parse(value);
+    const parsed = answerDocumentSchema.safeParse(value);
+    if (!parsed.success) throw new StoreUnavailableError();
+    return parsed.data;
   }
   async getAnswer(id: string): Promise<AnswerDocument> {
-    const result = await this.answerRef(id).get();
+    const result = await backend(() => this.answerRef(id).get(), true);
     return this.parseAnswer(result.data());
   }
   async listAnswers(): Promise<AnswerDocument[]> {
-    const result = await this.options.firestore.collection(this.userPath + "/answers").orderBy("updatedAt", "desc").get();
+    const result = await backend(() => this.options.firestore.collection(this.userPath + "/answers").orderBy("updatedAt", "desc").get());
     return result.docs.map(doc => this.parseAnswer(doc.data()));
   }
   async saveAnswer(answer: AnswerDocument, options: { expectedVersion?: number } = {}): Promise<void> {
@@ -87,22 +113,22 @@ export class CloudStore implements EssayStore {
     if (normalized.templateId === "police_information_essay_166") {
       layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
     }
-    await this.options.firestore.runTransaction(async transaction => {
+    await backend(() => this.options.firestore.runTransaction(async transaction => {
       const existing = (await transaction.get(ref)).data();
       const current = existing ? this.parseAnswer(existing) : undefined;
       if (options.expectedVersion !== undefined) {
         if (!current || current.version !== options.expectedVersion) {
-          throw new Error("Version conflict: expected " + options.expectedVersion + ", current version is " + (current?.version ?? "missing") + ". Read the answer again before editing.");
+          throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + (current?.version ?? "missing") + ". Read the answer again before editing.");
         }
       } else if (current) {
-        throw new Error("答案 " + normalized.id + " 已存在；更新既有答案時必須提供 expectedVersion。");
+        throw new StoreConflictError("答案 " + normalized.id + " 已存在；更新既有答案時必須提供 expectedVersion。");
       }
       const committed = { ...normalized, version: current ? current.version + 1 : 1,
         createdAt: current?.createdAt ?? normalized.createdAt,
         schemaVersion: 1, ownerKey: this.options.ownerKey, committedAt: FieldValue.serverTimestamp() };
       transaction.set(ref, committed);
       transaction.create(ref.collection("revisions").doc(String(committed.version)), committed);
-    });
+    }));
   }
 
   async createExportHandle(outputPath: string, details: ExportDetails) {
@@ -127,28 +153,42 @@ export class CloudStore implements EssayStore {
     const objectName = this.options.environment + "/" + this.options.ownerKey + "/" + handle + "." + details.format;
     const file = this.bucket.file(objectName);
     const mimeType = exportMimeType(name);
-    await file.save(data, { resumable: false, preconditionOpts: { ifGenerationMatch: 0 },
-      metadata: { contentType: mimeType } });
+    const sha256 = createHash("sha256").update(data).digest("hex");
     let generation: string | undefined;
     const createdAt = this.now();
     const expiresAt = createdAt + EXPORT_ARTIFACT_TTL_MS;
     try {
+      let retryCollision = false;
+      try {
+        await file.save(data, { resumable: false, preconditionOpts: { ifGenerationMatch: 0 },
+          metadata: { contentType: mimeType } });
+      } catch (error) {
+        if (errorCode(error) !== 412) throw error;
+        retryCollision = true;
+      }
       const [metadata] = await file.getMetadata();
       generation = String(metadata.generation ?? "");
-      if (!/^[1-9][0-9]*$/.test(generation)) throw new Error("Missing artifact generation.");
+      if (!/^[1-9][0-9]*$/.test(generation)) throw new StoreUnavailableError();
+      if (retryCollision) {
+        if (Number(metadata.size) !== data.length) throw new StoreUnavailableError();
+        const [existing] = await this.bucket.file(objectName, { generation }).download();
+        if (existing.length !== data.length
+          || createHash("sha256").update(existing).digest("hex") !== sha256) throw new StoreUnavailableError();
+      }
       await this.options.firestore.doc(this.userPath + "/artifacts/" + handle).create({
         schemaVersion: 1, handle, ownerKey: this.options.ownerKey,
         answerId: answer.id, answerVersion: details.answerVersion, format: details.format, name, mimeType,
         bucket: this.options.artifactBucket, objectName, generation,
-        sha256: createHash("sha256").update(data).digest("hex"), sizeBytes: data.length,
+        sha256, sizeBytes: data.length,
         createdAt: Timestamp.fromMillis(createdAt), expiresAt: Timestamp.fromMillis(expiresAt),
       });
     } catch {
       if (generation && /^[1-9][0-9]*$/.test(generation)) {
         try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
-        catch { console.error("artifact_compensation_failed"); }
-      } else console.error("artifact_generation_unknown");
-      throw new Error("Export manifest creation failed.");
+        catch { logStorageFailure("artifact_compensation_failed"); }
+      } else logStorageFailure("artifact_generation_unknown");
+      logStorageFailure("storage_unavailable");
+      throw new StoreUnavailableError();
     }
     return { handle, name, mimeType, expiresAt: new Date(expiresAt).toISOString() };
   }
@@ -156,7 +196,7 @@ export class CloudStore implements EssayStore {
   async readExport(handle: string) {
     const notFound = () => new StoreNotFoundError("Export artifact not found.");
     if (this.options.readOnly || !exportArtifactHandlePattern.test(handle)) throw notFound();
-    const result = await this.options.firestore.doc(this.userPath + "/artifacts/" + handle).get();
+    const result = await backend(() => this.options.firestore.doc(this.userPath + "/artifacts/" + handle).get(), true);
     const parsed = manifestSchema.safeParse(result.data());
     if (!parsed.success) throw notFound();
     const value = parsed.data;
@@ -171,14 +211,17 @@ export class CloudStore implements EssayStore {
       this.resolveExportPath(value.name, value.format);
       if (exportMimeType(value.name) !== value.mimeType) throw notFound();
       const file = this.bucket.file(value.objectName, { generation: value.generation });
-      const [metadata] = await file.getMetadata();
+      const [metadata] = await backend(() => file.getMetadata(), true);
       if (String(metadata.generation) !== value.generation || Number(metadata.size) !== value.sizeBytes) throw notFound();
-      const [data] = await file.download();
+      const [data] = await backend(() => file.download(), true);
       if (data.length !== value.sizeBytes || createHash("sha256").update(data).digest("hex") !== value.sha256) throw notFound();
       return { name: value.name, mimeType: value.mimeType, answerId: value.answerId,
         answerVersion: value.answerVersion, format: value.format,
         expiresAt: value.expiresAt.toDate().toISOString(), data };
-    } catch { throw notFound(); }
+    } catch (error) {
+      if (error instanceof StoreUnavailableError) throw error;
+      throw notFound();
+    }
   }
 
   async checkReadiness(): Promise<void> {
@@ -197,14 +240,16 @@ export function createRuntimeStore(env: NodeJS.ProcessEnv = process.env): EssayS
       answerDir: env.ESSAY_MCP_ANSWER_DIR, exportDir: env.ESSAY_MCP_EXPORT_DIR });
   }
   if (env.STORAGE_BACKEND !== "cloud") throw new Error("STORAGE_BACKEND must be file or cloud.");
-  for (const name of ["GOOGLE_CLOUD_PROJECT", "ESSAY_FIRESTORE_DATABASE", "ESSAY_ENVIRONMENT", "ESSAY_OWNER_KEY", "ESSAY_ARTIFACT_BUCKET"]) {
+  const oauthOnly = env.AUTH_MODE === "oauth";
+  for (const name of ["GOOGLE_CLOUD_PROJECT", "ESSAY_FIRESTORE_DATABASE", "ESSAY_ENVIRONMENT", "ESSAY_ARTIFACT_BUCKET", ...(oauthOnly ? [] : ["ESSAY_OWNER_KEY"])]) {
     if (!env[name]?.trim()) throw new Error("Cloud mode requires " + name + ".");
   }
   if (env.ESSAY_ENVIRONMENT !== "staging" && env.ESSAY_ENVIRONMENT !== "production") throw new Error("Invalid ESSAY_ENVIRONMENT.");
-  // Fixed Bearer maps only to a synthetic staging owner until OAuth principal validation exists.
-  if (env.ESSAY_ENVIRONMENT !== "staging") throw new Error("Cloud production requires verified OAuth principals; Round A supports staging only.");
-  if (!/^[a-f0-9]{64}$/.test(env.ESSAY_OWNER_KEY!)) throw new Error("Invalid ESSAY_OWNER_KEY.");
+  // Fixed Bearer remains a synthetic staging owner; production requires OAuth-only mode.
+  if (env.ESSAY_ENVIRONMENT !== "staging" && !oauthOnly) throw new Error("Cloud production requires verified OAuth principals (AUTH_MODE=oauth).");
+  const ownerKey = oauthOnly ? "0".repeat(64) : env.ESSAY_OWNER_KEY!;
+  if (!/^[a-f0-9]{64}$/.test(ownerKey)) throw new Error("Invalid ESSAY_OWNER_KEY.");
   return new CloudStore({ firestore: new Firestore({ projectId: env.GOOGLE_CLOUD_PROJECT, databaseId: env.ESSAY_FIRESTORE_DATABASE }),
     storage: new Storage({ projectId: env.GOOGLE_CLOUD_PROJECT }), environment: env.ESSAY_ENVIRONMENT,
-    ownerKey: env.ESSAY_OWNER_KEY!, artifactBucket: env.ESSAY_ARTIFACT_BUCKET!, templateDir: env.ESSAY_MCP_TEMPLATE_DIR });
+    ownerKey, artifactBucket: env.ESSAY_ARTIFACT_BUCKET!, templateDir: env.ESSAY_MCP_TEMPLATE_DIR });
 }

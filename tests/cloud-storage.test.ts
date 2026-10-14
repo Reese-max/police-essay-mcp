@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CloudStore, createRuntimeStore, MAX_ARTIFACT_BYTES } from "../src/cloud-storage.js";
+import { CloudStore, createRuntimeStore, MAX_ARTIFACT_BYTES, StoreUnavailableError } from "../src/cloud-storage.js";
 import { createAnswerDocument, type AnswerDocument } from "../src/domain.js";
 import { createEssayMcpServer } from "../src/server.js";
 import { FileStore, isStoreNotFound, EXPORT_ARTIFACT_TTL_MS } from "../src/storage.js";
@@ -216,13 +216,20 @@ test("upload, manifest, compensation and metadata failures never publish a handl
     const previous = console.error;
     console.error = (...args: unknown[]) => { logs.push(args); };
     try {
-      await assert.rejects(artifact(s, doc), /upload failure|manifest creation failed/);
+      await assert.rejects(artifact(s, doc), /儲存暫時故障/);
       for (const temporary of s.temporaryPaths) await assert.rejects(fs.stat(path.dirname(temporary)), /ENOENT/);
       assert.equal([...s.firestore.documents.keys()].filter(key => key.includes("/artifacts/")).length, 0);
       assert.equal(s.storage.objects.size, failure === "delete" || failure === "metadata" ? 1 : 0);
       assert.equal(s.storage.deletions, failure === "manifest" || failure === "delete" ? 1 : 0);
-      if (failure === "delete") assert.deepEqual(logs, [["artifact_compensation_failed"]]);
-      if (failure === "metadata") assert.deepEqual(logs, [["artifact_generation_unknown"]]);
+      const classifications = logs.map(args => {
+        assert.equal(args.length, 1);
+        const log = JSON.parse(String(args[0]));
+        assert.deepEqual(Object.keys(log).sort(), ["classification", "requestId"]);
+        assert.match(log.requestId, /^[a-f0-9-]{36}$/);
+        return log.classification;
+      });
+      if (failure === "delete") assert.deepEqual(classifications, ["artifact_compensation_failed", "storage_unavailable"]);
+      if (failure === "metadata") assert.deepEqual(classifications, ["artifact_generation_unknown", "storage_unavailable"]);
     } finally { console.error = previous; }
   }
 });
@@ -326,4 +333,69 @@ test("cloud startup fails closed on missing settings; default and stdio always u
     assert.throws(() => createRuntimeStore({ ...env, [name]: "" }), new RegExp(name));
   }
   assert.throws(() => createRuntimeStore({ ...env, ESSAY_ENVIRONMENT: "production" }), /OAuth principals/);
+});
+
+
+test("cloud backend errors are classified, never disclose Firestore paths or owner keys, and GCS 5xx is not NotFound", async () => {
+  const s = setup(), doc = answer();
+  await s.store().saveAnswer(doc);
+  const exported = await artifact(s, doc);
+  const logs: unknown[][] = [], originalLog = console.error;
+  console.error = (...args: unknown[]) => { logs.push(args); };
+  const raw = Object.assign(new Error("secret-path/users/" + ownerKey + "/answers/" + doc.id), { code: 503 });
+  const read = s.firestore.read.bind(s.firestore);
+  try {
+    s.firestore.read = async () => { throw raw; };
+    for (const operation of [() => s.store().getAnswer(doc.id), () => s.store().readExport(exported.handle),
+      () => s.store().saveAnswer({ ...doc, version: 2 }, { expectedVersion: 1 })]) {
+      await assert.rejects(operation(), (error: unknown) => error instanceof StoreUnavailableError && error.message === "儲存暫時故障");
+    }
+    const client = await connect(s.store());
+    try {
+      const result = await client.callTool({ name: "read_answer", arguments: { answerId: doc.id } });
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result), /儲存暫時故障/);
+      assert.ok(!JSON.stringify(result).includes(ownerKey));
+      assert.ok(!JSON.stringify(result).includes("secret-path"));
+    } finally { await client.close(); }
+    s.firestore.read = read;
+    s.firestore.failRead = true;
+    await assert.rejects(s.store().listAnswers(), StoreUnavailableError);
+    s.firestore.failRead = false;
+    const bucket = s.storage.bucket.bind(s.storage);
+    for (const stage of ["getMetadata", "download"] as const) {
+      s.storage.bucket = name => {
+        const original = bucket(name);
+        return { ...original, file: (name, options) => ({ ...original.file(name, options), [stage]: async () => { throw raw; } }) };
+      };
+      await assert.rejects(s.store().readExport(exported.handle), (error: unknown) => error instanceof StoreUnavailableError && !isStoreNotFound(error));
+    }
+    s.storage.bucket = bucket;
+    s.storage.objects.clear();
+    await assert.rejects(s.store().readExport(exported.handle), isStoreNotFound);
+    for (const args of logs) {
+      assert.equal(args.length, 1);
+      const log = JSON.parse(String(args[0]));
+      assert.deepEqual(Object.keys(log).sort(), ["classification", "requestId"]);
+      assert.match(log.requestId, /^[a-f0-9-]{36}$/);
+      assert.equal(log.classification, "storage_unavailable");
+    }
+  } finally { console.error = originalLog; }
+});
+
+test("GCS lost save response plus 412 is idempotent only for matching pinned bytes; mismatches compensate", async () => {
+  for (const collision of ["same", "different", "different-size"] as const) {
+    const s = setup(), doc = answer();
+    await s.store().saveAnswer(doc);
+    s.storage.saveResponseLost = collision;
+    if (collision === "same") {
+      const result = await artifact(s, doc, "expected bytes");
+      assert.equal((await s.store().readExport(result.handle)).data.toString(), "expected bytes");
+      assert.equal(s.storage.objects.size, 1); assert.equal(s.storage.deletions, 0);
+    } else {
+      await assert.rejects(artifact(s, doc, "expected bytes"), StoreUnavailableError);
+      assert.equal(s.storage.objects.size, 0); assert.equal(s.storage.deletions, 1);
+      assert.equal([...s.firestore.documents.keys()].filter(p => p.includes("/artifacts/")).length, 0);
+    }
+  }
 });

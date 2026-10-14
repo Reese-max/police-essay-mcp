@@ -10,17 +10,14 @@ import type { AnswerTemplate } from "./domain.js";
 
 export async function validateRuntimeFont(template: AnswerTemplate, fontPath = process.env.ESSAY_MCP_PAPER_FONT): Promise<void> {
   if (!fontPath) throw new Error("166 font is missing.");
-  const data = await fs.readFile(fontPath);
-  if (createHash("sha256").update(data).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) {
-    throw new Error("166 font SHA-256 mismatch.");
-  }
-  validateOriginalPaper(template);
+  validateOriginalPaper(template, fontPath);
 }
 
 export async function initializeRuntimeFont(storage?: StorageClient, env = process.env): Promise<void> {
   const uri = env.PAPER_FONT_GCS_URI;
   if (!uri) {
     if (env.PAPER_FONT_GENERATION || env.PAPER_FONT_SHA256) throw new Error("PAPER_FONT_GCS_URI is required.");
+    if (env.REQUIRE_PAPER_FONT === "true" && !env.ESSAY_MCP_PAPER_FONT) throw new Error("166 font is missing.");
     return;
   }
   const match = /^gs:\/\/([^/]+)\/(.+)$/.exec(uri);
@@ -28,6 +25,7 @@ export async function initializeRuntimeFont(storage?: StorageClient, env = proce
     || env.PAPER_FONT_SHA256 !== ORIGINAL_PAPER_FONT_SHA256) {
     throw new Error("Runtime font requires a GCS URI, fixed generation and the approved SHA-256.");
   }
+  if (match[1] === env.ESSAY_ARTIFACT_BUCKET) throw new Error("Runtime font requires a dedicated bucket separate from artifacts.");
   const file = (storage ?? new Storage()).bucket(match[1]).file(match[2], { generation: env.PAPER_FONT_GENERATION });
   const [metadata] = await file.getMetadata();
   if (String(metadata.generation) !== env.PAPER_FONT_GENERATION || Number(metadata.size) > 16 * 1024 * 1024) {

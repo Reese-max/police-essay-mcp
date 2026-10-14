@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
@@ -18,20 +18,24 @@ export function originalPaperFontPath(): string {
   return fontPath;
 }
 export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
-let cachedFont: { path: string; face: ReturnType<typeof fontkit.openSync> } | undefined;
-function font() {
-  const fontPath = originalPaperFontPath();
-  if (cachedFont?.path === fontPath) return cachedFont.face;
-  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) throw new Error("166 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
+let cachedFont: { path: string; mtimeMs: number; size: number; face: ReturnType<typeof fontkit.openSync> } | undefined;
+export function validateOriginalPaperFontFamily(familyName: string): void {
+  if (familyName !== "TW-MOE-Std-Kai") throw new Error("166 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
+}
+export function validatedOriginalPaperFont(fontPath: string) {
+  const { mtimeMs, size } = statSync(fontPath);
+  if (cachedFont?.path === fontPath && cachedFont.mtimeMs === mtimeMs && cachedFont.size === size) return cachedFont.face;
+  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) throw new Error("166 font SHA-256 mismatch. 166 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
   const opened = fontkit.openSync(fontPath);
-  if (opened.familyName !== "TW-MOE-Std-Kai") throw new Error("166 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
-  cachedFont = { path: fontPath, face: opened };
+  validateOriginalPaperFontFamily(opened.familyName);
+  cachedFont = { path: fontPath, mtimeMs, size, face: opened };
   return opened;
 }
-export function validateOriginalPaper(template: AnswerTemplate): void {
+function font() { return validatedOriginalPaperFont(originalPaperFontPath()); }
+export function validateOriginalPaper(template: AnswerTemplate, fontPath?: string): void {
   if (template.pages !== 2 || template.linesPerPage !== 22 || template.fontSizePt !== 19 || template.fontFamily !== "TW-MOE-Std-Kai" || template.lineHeightPt !== 22 || Math.abs(template.marginsMm.left * 72 / 25.4 - 130.32) > 0.01 || Math.abs(template.marginsMm.top * 72 / 25.4 - originalPaper.rows[0][0]) > 0.01 || Math.abs(595.28 - template.marginsMm.right * 72 / 25.4 - 496) > 0.01) throw new Error("166 原稿紙的頁數、行數、字級及位置須維持標準設定。");
   originalPaperImage();
-  font();
+  validatedOriginalPaperFont(fontPath ?? originalPaperFontPath());
 }
 export function wrapOriginalPaper(text: string, format: ParagraphFormat, template: AnswerTemplate): string[] {
   validateOriginalPaper(template);
