@@ -1,0 +1,12 @@
+{
+  "repo": "Reese-max/police-essay-mcp",
+  "issue": 1,
+  "base_sha": "f9e4355471edf44007aea37afe00934067add8c9",
+  "red_proof": "Before implementation, native node:http regression command exited 1:\n✖ anonymous loopback rejects public hosts and forwarded requests before storage\nAssertionError [ERR_ASSERTION]: POST {\"host\":\"public.example\"} must fail before MCP\n\n200 !== 401\n\nactual: 200\nexpected: 401\nℹ tests 1\nℹ pass 0\nℹ fail 1",
+  "test_command": "npm run check && npm test && npm run build",
+  "test_exit": 0,
+  "tests_passed": 32,
+  "tests_failed": 0,
+  "summary": "The admitted base already implements owner/read-only HTTP credentials, fail-closed startup, restricted CORS, and stdio regression coverage. This change closes the remaining anonymous-loopback bypass by rejecting public or mismatched Host authorities and Forwarded, X-Forwarded-*, or Via metadata through the existing 401 Bearer challenge before constructing any MCP server/transport. A native HTTP regression proves GET/POST/DELETE rejection without answer/export writes, direct IPv4/localhost/IPv6 Host compatibility, and preserved authenticated proxy owner/read scopes; the full suite increases from 31 to 32 passing tests. README documents the guard and the requirement to keep tunnels in authenticated mode.",
+  "not_done": "No push, PR, merge, issue closure, deployment, real tunnel, ChatGPT connector, or production-data operation was performed; exact-head hosted CI and the real remote-path credential/401 receipt remain unverified. A proxy that rewrites Host and strips all forwarding metadata is indistinguishable from a local client, so anonymous mode must never be exposed through it. Four pre-existing original-paper/font-dependent tests remain skipped because ESSAY_MCP_PAPER_FONT is unset. No new IAM/OAuth system or dependencies were added; this project has no lint, coverage ratchet, CRAP, or mutation gates."
+}
