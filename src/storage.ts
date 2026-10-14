@@ -76,8 +76,13 @@ export class FileStore implements EssayStore {
 
   async getTemplate(templateId: string): Promise<AnswerTemplate> {
     const filename = path.join(this.templateDir, `${safeId(templateId)}.json`);
-    const raw = await fs.readFile(filename, "utf8");
-    return templateSchema.parse(JSON.parse(raw));
+    try {
+      const raw = await fs.readFile(filename, "utf8");
+      return templateSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到模板。");
+      throw error;
+    }
   }
 
   async listTemplates(): Promise<AnswerTemplate[]> {

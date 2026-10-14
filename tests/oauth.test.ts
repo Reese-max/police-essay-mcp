@@ -103,15 +103,29 @@ test("OAuth HTTP discovery, challenge, independent scopes and principal isolatio
   const base = await listen(server);
   const clients: Client[] = [];
   try {
-    for (const p of ["/health", "/readyz", "/.well-known/oauth-protected-resource"]) assert.equal((await fetch(base + p)).status, 200);
+    for (const p of ["/health", "/readyz", "/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"]) assert.equal((await fetch(base + p)).status, 200);
     const metadata = await (await fetch(base + "/.well-known/oauth-protected-resource")).json();
     assert.deepEqual(metadata, { resource, authorization_servers: [issuer], scopes_supported: ["essay.read", "essay.write", "essay.export"], bearer_methods_supported: ["header"] });
     for (const p of ["/", "/mcp", "/unknown", "/authorize", "/token", "/register"]) {
       const result = await fetch(base + p); assert.equal(result.status, 401);
+      assert.ok(!result.headers.get("www-authenticate")!.includes("error="));
       assert.match(result.headers.get("www-authenticate")!, /resource_metadata="https:\/\/essay\.example\/\.well-known\/oauth-protected-resource", scope="essay.read"/);
     }
+    for (const token of ["malformed", jwt({ exp: time / 1000 - 31 })]) {
+      const invalid = await fetch(base + "/mcp", { headers: { authorization: "Bearer " + token } });
+      assert.equal(invalid.status, 401); assert.match(invalid.headers.get("www-authenticate")!, /error="invalid_token"/);
+    }
+    const noScopes = await fetch(base + "/mcp", { headers: { authorization: "Bearer " + jwt({ scope: undefined }) } });
+    assert.equal(noScopes.status, 403); assert.match(noScopes.headers.get("www-authenticate")!, /insufficient_scope/);
+    const scpClient = await connect(base, jwt({ scope: undefined, scp: ["essay.read"] })); clients.push(scpClient);
+    assert.equal((await scpClient.listTools()).tools.length, 12);
     const owner = await connect(base, jwt()); clients.push(owner);
     assert.equal((await owner.listTools()).tools.length, 21);
+    const missingTemplate = await owner.callTool({ name: "load_exam_paper", arguments: { templateId: "nonexistent" } });
+    assert.equal(missingTemplate.isError, true);
+    assert.match(JSON.stringify(missingTemplate), /找不到模板/);
+    assert.ok(!JSON.stringify(missingTemplate).includes("ENOENT"));
+    assert.ok(!JSON.stringify(missingTemplate).includes(store.resolveExportPath("private", "txt")));
     const created = await owner.callTool({ name: "create_answer", arguments: { title: "Alice", sections: [{ id: "body", text: "PRIVATE_ALICE" }] } });
     assert.equal(created.isError, undefined);
     const id = (created.structuredContent as { answer: { id: string } }).answer.id;
@@ -120,6 +134,16 @@ test("OAuth HTTP discovery, challenge, independent scopes and principal isolatio
     const uri = (exported.structuredContent as { exportUri: string }).exportUri;
     assert.ok((await owner.readResource({ uri })).contents.length);
     const readerToken = jwt({ scope: "essay.read" });
+    for (const resourceUri of [uri, uri.replace("essay:", "ESSAY:"), uri.replace("exports", "EXPORTS")]) {
+      const response = await fetch(base + "/mcp", { method: "POST", headers: { authorization: "Bearer " + readerToken, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: resourceUri } }) });
+      assert.equal(response.status, 403); assert.match(response.headers.get("www-authenticate")!, /scope="essay.export"/);
+    }
+    for (const resourceUri of [null, 42, {}, "invalid URI"]) {
+      const response = await fetch(base + "/mcp", { method: "POST", headers: { authorization: "Bearer " + readerToken, "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "resources/read", params: { uri: resourceUri } }) });
+      assert.equal(response.status, 400);
+    }
     const reader = await connect(base, readerToken); clients.push(reader);
     assert.equal((await reader.listTools()).tools.length, 12);
     assert.equal((await reader.callTool({ name: "read_answer", arguments: { answerId: id } })).isError, undefined);
@@ -202,4 +226,100 @@ test("bearer keeps CORS, fixed/chunked body limits and pre-storage rejection", a
     assert.equal(chunked, 413);
     assert.deepEqual(await store.listAnswers(), []);
   } finally { await close(server); await rm(root, { recursive: true, force: true }); }
+});
+
+
+test("unknown-kid 503 preserves live keys and globally bounds retries, including expired keys", async () => {
+  let now = time, requests = 0, failed = false;
+  const verify = createOAuthVerifier({ issuers: [issuer], resource, jwksUri: "https://issuer.example/jwks" }, {
+    now: () => now, ttlMs: 300_000,
+    fetch: async () => {
+      requests++;
+      return new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] }), { status: failed ? 503 : 200 });
+    },
+  });
+  await verify(jwt());
+  failed = true;
+  await assert.rejects(verify(jwt({}, { kid: "forged" })), OAuthError);
+  assert.equal(requests, 2);
+  await verify(jwt());
+  for (let i = 0; i < 29; i++) {
+    now += 1000;
+    await assert.rejects(verify(jwt({}, { kid: i % 2 ? "forged" : "random-" + i })), OAuthError);
+    await verify(jwt());
+  }
+  assert.equal(requests, 2, "same and random kids cannot amplify a failed IdP");
+  now += 1000;
+  await assert.rejects(verify(jwt({}, { kid: "forged" })), OAuthError);
+  assert.equal(requests, 3);
+  await verify(jwt());
+  now = time + 300_000;
+  await assert.rejects(verify(jwt()), OAuthError);
+  await assert.rejects(verify(jwt()), OAuthError);
+  assert.equal(requests, 4, "expired keys fail closed, with failure backoff");
+});
+
+test("JWKS refresh is single-flight and successful unknown-kid refreshes have a bounded total", async () => {
+  let now = time, requests = 0;
+  let release!: () => void;
+  let gate = Promise.resolve();
+  const verify = createOAuthVerifier({ issuers: [issuer], resource, jwksUri: "https://issuer.example/jwks", refreshBackoffMs: 2000 }, {
+    now: () => now,
+    fetch: async () => {
+      requests++; await gate;
+      return new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] }));
+    },
+  });
+  gate = new Promise<void>(resolve => { release = resolve; });
+  const cold = Array.from({ length: 20 }, () => verify(jwt()));
+  assert.equal(requests, 1); release(); await Promise.all(cold);
+  gate = new Promise<void>(resolve => { release = resolve; });
+  const unknown = Array.from({ length: 20 }, (_, i) => verify(jwt({}, { kid: "missing-" + i })));
+  const settled = Promise.allSettled(unknown);
+  assert.equal(requests, 2);
+  await verify(jwt()); // live known keys do not wait for an unknown-kid refresh
+  release(); assert.ok((await settled).every(r => r.status === "rejected"));
+  for (let i = 0; i < 9; i++) {
+    now += 1000;
+    await assert.rejects(verify(jwt({}, { kid: "missing-" + i })), OAuthError);
+  }
+  assert.equal(requests, 6, "at most initial fetch + one unknown refresh per configured interval");
+});
+
+test("scope string and scp array are supported; valid scopeless JWTs return 403", async () => {
+  const verify = createOAuthVerifier({ issuers: [issuer], resource, jwksUri: "https://issuer.example/jwks" }, {
+    now: () => time,
+    fetch: async () => new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] })),
+  });
+  assert.deepEqual((await verify(jwt({ scope: "essay.read essay.export" }))).scopes, ["essay.read", "essay.export"]);
+  assert.deepEqual((await verify(jwt({ scope: undefined, scp: ["essay.read", "unrelated", 123] }))).scopes, ["essay.read"]);
+  for (const patch of [{ scope: undefined }, { scope: "" }, { scope: 123 }, { scope: undefined, scp: [] }])
+    await assert.rejects(verify(jwt(patch)), (e: unknown) => e instanceof OAuthError && e.status === 403);
+  await assert.rejects(verify(jwt({ scope: undefined }, {}, rotated.privateKey)), (e: unknown) => e instanceof OAuthError && e.status === 401);
+});
+
+test("OAUTH_REQUIRE_AT_JWT is opt-in and configurable backoff defaults to 30 seconds", async () => {
+  const env = { AUTH_MODE: "oauth", OAUTH_RESOURCE_URL: resource, OAUTH_ISSUERS: issuer, OAUTH_JWKS_URI: issuer + "/jwks" };
+  const defaults = oauthConfiguration(env);
+  assert.equal(defaults.refreshBackoffMs, 30_000); assert.equal(defaults.requireAtJwt, false);
+  assert.equal(oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: "7" }).refreshBackoffMs, 7000);
+  for (const value of ["0", "-1", "NaN", "Infinity"]) assert.throws(() => oauthConfiguration({ ...env, OAUTH_JWKS_BACKOFF_SECONDS: value }), /positive/);
+  const config = oauthConfiguration({ ...env, OAUTH_REQUIRE_AT_JWT: "true" });
+  assert.ok(config.mode !== "bearer");
+  const fetchKeys: typeof fetch = async () => new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] }));
+  const strict = createOAuthVerifier(config, { now: () => time, fetch: fetchKeys });
+  for (const typ of [undefined, "JWT", "id+jwt"]) await assert.rejects(strict(jwt({}, { typ })), OAuthError);
+  await strict(jwt({}, { typ: "at+jwt" }));
+  await createOAuthVerifier(defaults, { now: () => time, fetch: fetchKeys })(jwt({}, { typ: "JWT" }));
+});
+
+
+test("FileStore missing templates have a generic error without server paths", async () => {
+  const store = new FileStore();
+  await assert.rejects(store.getTemplate("nonexistent"), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "找不到模板。");
+    assert.ok(!error.message.includes(store.templateDir));
+    return true;
+  });
 });

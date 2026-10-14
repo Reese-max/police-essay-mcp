@@ -41,7 +41,7 @@ test("readiness refuses missing second template, missing configured font and bou
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "essay-readiness-"));
   try {
     await fs.copyFile(path.join(process.cwd(), "templates/police_information_essay.json"), path.join(directory, "police_information_essay.json"));
-    await assert.rejects(createReadinessCheck(new FileStore({ templateDir: directory }), { fontPath: () => undefined })(), /ENOENT/);
+    await assert.rejects(createReadinessCheck(new FileStore({ templateDir: directory }), { fontPath: () => undefined })(), /找不到模板/);
     await fs.copyFile(path.join(process.cwd(), "templates/police_information_essay_166.json"), path.join(directory, "police_information_essay_166.json"));
     const store = new FileStore({ templateDir: directory });
     await assert.rejects(createReadinessCheck(store, { fontPath: () => path.join(directory, "missing.ttf") })(), /ENOENT/);

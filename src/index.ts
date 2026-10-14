@@ -134,7 +134,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
         return { scope: principal.scopes.includes("essay.write") ? "owner" : "read", principal };
       } catch (error) {
         const failure = error instanceof OAuthError ? error : new OAuthError();
-        response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, failure));
+        response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, failure, !!request.headers.authorization));
         reject(response, failure.status, failure.message);
         return;
       }
@@ -209,9 +209,15 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
         if (principal) {
           // Stateless JSON-RPC batching is unsupported; never authorize only part of a batch.
           if (!body || typeof body !== "object" || Array.isArray(body)) { reject(response, 400, "Invalid request"); return; }
-          const rpc = body as { method?: string; params?: { name?: string; uri?: string } };
-          const required = rpc.method === "tools/call" ? toolScope(rpc.params?.name ?? "")
-            : rpc.method === "resources/read" && rpc.params?.uri?.startsWith("essay://exports/") ? "essay.export" : "essay.read";
+          const rpc = body as { method?: string; params?: { name?: string; uri?: unknown } };
+          let required = rpc.method === "tools/call" ? toolScope(rpc.params?.name ?? "") : "essay.read";
+          if (rpc.method === "resources/read") {
+            if (typeof rpc.params?.uri !== "string") { reject(response, 400, "Invalid resource URI"); return; }
+            let uri: URL;
+            try { uri = new URL(rpc.params.uri); }
+            catch { reject(response, 400, "Invalid resource URI"); return; }
+            if (uri.protocol === "essay:" && uri.hostname.toLowerCase() === "exports") required = "essay.export";
+          }
           if (!principal.scopes.includes(required)) {
             response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, new OAuthError(403, required)));
             reject(response, 403, "insufficient_scope"); return;
@@ -253,7 +259,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       await readReadiness(request, response);
       return;
     }
-    if (requestUrl.pathname === "/.well-known/oauth-protected-resource" && request.method === "GET" && oauth.mode !== "bearer") {
+    if (["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(requestUrl.pathname) && request.method === "GET" && oauth.mode !== "bearer") {
       setCorsHeaders(request, response);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(protectedResourceMetadata(oauth)));

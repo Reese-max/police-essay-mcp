@@ -18,15 +18,31 @@ AUTH_MODE 預設 bearer；oauth 僅接受 JWT；both 可同時接受原 owner/re
 
 OAuth 須設定 OAUTH_RESOURCE_URL、OAUTH_ISSUERS（逗號分隔、精確比對）、OAUTH_JWKS_URI。多個 issuer 必須共用同一可信的權威 JWKS；不同 keyset 的 provider 分別部署，本版不加入多 provider 路由。正式 URL 使用 HTTPS；HTTP 僅允許 loopback 本機測試。
 
-JWKS 成功快取 5 分鐘；未知 kid 可重新取得（最多每秒一次），過期快取或取得失敗不退回舊 key。Token 的 jku/x5u 不作為 key 來源；exp/nbf 容許 30 秒時鐘偏差。
+JWKS 成功快取 5 分鐘；未知 kid 的 refresh 不清除仍有效的 key，refresh 失敗也保留原有效期，過期 key 不作為備援。取得使用 single-flight；未知 kid 與失敗請求共用退避，OAUTH_JWKS_BACKOFF_SECONDS 預設 30 秒（須為正數），不因變換 kid 放大請求。初次成功取回後最多立即 refresh 一次，其後每個退避區間最多一次。Token 的 jku/x5u 不作為 key 來源；exp/nbf 容許 30 秒時鐘偏差。
+
+OAUTH_REQUIRE_AT_JWT=true 時只接受 header typ=at+jwt；預設 false。支援 scope 字串或 scp 陣列；已簽章但沒有所需 scope 的 token 回 403 insufficient_scope。有 token 的 401 challenge 含 error="invalid_token"；無 token 不附 error。
 
 所有 OAuth MCP 請求需 essay.read；寫入另需 essay.write，匯出工具與 artifact 讀取另需 essay.export。三者齊全 21 個工具；read 12；read+write 18；read+export 15。工具 metadata 與 HTTP 403 insufficient_scope 同時強制，不能靠直接 tools/call 繞過。
 
+essay.export 獨立於 essay.write（read+export 可以產生及讀取 artifact，且會寫入 manifest／物件），與原 owner-only 規劃有差異；這是**待產品確認**的決策，本回合保留現有行為。
+
 CloudStore 使用 SHA-256(JSON.stringify([issuer, sub])) 作為 ownerKey；issuer/sub 僅來自驗證通過的 token。舊固定 bearer owner 的資料不自動遷移。FileStore 維持單一擁有者，OAuth 必須設定 OAUTH_FILE_OWNER_KEY；其他 principal 在接觸資料前回 401。
 
-/.well-known/oauth-protected-resource、/health、/readyz 可匿名；其他資料路由先認證。OPTIONS 僅為既有 CORS preflight，不提供資料。401 帶固定 resource_metadata URL；不足 scope 回 403。Protected-resource metadata 依 [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728.html)。
+/.well-known/oauth-protected-resource 與 /.well-known/oauth-protected-resource/mcp、/health、/readyz 可匿名；其他資料路由先認證。OPTIONS 僅為既有 CORS preflight，不提供資料。401 帶固定 resource_metadata URL；不足 scope 回 403。Protected-resource metadata 依 [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728.html)。
 
 本回合只完成 resource server；外部 AS、閘道、Cloud Run IAM、實際 ChatGPT linking／refresh／撤銷均待另行驗收。SDK 1.30 的 registerTool 接受 _meta，本版使用 _meta.securitySchemes；ChatGPT host 的實際 metadata 解讀仍須驗收。
+
+## Bearer 行為差異與契約重現
+
+bearer 模式的 GET / 現在需認證：無 token 回 401，原基準版匿名回 200；匿名未知路徑也由原 404 變成 401。監控探針請使用 /health 或 /readyz，本回合不調整此行為。
+
+完整 owner/read 契約由固定基準 worktree 實際程式碼產生，沒有欄位差異。OAuth 四種 scope 的工具名稱清單從基準 owner/read 集合產生；工具其他欄位逐一比對。唯一刻意差異白名單是 Round B 已有的 _meta.securitySchemes OAuth scope 宣告（原基準無 OAuth）；測試精確核對每個工具的 scopes，不允許其他 metadata 漂移。MCP wire protocol 不提供 prompt argsSchema，檢查另讀取 SDK 1.30 已註冊的完整 schema。
+
+```powershell
+npx tsx scripts/generate-contract-from-base.ts C:\Users\Administrator\work\pem-wt-base
+```
+
+來源測試重新執行 git rev-parse HEAD、驗證固定 revision、乾淨的 src 與來源 SHA-256，再逐欄位比對。測試預設基準位於 ../pem-wt-base；其他環境可設定 MCP_CONTRACT_BASE_PATH，須指向同一固定 revision 的唯讀 worktree（包含既有依賴）。
 
 ## 候選 provider 評估表
 

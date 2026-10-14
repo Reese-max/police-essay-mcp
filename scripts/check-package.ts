@@ -28,10 +28,14 @@ export async function checkPackage(staticOnly = false) {
     }
     await copyFile(path.resolve(".dockerignore"), path.join(context, ".dockerignore"));
     await writeFile(path.join(context, "Dockerfile"), "FROM scratch\nCOPY . /context/\n");
-    const docker = staticOnly ? undefined : spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+    let docker: ReturnType<typeof spawnSync> | undefined;
+    if (!staticOnly) {
+      try { docker = spawnSync("docker", ["info", "--format", "{{.ServerVersion}}"], { encoding: "utf8", timeout: 10_000, windowsHide: true }); }
+      catch { /* Docker execution is unavailable in this environment. */ }
+    }
     if (!docker || docker.error || docker.status !== 0) {
       console.log("PACKAGE_STATIC_OK fixture=root+src+assets+templates; Docker context 未驗證：Docker 未啟用、不可用或 --static-only。");
-      return;
+      return false;
     }
     const build = spawnSync("docker", ["build", "--progress=plain", "--output", "type=local,dest=" + output, context],
       { encoding: "utf8", timeout: 60_000, windowsHide: true });
@@ -47,6 +51,7 @@ export async function checkPackage(staticOnly = false) {
       for (const name of sensitive) assert.ok(!shipped.includes(prefix + name), "sensitive fixture shipped: " + prefix + name);
     }
     console.log("PACKAGE_DOCKER_OK nested sensitive fixtures excluded from actual build context");
+    return true;
   } finally { await rm(root, { recursive: true, force: true }); }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await checkPackage(process.argv.includes("--static-only"));
