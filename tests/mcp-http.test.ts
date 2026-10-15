@@ -179,6 +179,25 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal(cors.headers["access-control-allow-origin"], "https://example.test");
     assert.match(cors.headers["access-control-allow-headers"] ?? "", /authorization/);
 
+    // Stateless mode cannot push notifications; an idle GET stream would pin a
+    // concurrency-1 Cloud Run instance until the request timeout.
+    const standaloneStream = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request({
+        hostname: "127.0.0.1",
+        port: runtime.port,
+        method: "GET",
+        path: "/mcp",
+        headers: { authorization: `Bearer ${authToken}`, accept: "text/event-stream" },
+      }, (response) => {
+        resolve(response);
+        response.destroy();
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    assert.equal(standaloneStream.statusCode, 405);
+    assert.equal(standaloneStream.headers.allow, "POST, DELETE");
+
     const oversizedBody = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: { padding: "x".repeat(bodyLimit) } });
     const oversized = await request(
       runtime.port,
