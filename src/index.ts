@@ -155,8 +155,9 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       reject(response, 403, "Origin not allowed");
       return;
     }
-    // Stateless mode has no standalone SSE stream to offer; an idle GET would pin
-    // the request slot until timeout. MCP clients treat 405 as "no stream".
+    // Each request gets its own server and transport, so a standalone GET stream
+    // has no source of server messages and would only pin the request slot until
+    // timeout. MCP clients treat 405 as "no stream".
     if (request.method === "GET") {
       response.setHeader("allow", "POST, DELETE");
       reject(response, 405, "Method not allowed");

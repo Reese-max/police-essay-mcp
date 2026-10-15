@@ -361,6 +361,12 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
       });
       assert.equal(browser.status, 403, `${method} with browser origin`);
     }
+    const standaloneStream = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+      headers: { accept: "text/event-stream" }, signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(standaloneStream.status, 405);
+    assert.equal(standaloneStream.headers.get("allow"), "POST, DELETE");
+    await standaloneStream.text();
     client = await connectClient(runtime.port);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(toolNames, [
