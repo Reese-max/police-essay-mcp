@@ -1,6 +1,6 @@
 # Google Cloud Run 部署與 ChatGPT App 切換計畫（2026-10-14）
 
-> 狀態：**規劃／隔離預備版**。目前尚無 Google Cloud 專案授權、Cloud Run 執行網址、遠端 OAuth 設定或生產持久化。此計畫及 Dockerfile **不代表已部署**。不得在未完成資料持久化與遠端驗證前把現有 ChatGPT App 切往此服務。
+> 狀態（2026-10-15 更新）：**staging 已部署**。`police-essay-mcp-staging` 在 Cloud Run `us-central1` 以 Firestore／GCS 持久化，私有 IAM 階段已完成 runtime 驗收；之後依[擁有者風險決策](#擁有者風險決策)改為無認證公開。ChatGPT App 尚未切換，production 尚未建立。
 
 ## 部署目的與不變條件
 
@@ -16,8 +16,30 @@
 - `src/storage.ts` FileStore 將答案寫到 `data/answers/*.json`，把 DOCX/PDF/TXT 與 24 小時 artifact manifest 寫到 `exports/`、`exports/.artifacts/`，使用同程序 Map 鎖、`writeFile`、`rename`、`realpath` 和 `copyFile`。**Cloud Run 本地檔案是暫存**。
 - 單純將此 FileStore 目錄掛到 Cloud Storage FUSE **不是正確持久化改造**：FUSE 不保證 POSIX rename 與多程序寫入鎖，併行寫入可能遺失資料。
 - `ESSAY_MCP_PAPER_FONT` 指向 MOE 原版標準楷書 5.1；其 SHA-256 由 `src/original-paper.ts` 驗證；`assets/paper_166.asset.json` 和 `templates/` 必須包含在映像檔內。
-- 現有 HTTP app 的 `MCP_AUTH_TOKEN` / `MCP_READ_TOKEN` 是**固定 Bearer token**，不是完整 OAuth 2.1 Authorization Server；不可把 Cloud Run 的 IAM ID token 當成此應用的 token，也不能因為沒有 OAuth 就改成無認證公開。
+- 現有 HTTP app 的 `MCP_AUTH_TOKEN` / `MCP_READ_TOKEN` 是**固定 Bearer token**，不是完整 OAuth 2.1 Authorization Server；不可把 Cloud Run 的 IAM ID token 當成此應用的 token，也不能因為沒有 OAuth 就改成無認證公開；唯一例外是擁有者明確接受風險，見[擁有者風險決策](#擁有者風險決策)。
 - 目前 ChatGPT App 是 App-backed；Plugin Creator 更新技能／說明文件不會重新設定現有 App 的 MCP URL。
+
+## 擁有者風險決策
+
+2026-10-15，擁有者在不建立 OAuth 服務的前提下，明確選擇讓 `police-essay-mcp-staging` **無認證公開**供 ChatGPT App 連線，並接受：
+
+- 任何知道網址的人都能讀取、修改、刪除與匯出全部答案。
+- 沒有速率或總量上限；大量呼叫可能超出 Firestore、Cloud Storage 與網路的免費額度。max instances=1 只限制運算規模，不限制資料庫讀寫與流量。預算告警只寄通知，不會停止服務，帳單約延遲一天。
+
+實作與範圍：
+
+- 服務設定 `MCP_ALLOW_ANONYMOUS_REMOTE=true`、`AUTH_MODE=bearer`，不設定 owner／read token 與 `CORS_ORIGIN`；Cloud Run 授予 `allUsers` `roles/run.invoker`。帶瀏覽器 `Origin` 的請求一律拒絕，啟動時記錄警告。
+- 此決策只涵蓋 `police-essay-mcp-staging`，取代該服務在 Phase A 第 4 步「禁止公開」與 Phase B 第 6 步的認證要求；其他環境仍依原規則，未經擁有者另行決定不得沿用。
+- 公開網址不寫入本 repository。
+
+回退到私有 bearer 模式：
+
+```sh
+gcloud run services remove-iam-policy-binding police-essay-mcp-staging \
+  --region us-central1 --member allUsers --role roles/run.invoker
+gcloud run services update-traffic police-essay-mcp-staging \
+  --region us-central1 --to-revisions police-essay-mcp-staging-persist4=100
+```
 
 ## Round A 本機實作設定
 
@@ -68,7 +90,7 @@ gcloud run deploy police-essay-mcp-staging \
 3. 匯出先產生臨時檔案，再以私有 GCS Object 存放 bytes、metadata、`expiresAt`、隨機 export handle；`resources/read` 經 owner 授權讀取，保留 24 小時過期檢查，實際 Storage lifecycle 清除過期 artifact。不得讓未授權使用者藉猜 URI 下載。
 4. 處理答題紀錄主體與 artifact 之間的失敗、重試、重複提交；新增針對跨 instance 競態、縮減到零後重啟、讀取／修改／匯出的一致性測試。
 5. 字型由合法取得的 MOE 標準楷書 5.1 管理於私有儲存，**不提交 Git、不公開字型 URL、不散布字型檔**。部署時在唯讀路徑提供，設定 `ESSAY_MCP_PAPER_FONT`，保留既有 SHA-256／family 校驗，完成 Word、PDF 的實際渲染與影像檢查。
-6. 對 ChatGPT / 外掛的遠端存取建立標準 OAuth 2.1（PKCE、正確 scopes、metadata 與 token 驗證）或通過官方支援的既有安全 OAuth gateway。現有固定 Bearer 不等同可供 ChatGPT 外掛發佈流程使用的 OAuth；外掛入口不得無認證公開。
+6. 對 ChatGPT / 外掛的遠端存取建立標準 OAuth 2.1（PKCE、正確 scopes、metadata 與 token 驗證）或通過官方支援的既有安全 OAuth gateway。現有固定 Bearer 不等同可供 ChatGPT 外掛發佈流程使用的 OAuth；外掛入口不得無認證公開，唯一例外見[擁有者風險決策](#擁有者風險決策)。
 7. 以服務帳號最小權限、secret rotation、速率限制、審計記錄與不記錄答案正文為準；不得將 single owner token 共享給不受信任的多使用者。
 
 ### Phase C — ChatGPT App 切換與完整回退
