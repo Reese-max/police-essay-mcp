@@ -16,6 +16,8 @@
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.3.1",
+    "@google-cloud/storage": "^8.4.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "docx": "^9.7.1",
     "fontkit": "^2.0.4",

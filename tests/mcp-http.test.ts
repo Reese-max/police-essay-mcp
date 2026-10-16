@@ -179,6 +179,16 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal(cors.headers["access-control-allow-origin"], "https://example.test");
     assert.match(cors.headers["access-control-allow-headers"] ?? "", /authorization/);
 
+    // Per-request transports have no push source; an idle GET stream would pin a
+    // concurrency-1 Cloud Run instance until the request timeout.
+    const standaloneStream = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+      headers: { authorization: `Bearer ${authToken}`, accept: "text/event-stream" },
+      signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(standaloneStream.status, 405);
+    assert.equal(standaloneStream.headers.get("allow"), "POST, DELETE");
+    await standaloneStream.text();
+
     const oversizedBody = JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: { padding: "x".repeat(bodyLimit) } });
     const oversized = await request(
       runtime.port,
@@ -294,7 +304,7 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal(exported.isError, undefined);
     const exportedContent = exported.structuredContent as { path: string; pages: number };
     assert.equal(exportedContent.pages, 2);
-    assert.equal((await stat(exportedContent.path)).isFile(), true);
+    await assert.rejects(stat(exportedContent.path), /ENOENT/);
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
@@ -475,8 +485,10 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
       assert.equal(artifact.mimeType, expectedMime[format]);
       const encoded = artifact.blob;
       assert.ok(encoded);
-      const onDisk = await readFile(structured.path);
-      assert.equal(Buffer.from(encoded, "base64").equals(onDisk), true);
+      await assert.rejects(readFile(structured.path), /ENOENT/);
+      const manifest = JSON.parse(await readFile(path.join(runtime.root, "exports", ".artifacts", handle + ".json"), "utf8"));
+      const persisted = await readFile(path.join(runtime.root, "exports", ".artifacts", manifest.artifactFilename));
+      assert.equal(Buffer.from(encoded, "base64").equals(persisted), true);
     }
 
     const unauthenticated = await request(

@@ -1,5 +1,6 @@
 import { promises as fs, createWriteStream, existsSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import {
   Header,
   ImageRun,
@@ -369,3 +370,10 @@ export async function exportText(
 }
 
 
+
+/** Output paths are temporary; resource bytes are persisted before cleanup. */
+export async function withTemporaryExport<T>(filename: string, operation: (outputPath: string, temporaryDir: string) => Promise<T>): Promise<T> {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "essay-export-"));
+  try { return await operation(path.join(directory, path.basename(filename)), directory); }
+  finally { await fs.rm(directory, { recursive: true, force: true }); }
+}
