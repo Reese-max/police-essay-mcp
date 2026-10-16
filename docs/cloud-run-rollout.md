@@ -1,6 +1,6 @@
 # Google Cloud Run 部署與 ChatGPT App 切換計畫（2026-10-14）
 
-> 狀態（2026-10-15 更新）：**staging 已部署**。`police-essay-mcp-staging` 在 Cloud Run `us-central1` 以 Firestore／GCS 持久化，私有 IAM 階段已完成 runtime 驗收；之後依[擁有者風險決策](#擁有者風險決策)改為無認證公開。ChatGPT App 尚未切換，production 尚未建立。
+> 狀態（2026-10-16 更新）：**staging 已部署**。`police-essay-mcp-staging` 在 Cloud Run `us-central1` 以 Firestore／GCS 持久化，私有 IAM 階段已完成 runtime 驗收；之後依[擁有者風險決策](#擁有者風險決策)改為無認證公開。既有 ChatGPT App 無法變更 MCP 網址，已另建無認證的替代外掛連到 staging，並在 ChatGPT 實測建立、預覽與插入、畫板、PDF／DOCX 匯出；擁有者決定解除安裝舊 App。production 尚未建立。
 
 ## 部署目的與不變條件
 
