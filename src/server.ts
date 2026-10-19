@@ -22,11 +22,13 @@ import {
   paragraphFormatInputSchema,
   templateSchema,
 } from "./domain.js";
-import { exportDocx, exportPdf, exportText } from "./exporters.js";
+import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
-import { FileStore } from "./storage.js";
+import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
 import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
+
+import { toolScope } from "./oauth.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay";
 
@@ -132,7 +134,7 @@ function snapshot(answer: AnswerDocument, template: AnswerTemplate): AnswerSnaps
   return { answer, layout: layoutSections(template, answer.sections) };
 }
 
-async function loadSnapshot(store: FileStore, answerId: string): Promise<AnswerSnapshot> {
+async function loadSnapshot(store: EssayStore, answerId: string): Promise<AnswerSnapshot> {
   const answer = await store.getAnswer(answerId);
   const template = await store.getTemplate(answer.templateId);
   return snapshot(answer, template);
@@ -152,7 +154,7 @@ function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): 
 }
 
 async function makeChangePreview(
-  store: FileStore,
+  store: EssayStore,
   operation: "write" | "replace" | "format" | "insert" | "delete",
   before: AnswerSnapshot,
   afterAnswer: AnswerDocument,
@@ -181,7 +183,7 @@ function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
+export function createEssayMcpServer(store: EssayStore = new FileStore(), options: { readOnly?: boolean; scopes?: string[] } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -192,6 +194,11 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。",
     },
   );
+
+  const registerTool: typeof server.registerTool = (name, config, callback) => server.registerTool(name,
+    options.scopes ? { ...config, _meta: { ...config._meta,
+      securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }],
+    } } : config, callback);
 
   server.registerResource(
     "police-information-essay-answer-sheet-widget",
@@ -262,7 +269,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       description: "export_docx / export_pdf / export_text 產生的限時檔案；URI 見工具結果的 exportUri。",
     },
     async (uri, variables) => {
-      if (options.readOnly) throw new Error("Export artifact not found.");
+      if (options.readOnly || (options.scopes && !options.scopes.includes("essay.export"))) throw new Error("Export artifact not found.");
       const handle = Array.isArray(variables.handle) ? variables.handle[0] : variables.handle;
       const artifact = await store.readExport(handle ?? "");
       return {
@@ -275,7 +282,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_templates",
     {
       title: "列出答題紙模板",
@@ -290,7 +297,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "load_exam_paper",
     {
       title: "載入申論答題紙",
@@ -327,7 +334,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_answers",
     {
       title: "列出申論答案",
@@ -342,7 +349,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const createAnswerTool = server.registerTool(
+  const createAnswerTool = registerTool(
     "create_answer",
     {
       title: "建立申論答案",
@@ -374,7 +381,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "read_answer",
     {
       title: "讀取申論答案",
@@ -389,13 +396,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         const current = await loadSnapshot(store, answerId);
         return { structuredContent: current, content: textContent(`已讀取「${current.answer.title}」；${summarizeLayout(current.layout)}`) };
       } catch (error) {
-        if (error instanceof Error && error.message.includes("ENOENT")) throw new Error(noAnswerFoundMessage(answerId));
+        if (isStoreNotFound(error)) throw new Error(noAnswerFoundMessage(answerId));
         throw error;
       }
     },
   );
 
-  const writeAnswerTool = server.registerTool(
+  const writeAnswerTool = registerTool(
     "write_answer",
     {
       title: "寫入完整申論答案",
@@ -430,7 +437,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_write_answer",
     {
       title: "預覽完整答案修改",
@@ -453,7 +460,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_replace_text",
     {
       title: "預覽區塊修改",
@@ -486,7 +493,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_format_section",
     {
       title: "預覽格式修改",
@@ -514,7 +521,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const replaceTextTool = server.registerTool(
+  const replaceTextTool = registerTool(
     "replace_text",
     {
       title: "替換申論區塊",
@@ -564,7 +571,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const formatSectionTool = server.registerTool(
+  const formatSectionTool = registerTool(
     "format_section",
     {
       title: "格式化申論區塊",
@@ -611,7 +618,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_insert_text",
     {
       title: "預覽插入區塊",
@@ -645,7 +652,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const insertTextTool = server.registerTool(
+  const insertTextTool = registerTool(
     "insert_text",
     {
       title: "插入申論區塊",
@@ -691,7 +698,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_delete_text",
     {
       title: "預覽刪除區塊",
@@ -716,7 +723,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const deleteTextTool = server.registerTool(
+  const deleteTextTool = registerTool(
     "delete_text",
     {
       title: "刪除申論區塊",
@@ -751,7 +758,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "reflow_answer",
     {
       title: "重新排版申論答案",
@@ -766,7 +773,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "check_layout",
     {
       title: "檢查申論版面",
@@ -783,7 +790,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "render_answer_sheet",
     {
       title: "顯示申論答題紙畫板",
@@ -799,12 +806,12 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       return {
         structuredContent: current,
         content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`),
-        _meta: { readOnly: Boolean(options.readOnly), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
+        _meta: { readOnly: Boolean(options.readOnly || (options.scopes && !options.scopes.includes("essay.write"))), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
       };
     },
   );
 
-  const exportDocxTool = server.registerTool(
+  const exportDocxTool = registerTool(
     "export_docx",
     {
       title: "輸出申論 Word",
@@ -825,12 +832,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "docx",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -851,7 +859,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const exportTextTool = server.registerTool(
+  const exportTextTool = registerTool(
     "export_text",
     {
       title: "輸出申論純文字",
@@ -872,12 +880,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportText(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "txt",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -898,7 +907,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const exportPdfTool = server.registerTool(
+  const exportPdfTool = registerTool(
     "export_pdf",
     {
       title: "輸出申論 PDF",
@@ -919,12 +928,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "pdf",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -945,18 +955,12 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  if (options.readOnly) {
-    for (const tool of [
-      createAnswerTool,
-      writeAnswerTool,
-      replaceTextTool,
-      formatSectionTool,
-      insertTextTool,
-      deleteTextTool,
-      exportDocxTool,
-      exportTextTool,
-      exportPdfTool,
-    ]) tool.remove();
+  for (const [name, tool] of [
+    ["create_answer", createAnswerTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
+    ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
+    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
+  ] as const) {
+    if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }
 
   server.registerPrompt(

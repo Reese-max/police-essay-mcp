@@ -9,14 +9,50 @@ import {
   type AnswerTemplate,
 } from "./domain.js";
 
-function safeId(id: string): string {
+export function safeId(id: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)) {
     throw new Error("Invalid identifier.");
   }
   return id;
 }
 
-export class FileStore {
+export interface ExportDetails {
+  answerId: string;
+  answerVersion: number;
+  format: ExportFormat;
+  temporaryDir?: string;
+}
+
+export interface EssayStore {
+  ensureDirectories(): Promise<void>;
+  getTemplate(templateId: string): Promise<AnswerTemplate>;
+  listTemplates(): Promise<AnswerTemplate[]>;
+  getAnswer(answerId: string): Promise<AnswerDocument>;
+  saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
+  listAnswers(): Promise<AnswerDocument[]>;
+  resolveExportPath(filename: string, extension: ExportFormat): string;
+  createExportHandle(outputPath: string, details: ExportDetails): Promise<{
+    handle: string; name: string; mimeType: string; expiresAt: string;
+  }>;
+  readExport(handle: string): Promise<{
+    name: string; mimeType: string; answerId: string; answerVersion: number;
+    format: ExportFormat; expiresAt: string; data: Buffer;
+  }>;
+  checkReadiness?(): Promise<void>;
+  /** Present on stores that isolate data per authenticated principal (cloud backend). */
+  forPrincipal?(ownerKey: string, readOnly: boolean): EssayStore;
+}
+
+export class StoreNotFoundError extends Error {
+  readonly code = "ESSAY_NOT_FOUND";
+}
+
+export function isStoreNotFound(error: unknown): boolean {
+  return error instanceof StoreNotFoundError
+    || (error instanceof Error && "code" in error && error.code === "ENOENT");
+}
+
+export class FileStore implements EssayStore {
   readonly templateDir: string;
   readonly answerDir: string;
   readonly exportDir: string;
@@ -42,8 +78,13 @@ export class FileStore {
 
   async getTemplate(templateId: string): Promise<AnswerTemplate> {
     const filename = path.join(this.templateDir, `${safeId(templateId)}.json`);
-    const raw = await fs.readFile(filename, "utf8");
-    return templateSchema.parse(JSON.parse(raw));
+    try {
+      const raw = await fs.readFile(filename, "utf8");
+      return templateSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到模板。");
+      throw error;
+    }
   }
 
   async listTemplates(): Promise<AnswerTemplate[]> {
@@ -158,15 +199,16 @@ export class FileStore {
 
   async createExportHandle(
     outputPath: string,
-    details: { answerId: string; answerVersion: number; format: ExportFormat },
+    details: ExportDetails,
   ): Promise<{ handle: string; name: string; mimeType: string; expiresAt: string }> {
     await this.ensureDirectories();
     await fs.mkdir(this.artifactDir, { recursive: true });
     const name = path.basename(outputPath);
-    const safeSource = path.resolve(this.resolveExportPath(name, details.format));
+    const sourceRoot = details.temporaryDir ?? this.exportDir;
+    const safeSource = path.resolve(sourceRoot, path.basename(this.resolveExportPath(name, details.format)));
     if (path.resolve(outputPath) !== safeSource) throw new Error("Export artifact not found.");
 
-    const exportRoot = await fs.realpath(this.exportDir);
+    const exportRoot = await fs.realpath(sourceRoot);
     const stats = await fs.lstat(safeSource);
     const source = await fs.realpath(safeSource);
     if (!stats.isFile() || !source.startsWith(exportRoot + path.sep)) {
@@ -263,7 +305,7 @@ export class FileStore {
 
 export const EXPORT_ARTIFACT_TTL_MS = 24 * 60 * 60 * 1000;
 
-type ExportFormat = "docx" | "pdf" | "txt";
+export type ExportFormat = "docx" | "pdf" | "txt";
 
 interface ExportArtifactManifest {
   schemaVersion: 1;
@@ -277,7 +319,7 @@ interface ExportArtifactManifest {
   expiresAt: number;
 }
 
-const exportArtifactHandlePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const exportArtifactHandlePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const exportFilenamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.(docx|pdf|txt)$/;
 
 function isExportFormat(value: unknown): value is ExportFormat {
