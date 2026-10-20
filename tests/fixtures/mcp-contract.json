@@ -29313,6 +29313,10 @@
     {
       "path": "owner.tools[delete_answer]",
       "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
+    },
+    {
+      "path": "*.tools[create_answer,format_section,insert_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer,replace_text,write_answer].description",
+      "reason": "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix."
     }
   ]
 }

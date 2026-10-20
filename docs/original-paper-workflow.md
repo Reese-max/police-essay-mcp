@@ -4,7 +4,7 @@
 
 1. 安裝現有 Node 依賴，執行 `npm ci`。
 2. 由教育部下載「教育部標準楷書」5.1：https://language.moe.gov.tw/material/info?m=9fe3fe82-8bbf-44c0-961d-873ea079e284 。使用完整未修改的 `edukai-5.1_20251208.ttf`，遵守官方授權；字型作者為中華民國教育部。本專案未重製或修改字型。
-3. 設定 `ESSAY_MCP_PAPER_FONT` 絕對路徑。SHA-256 應為 `e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98`。字型缺失、版本不符或缺字時停止新模式排版。Word 閱讀端也須安裝此字型；本次未加入字型嵌入。
+3. 設定 `ESSAY_MCP_PAPER_FONT` 絕對路徑。SHA-256 應為 `e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98`。字型缺失、版本不符或缺字時停止新模式排版。DOCX 會內嵌答案用字的子集，Word 閱讀端不必安裝此字型；LibreOffice 也使用內嵌字型，但會在中英文交界多留約 0.2 字寬（仍在換行預留範圍內）。
 4. 部署時須包含 `templates/` 與 `assets/`，不要只複製 `dist/`。執行 `npm run check`、`npm test`、`npm run build` 後，依原有方式重啟服務；保留原本驗證、存放目錄與 MCP 連線設定。
 5. 在實際 MCP 客戶端呼叫 `list_templates`，確認新模板存在，再完成以下流程。
 

@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createEssayMcpServer } from "../src/server.js";
+import { createEssayMcpServer, PAPER_FORMAT_NOTE } from "../src/server.js";
 import { FileStore } from "../src/storage.js";
 
 export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySchemes",
@@ -13,9 +13,14 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
 { path: "*.tools[*].outputSchema",
   reason: "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema." },
 { path: "owner.tools[delete_answer]",
-  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." }];
+  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
+{ path: "*.tools[create_answer,format_section,insert_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer,replace_text,write_answer].description",
+  reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
 export const ADDED_TOOLS = ["delete_answer"];
+/** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
+export const PAPER_NOTE_TOOLS = ["create_answer", "format_section", "insert_text", "preview_format_section", "preview_insert_text",
+  "preview_replace_text", "preview_write_answer", "replace_text", "write_answer"];
 /** Upper bound for the serialized owner tools/list; the base contract was ~262 KB. */
 export const TOOLS_LIST_BUDGET_BYTES = 80_000;
 export function stableJson(value: unknown): string {
@@ -51,6 +56,15 @@ export function assertSchemaSubset(compact: unknown, base: unknown, where: strin
       assert.ok(isDeepStrictEqual(value, b.additionalProperties) || isDeepStrictEqual(value, {}), `${where}.additionalProperties tightened`);
     } else assert.deepEqual(value, b[key], `${where}.${key} differs from base`);
   }
+}
+/** Strips the appended 166 note so the remaining description must equal base exactly. */
+function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T): T {
+  return { ...view, tools: view.tools.map(tool => {
+    if (!PAPER_NOTE_TOOLS.includes(tool.name)) return tool;
+    const description = String(tool.description);
+    assert.ok(description.endsWith(PAPER_FORMAT_NOTE), `${tool.name} must end with the 166 formatting note`);
+    return { ...tool, description: description.slice(0, -PAPER_FORMAT_NOTE.length) };
+  }) };
 }
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
   return { ...view, tools: view.tools.filter(tool => !drop.includes(tool.name)).map(({ outputSchema: _output, ...tool }) => tool) };
@@ -95,7 +109,8 @@ export async function checkMcpContract() {
   assert.deepEqual(fixture.intentionalDifferences, INTENTIONAL_DIFFERENCES);
   const current = await collectContract();
   // Everything except the declared differences must still equal base.
-  assert.deepEqual({ owner: withoutOutputSchemas(current.owner, ADDED_TOOLS), reader: withoutOutputSchemas(current.reader) },
+  assert.match(PAPER_FORMAT_NOTE, /^ The 166 original-paper template .*left-aligned.*bold.*italic/);
+  assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(current.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(current.reader)) },
     { owner: withoutOutputSchemas(fixture.contract.owner), reader: withoutOutputSchemas(fixture.contract.reader) });
   for (const view of ["owner", "reader"] as const) {
     for (const base of fixture.contract[view].tools as ContractTool[]) {
@@ -129,7 +144,7 @@ export async function checkMcpContract() {
             : ["export_docx", "export_pdf", "export_text"].includes(tool.name) ? "essay.export" : "essay.write";
           return { ...tool, _meta: { ...tool._meta, securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", required])] }] } };
         });
-      const listed = JSON.parse(stableJson(tools)) as ContractTool[];
+      const listed = withBaseDescriptions({ tools: JSON.parse(stableJson(tools)) as ContractTool[] }).tools;
       assert.deepEqual(withoutOutputSchemas({ tools: listed }, ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
         assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes, [{ type: "oauth2", scopes: ["essay.read", "essay.write"] }]);
