@@ -275,14 +275,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 24, reader 9", async () => {
+test("cloud and file expose the same tool contracts: owner 27, reader 9", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 9 : 24);
+      assert.equal(baseline.tools.length, readOnly ? 9 : 27);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());

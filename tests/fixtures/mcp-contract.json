@@ -29319,6 +29319,14 @@
       "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)."
     },
     {
+      "path": "owner.tools[duplicate_answer,export_answer,update_answer_info]",
+      "reason": "New answer-management tools: rename or file an answer under an exam and question number and duplicate it (essay.write); export several formats at once with readable names (essay.export)."
+    },
+    {
+      "path": "*.tools[export_docx,export_pdf,export_text].outputSchema.additionalProperties",
+      "reason": "Loosened so the export tools can also return the readable fileName and, when the server has a public URL, a downloadUrl."
+    },
+    {
       "path": "owner.tools[move_section,renumber_items,set_line_targets]",
       "reason": "New writing tools (essay.write): move a section, renumber written item numbers, and set per-section line targets that check_layout reports against."
     },

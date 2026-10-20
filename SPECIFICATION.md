@@ -151,6 +151,9 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `move_section` | 把指定 section 移到另一個 section 之前或之後 | 是 |
 | `renumber_items` | 依層級重新編號標題與段首的手寫編號 | 是 |
 | `set_line_targets` | 設定各節目標行數，供 `check_layout` 回報差距 | 是 |
+| `update_answer_info` | 修改標題、題目、考試名稱與題號 | 是 |
+| `duplicate_answer` | 複製答案為新的一份（版本與紀錄重新開始） | 是 |
+| `export_answer` | 一次輸出多種格式，檔名用考試、題號與標題 | 是，建立檔案 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
 | `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |

@@ -8,6 +8,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createEssayMcpServer, PAPER_FORMAT_NOTE } from "../src/server.js";
 import { FileStore } from "../src/storage.js";
 import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
+import { toolScope } from "../src/oauth.js";
 
 export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySchemes",
   reason: "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base." },
@@ -17,6 +18,10 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
   reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)." },
+{ path: "owner.tools[duplicate_answer,export_answer,update_answer_info]",
+  reason: "New answer-management tools: rename or file an answer under an exam and question number and duplicate it (essay.write); export several formats at once with readable names (essay.export)." },
+{ path: "*.tools[export_docx,export_pdf,export_text].outputSchema.additionalProperties",
+  reason: "Loosened so the export tools can also return the readable fileName and, when the server has a public URL, a downloadUrl." },
 { path: "owner.tools[move_section,renumber_items,set_line_targets]",
   reason: "New writing tools (essay.write): move a section, renumber written item numbers, and set per-section line targets that check_layout reports against." },
 { path: "*.tools[check_layout].outputSchema.additionalProperties",
@@ -30,8 +35,8 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "move_section", "preview_change", "renumber_items",
-  "restore_revision", "set_line_targets"];
+export const ADDED_TOOLS = ["delete_answer", "duplicate_answer", "edit_text", "export_answer", "list_revisions", "move_section",
+  "preview_change", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["list_revisions", "preview_change"];
 /** Base tools that no longer exist; all of them were read-only. */
@@ -185,7 +190,7 @@ export async function checkMcpContract() {
     await server.connect(a); await client.connect(b);
     try {
       const tools = (await client.listTools()).tools.sort((a, b) => a.name.localeCompare(b.name)) as ContractTool[];
-      const added = scopes.includes("essay.write") ? ADDED_TOOLS : ADDED_READ_TOOLS;
+      const added = ADDED_TOOLS.filter(tool => scopes.includes(toolScope(tool)));
       const kept = (fixture.oauthTools[name] as string[]).filter(tool => !REMOVED_TOOLS.includes(tool));
       assert.deepEqual(tools.map(t => t.name).sort(), [...kept, ...added].sort());
       // Base-surface difference: the existing OAuth declaration, with exact expected scopes.
@@ -199,7 +204,7 @@ export async function checkMcpContract() {
       assert.deepEqual(withoutOutputSchemas({ tools: listed }, ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
         assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes,
-          [{ type: "oauth2", scopes: ADDED_READ_TOOLS.includes(name) ? ["essay.read"] : ["essay.read", "essay.write"] }]);
+          [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }]);
       }
     }
     finally { await client.close(); await server.close(); }
