@@ -372,8 +372,8 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(toolNames, [
       "check_layout", "create_answer", "delete_answer", "delete_text", "edit_text", "export_docx", "export_pdf", "export_text", "format_section",
-      "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "preview_change", "read_answer", "reflow_answer",
-      "render_answer_sheet", "replace_text", "restore_revision", "write_answer",
+      "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "move_section", "preview_change", "read_answer",
+      "reflow_answer", "render_answer_sheet", "renumber_items", "replace_text", "restore_revision", "set_line_targets", "write_answer",
     ]);
     const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);

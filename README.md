@@ -72,13 +72,16 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 建立文件，或 `write_answer` 寫入 sections。
 3. `read_answer` / `check_layout` 讀取真實行數。
-4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text` 或 `edit_text`），其餘參數與該工具相同。
+4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text`、`edit_text`、`move_section` 或 `renumber_items`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
+   - `move_section` 把區塊移到另一個區塊之前或之後。
+   - 插入、刪除或搬移後，手寫編號（壹、一、（一）、1.、（1））若不再連續，`renumber_items` 會依層級重新編號：標題自成一串，各區塊的段落各自一串，下層遇到上層項目時從 1 重新起算。
+   - `set_line_targets` 設定各節目標行數（含標題與空行）；`check_layout` 會回報各節行數、與目標的差距，以及補滿或壓縮時該從哪一節增減。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。
 8. 使用者明確要求永久刪除時，以 `read_answer` / `list_answers` 取得目前版本，再呼叫 `delete_answer`（必須帶 `expectedVersion`）。答案、全部修改紀錄與匯出檔一併刪除，無法復原；唯讀 credential 看不到此工具。
 
-工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 71 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
+工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 64 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
 
 ## 正式格式
 

@@ -17,6 +17,10 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
   reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)." },
+{ path: "owner.tools[move_section,renumber_items,set_line_targets]",
+  reason: "New writing tools (essay.write): move a section, renumber written item numbers, and set per-section line targets that check_layout reports against." },
+{ path: "*.tools[check_layout].outputSchema.additionalProperties",
+  reason: "Loosened so check_layout can also return each section's lines against its target (sections, notes)." },
 { path: "*.tools[preview_delete_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer]",
   reason: "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments." },
 { path: "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
@@ -26,7 +30,8 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "preview_change", "restore_revision"];
+export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "move_section", "preview_change", "renumber_items",
+  "restore_revision", "set_line_targets"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["list_revisions", "preview_change"];
 /** Base tools that no longer exist; all of them were read-only. */

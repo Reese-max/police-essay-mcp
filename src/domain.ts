@@ -145,6 +145,8 @@ export const answerDocumentSchema = z.object({
   title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(),
   sections: z.array(answerSectionSchema).max(100),
+  /** Planned lines per section id (heading and spacing included); set with set_line_targets. */
+  lineTargets: z.record(z.string(), z.number().int().min(1).max(200)).optional(),
   version: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
