@@ -1,11 +1,12 @@
 import { createHash, createPublicKey, verify, type JsonWebKey } from "node:crypto";
 
 export const OAUTH_SCOPES = ["essay.read", "essay.write", "essay.export"] as const;
-export const WRITE_TOOLS = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "delete_answer"] as const;
+export const WRITE_TOOLS = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "delete_answer",
+  "edit_text", "restore_revision"] as const;
 export const EXPORT_TOOLS = ["export_docx", "export_pdf", "export_text"] as const;
 export const READ_TOOLS = ["list_templates", "load_exam_paper", "list_answers", "read_answer", "preview_write_answer",
   "preview_replace_text", "preview_format_section", "preview_insert_text", "preview_delete_text",
-  "reflow_answer", "check_layout", "render_answer_sheet"] as const;
+  "reflow_answer", "check_layout", "render_answer_sheet", "preview_edit_text", "list_revisions"] as const;
 export function toolScope(name: string): string {
   return (READ_TOOLS as readonly string[]).includes(name) ? "essay.read"
     : (EXPORT_TOOLS as readonly string[]).includes(name) ? "essay.export" : "essay.write";

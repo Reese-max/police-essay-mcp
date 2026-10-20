@@ -17,7 +17,7 @@ export async function generateContractFromBase(basePath: string) {
     sourceSha256[file] = createHash("sha256").update(await readFile(path.join(base, "src", file))).digest("hex");
   }
   const { createEssayMcpServer } = await import(pathToFileURL(path.join(base, "src/server.ts")).href);
-  const contract = await collectContract(createEssayMcpServer, 21);
+  const contract = await collectContract(createEssayMcpServer, 21, 12);
   return { sourceCommit, sourceSha256, contract, oauthTools: oauthToolLists(contract), intentionalDifferences: INTENTIONAL_DIFFERENCES };
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

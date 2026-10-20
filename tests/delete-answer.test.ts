@@ -116,7 +116,8 @@ test("file delete_answer enforces the version and removes only that answer's art
 
     const deleted = await store.deleteAnswer(target.id, { expectedVersion: 2 });
     assert.deepEqual({ title: deleted.answer.title, revisions: deleted.revisions, exports: deleted.exports },
-      { title: "delete me", revisions: 0, exports: 1 });
+      { title: "delete me", revisions: 2, exports: 1 });
+    assert.deepEqual(await fs.readdir(store.revisionDir), [keep.id]);
     await assert.rejects(store.getAnswer(target.id), isStoreNotFound);
     await assert.rejects(store.deleteAnswer(target.id, { expectedVersion: 2 }), isStoreNotFound);
     assert.deepEqual((await store.listAnswers()).map(item => item.id), [keep.id]);
