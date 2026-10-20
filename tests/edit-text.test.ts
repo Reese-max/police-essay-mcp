@@ -187,7 +187,7 @@ async function exerciseStore(store: EssayStore) {
       { find: "既有設備與人力。", replace: "既有設備與人力。另須預留資安測試時間。" },
       { find: "降低浪費及失敗風險。", replace: "降低浪費及失敗風險，兼顧依法行政與公共服務品質。" },
     ];
-    const preview = await client.callTool({ name: "preview_edit_text", arguments: { answerId: answer.id, edits, expectedVersion: 1 } });
+    const preview = await client.callTool({ name: "preview_change", arguments: { answerId: answer.id, operation: "edit_text", edits, expectedVersion: 1 } });
     assert.equal(preview.isError, undefined, JSON.stringify(preview));
     assert.equal(structured(preview).applied, false);
     assert.equal(structured(preview).summary[0], "版本 1 → 2（尚未套用）");
@@ -245,7 +245,7 @@ async function exerciseStore(store: EssayStore) {
   const reader = await connect(store, true);
   try {
     const names = (await reader.listTools()).tools.map((tool) => tool.name);
-    assert.ok(names.includes("preview_edit_text") && names.includes("list_revisions"));
+    assert.ok(names.includes("preview_change") && names.includes("list_revisions"));
     assert.ok(!names.includes("edit_text") && !names.includes("restore_revision"));
   } finally { await reader.close(); }
 }

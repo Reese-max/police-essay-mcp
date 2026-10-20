@@ -8,7 +8,7 @@ import { layoutSections } from '../src/layout.js';
 
 const template = JSON.parse(readFileSync(new URL('../templates/police_information_essay.json', import.meta.url), 'utf8')) as AnswerTemplate;
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
-type Args = { answerId: string; sectionId?: string; expectedVersion?: number; newText?: string; paragraphs?: Array<{text: string; format?: unknown}> };
+type Args = { answerId: string; operation?: string; sectionId?: string; expectedVersion?: number; newText?: string; paragraphs?: Array<{text: string; format?: unknown}> };
 async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle?: HeadingStyleInput; italic?: boolean} = {}) {
   let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',headingStyle:options.headingStyle,paragraphs:[{text:'第一段',format:{firstLineIndent:2,italic:options.italic}},{text:'第二段',format:{leftIndent:2}}]}]});
   const calls: Array<{name: string; args: Args}> = [];
@@ -21,7 +21,8 @@ async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle
   const result = () => ({structuredContent:snapshot(),_meta:{readOnly:Boolean(options.readOnly)}});
   const tools = async (name: string, args: Args) => {
     calls.push({name,args});
-    if (name === 'preview_replace_text') {
+    if (name === 'preview_change') {
+      assert.equal(args.operation,'replace_text');
       if (hold) await new Promise<void>(resolve => {held=resolve;});
       return {structuredContent:{summary:['預覽完成'],after:snapshot()}};
     }
@@ -93,7 +94,7 @@ test('widget keeps paragraph formats when lines are added, rewritten or removed'
    assert.equal(stored[0]!.firstLineIndent,2);assert.equal(stored[1]!.leftIndent,2);
    h.input(draft);await h.click('preview-edit');
    assert.equal(h.element<HTMLButtonElement>('apply-edit').disabled,false,h.element('preview').textContent!);
-   const preview=h.calls.find(x=>x.name==='preview_replace_text')!;
+   const preview=h.calls.find(x=>x.name==='preview_change')!;
    assert.deepEqual(JSON.parse(JSON.stringify(preview.args.paragraphs)),
     JSON.parse(JSON.stringify(draft.split('\n').map((text,i)=>({text,format:stored[sources[i]]})))));
    assert.equal(preview.args.newText,undefined);

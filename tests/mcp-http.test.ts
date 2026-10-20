@@ -221,17 +221,16 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
 
     const tools = await client.listTools();
     const toolNames = tools.tools.map((tool) => tool.name);
-    for (const name of ["preview_write_answer", "preview_replace_text", "preview_format_section", "preview_insert_text", "preview_delete_text"]) {
-      assert.ok(toolNames.includes(name), `missing tool ${name}`);
-    }
+    assert.ok(toolNames.includes("preview_change"), "missing tool preview_change");
+    assert.ok(!toolNames.some((name) => name.startsWith("preview_") && name !== "preview_change"), toolNames.join(","));
     const renderTool = tools.tools.find((tool) => tool.name === "render_answer_sheet");
     assert.ok(renderTool, "missing tool render_answer_sheet");
     const renderMeta = renderTool._meta as { ui?: { resourceUri?: string } } | undefined;
-    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet.html");
+    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet-v2.html");
 
     const resources = await client.listResources();
-    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet.html"));
-    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet.html" });
+    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet-v2.html"));
+    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet-v2.html" });
     const widgetText = String(widgetResource.contents.find((content) => "text" in content)?.text ?? "");
     assert.match(widgetText, /警察資訊三等/);
     assert.match(widgetText, /tools\/call/);
@@ -261,9 +260,10 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.ok(renderedSnapshot.layout.lines.length > 0);
 
     const preview = await client.callTool({
-      name: "preview_format_section",
+      name: "preview_change",
       arguments: {
         answerId: createdSnapshot.answer.id,
+        operation: "format_section",
         sectionId: "intro",
         expectedVersion: 1,
         paragraphFormat: { firstLineIndent: 2, leftIndent: 1, alignment: "justify" },
