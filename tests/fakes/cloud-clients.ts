@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { Timestamp } from "@google-cloud/firestore";
 import type { FirestoreClient, StorageClient } from "../../src/cloud-storage.js";
 
@@ -15,6 +16,17 @@ function clone<T>(value: T): T {
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clone(item)])) as T;
   }
   return value;
+}
+
+/** Fields whose single-field indexes the deployed database disables (infra/firestore.indexes.json). */
+const unindexedFields = new Set((JSON.parse(readFileSync(new URL("../../infra/firestore.indexes.json", import.meta.url), "utf8")) as {
+  fieldOverrides: Array<{ collectionGroup: string; fieldPath: string; indexes: unknown[] }>;
+}).fieldOverrides.filter(item => item.indexes.length === 0).map(item => item.collectionGroup + "/" + item.fieldPath));
+function requireIndex(collectionPath: string, field: string): void {
+  // Like production Firestore: filtering or ordering on an exempted field needs an index that does not exist.
+  if (unindexedFields.has(collectionPath.split("/").pop() + "/" + field)) {
+    throw Object.assign(new Error("FAILED_PRECONDITION: The query requires an index for " + field + "."), { code: 9 });
+  }
 }
 
 /** Optimistic, atomic commit: no shared promise lock and no lock across answers. */
@@ -68,10 +80,11 @@ export class MemoryFirestore {
     const filters: Array<[string, unknown]> = [];
     const query = {
       doc: (id: string) => this.doc(path + "/" + id),
-      orderBy: (field: string, _direction: string) => { order = field; return query; },
+      orderBy: (field: string, _direction: string) => { requireIndex(path, field); order = field; return query; },
       limit: (limit: number) => { maximum = limit; return query; },
       where: (field: string, operator: "==", value: unknown) => {
         if (operator !== "==") throw new Error("Only == filters are faked.");
+        requireIndex(path, field);
         filters.push([field, value]);
         return query;
       },
