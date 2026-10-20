@@ -37,6 +37,10 @@ export interface EssayStore {
   saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
   /** Permanently removes the answer, its revision history and its export artifacts. */
   deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer>;
+  /** One committed version of an answer, kept after later edits. */
+  getRevision(answerId: string, version: number): Promise<AnswerDocument>;
+  /** Up to `limit` committed versions counting down from the current one, newest first; missing ones are skipped. */
+  listRevisions(answerId: string, options: { limit: number }): Promise<AnswerDocument[]>;
   listAnswers(): Promise<AnswerDocument[]>;
   resolveExportPath(filename: string, extension: ExportFormat): string;
   createExportHandle(outputPath: string, details: ExportDetails): Promise<{
@@ -63,6 +67,7 @@ export function isStoreNotFound(error: unknown): boolean {
 export class FileStore implements EssayStore {
   readonly templateDir: string;
   readonly answerDir: string;
+  readonly revisionDir: string;
   readonly exportDir: string;
   readonly artifactDir: string;
   private readonly answerWriteTails = new Map<string, Promise<void>>();
@@ -72,6 +77,8 @@ export class FileStore implements EssayStore {
     const root = process.cwd();
     this.templateDir = options.templateDir ?? path.join(root, "templates");
     this.answerDir = options.answerDir ?? path.join(root, "data", "answers");
+    // A sibling directory, so the answer directory keeps holding only answer files.
+    this.revisionDir = `${this.answerDir}-revisions`;
     this.exportDir = options.exportDir ?? path.join(root, "exports");
     this.artifactDir = path.join(this.exportDir, ".artifacts");
   }
@@ -156,14 +163,42 @@ export class FileStore implements EssayStore {
         throw new Error(`答案 ${answerId} 已存在；更新既有答案時必須提供 expectedVersion。`);
       }
 
-      const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        await fs.writeFile(temporary, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-        await fs.rename(temporary, filename);
-      } finally {
-        await fs.rm(temporary, { force: true }).catch(() => undefined);
+      // The revision goes first: a failed answer write leaves a revision the next commit overwrites.
+      const revisionDir = path.join(this.revisionDir, answerId);
+      await fs.mkdir(revisionDir, { recursive: true });
+      for (const target of [path.join(revisionDir, `${normalized.version}.json`), filename]) {
+        const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          await fs.writeFile(temporary, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+          await fs.rename(temporary, target);
+        } finally {
+          await fs.rm(temporary, { force: true }).catch(() => undefined);
+        }
       }
     });
+  }
+
+  async getRevision(answerId: string, version: number): Promise<AnswerDocument> {
+    const filename = path.join(this.revisionDir, safeId(answerId), `${version}.json`);
+    try {
+      return answerDocumentSchema.parse(JSON.parse(await fs.readFile(filename, "utf8")));
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到版本紀錄。");
+      throw error;
+    }
+  }
+
+  async listRevisions(answerId: string, options: { limit: number }): Promise<AnswerDocument[]> {
+    const current = await this.getAnswer(answerId);
+    const revisions: AnswerDocument[] = [];
+    for (let version = current.version; version >= 1 && version > current.version - options.limit; version--) {
+      try {
+        revisions.push(await this.getRevision(answerId, version));
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+    }
+    return revisions;
   }
 
   async deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
@@ -203,9 +238,17 @@ export class FileStore implements EssayStore {
         await fs.rm(path.join(this.artifactDir, name), { force: true });
         exports++;
       }
+      const revisionDir = path.join(this.revisionDir, id);
+      let revisions = 0;
+      try {
+        revisions = (await fs.readdir(revisionDir)).filter((name) => name.endsWith(".json")).length;
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+      await fs.rm(revisionDir, { recursive: true, force: true });
       // The answer goes last, so a failed cleanup can be retried with the same version.
       await fs.rm(path.join(this.answerDir, `${id}.json`));
-      return { answer, revisions: 0, exports };
+      return { answer, revisions, exports };
     });
   }
 

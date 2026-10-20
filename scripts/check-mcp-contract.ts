@@ -14,10 +14,14 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
   reason: "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema." },
 { path: "owner.tools[delete_answer]",
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
+{ path: "*.tools[edit_text,list_revisions,preview_edit_text,restore_revision]",
+  reason: "New fine-grained editing and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)." },
 { path: "*.tools[create_answer,format_section,insert_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["delete_answer"];
+export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "preview_edit_text", "restore_revision"];
+/** Added tools that only need essay.read, so read credentials list them too. */
+export const ADDED_READ_TOOLS = ["list_revisions", "preview_edit_text"];
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
 export const PAPER_NOTE_TOOLS = ["create_answer", "format_section", "insert_text", "preview_format_section", "preview_insert_text",
   "preview_replace_text", "preview_write_answer", "replace_text", "write_answer"];
@@ -69,7 +73,8 @@ function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T): T {
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
   return { ...view, tools: view.tools.filter(tool => !drop.includes(tool.name)).map(({ outputSchema: _output, ...tool }) => tool) };
 }
-export async function collectContract(factory = createEssayMcpServer, ownerToolCount = 21 + ADDED_TOOLS.length) {
+export async function collectContract(factory = createEssayMcpServer, ownerToolCount = 21 + ADDED_TOOLS.length,
+  readerToolCount = 12 + ADDED_READ_TOOLS.length) {
   const views = [];
   for (const readOnly of [false, true]) {
     const server = factory(new FileStore(), { readOnly });
@@ -89,7 +94,7 @@ export async function collectContract(factory = createEssayMcpServer, ownerToolC
         resources: (await client.listResources()).resources.sort((a, b) => a.name.localeCompare(b.name)),
         resourceTemplates: (await client.listResourceTemplates()).resourceTemplates.sort((a, b) => a.name.localeCompare(b.name)),
       });
-      assert.equal(tools.length, readOnly ? 12 : ownerToolCount);
+      assert.equal(tools.length, readOnly ? readerToolCount : ownerToolCount);
     } finally { await client.close(); await server.close(); }
   }
   return JSON.parse(stableJson({ owner: views[0], reader: views[1] })) as { owner: typeof views[number]; reader: typeof views[number] };
@@ -110,7 +115,7 @@ export async function checkMcpContract() {
   const current = await collectContract();
   // Everything except the declared differences must still equal base.
   assert.match(PAPER_FORMAT_NOTE, /^ The 166 original-paper template .*left-aligned.*bold.*italic/);
-  assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(current.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(current.reader)) },
+  assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(current.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(current.reader), ADDED_READ_TOOLS) },
     { owner: withoutOutputSchemas(fixture.contract.owner), reader: withoutOutputSchemas(fixture.contract.reader) });
   for (const view of ["owner", "reader"] as const) {
     for (const base of fixture.contract[view].tools as ContractTool[]) {
@@ -135,7 +140,7 @@ export async function checkMcpContract() {
     await server.connect(a); await client.connect(b);
     try {
       const tools = (await client.listTools()).tools.sort((a, b) => a.name.localeCompare(b.name)) as ContractTool[];
-      const added = scopes.includes("essay.write") ? ADDED_TOOLS : [];
+      const added = scopes.includes("essay.write") ? ADDED_TOOLS : ADDED_READ_TOOLS;
       assert.deepEqual(tools.map(t => t.name).sort(), [...fixture.oauthTools[name], ...added].sort());
       // Base-surface difference: the existing OAuth declaration, with exact expected scopes.
       const expected = fixture.contract.owner.tools.filter((t: { name: string }) => fixture.oauthTools[name].includes(t.name))
@@ -147,11 +152,12 @@ export async function checkMcpContract() {
       const listed = withBaseDescriptions({ tools: JSON.parse(stableJson(tools)) as ContractTool[] }).tools;
       assert.deepEqual(withoutOutputSchemas({ tools: listed }, ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
-        assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes, [{ type: "oauth2", scopes: ["essay.read", "essay.write"] }]);
+        assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes,
+          [{ type: "oauth2", scopes: ADDED_READ_TOOLS.includes(name) ? ["essay.read"] : ["essay.read", "essay.write"] }]);
       }
     }
     finally { await client.close(); await server.close(); }
   }
-  console.log(`MCP_CONTRACT_OK owner=${current.owner.tools.length} reader=12 scopes=12/19/15/22 toolsListBytes=${toolsListBytes} baseline=${BASE_COMMIT}`);
+  console.log(`MCP_CONTRACT_OK owner=${current.owner.tools.length} reader=${current.reader.tools.length} toolsListBytes=${toolsListBytes} baseline=${BASE_COMMIT}`);
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await checkMcpContract();

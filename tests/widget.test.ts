@@ -74,12 +74,31 @@ test('widget initializes with the host and preserves paragraph formats when appl
   assert.equal(h.answer.version,2);assert.equal(h.element<HTMLTextAreaElement>('text').value,'新版第一段\n第二段');
  }finally{h.dom.window.close();}
 });
-test('widget rejects a late preview after the draft changes and refuses paragraph-count changes',async()=>{
+test('widget rejects a late preview after the draft changes',async()=>{
  const h=await host();try {
   h.setHold();h.input('預覽版本\n第二段');await h.click('preview-edit');h.input('繼續修改\n第二段');await h.release();
   assert.equal(h.element<HTMLButtonElement>('apply-edit').disabled,true);await h.click('apply-edit');assert.equal(h.calls.filter(x=>x.name==='replace_text').length,0);
-  h.input('增加\n第三\n段');await h.click('preview-edit');assert.match(h.element('preview').textContent!,/段落數已改變/);
  }finally{h.dom.window.close();}
+});
+test('widget keeps paragraph formats when lines are added, rewritten or removed',async()=>{
+ // Each draft line lists which stored paragraph (0: firstLineIndent 2, 1: leftIndent 2) lends its format.
+ for (const [draft,sources] of [
+  ['第一段\n新增的一段\n第二段',[0,0,1]],
+  ['改寫第一段\n第二段\n第三段',[0,1,1]],
+  ['開頭\n第一段\n第二段',[0,0,1]],
+  ['第二段',[1]],
+ ] as const) {
+  const h=await host();try {
+   const stored=h.answer.sections[0].paragraphs!.map(p=>p.format);
+   assert.equal(stored[0]!.firstLineIndent,2);assert.equal(stored[1]!.leftIndent,2);
+   h.input(draft);await h.click('preview-edit');
+   assert.equal(h.element<HTMLButtonElement>('apply-edit').disabled,false,h.element('preview').textContent!);
+   const preview=h.calls.find(x=>x.name==='preview_replace_text')!;
+   assert.deepEqual(JSON.parse(JSON.stringify(preview.args.paragraphs)),
+    JSON.parse(JSON.stringify(draft.split('\n').map((text,i)=>({text,format:stored[sources[i]]})))));
+   assert.equal(preview.args.newText,undefined);
+  }finally{h.dom.window.close();}
+ }
 });
 test('widget layout check refreshes the current version before the next edit',async()=>{
  const h=await host();try {

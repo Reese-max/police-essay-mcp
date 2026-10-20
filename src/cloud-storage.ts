@@ -98,6 +98,19 @@ export class CloudStore implements EssayStore {
     const result = await backend(() => this.answerRef(id).get(), true);
     return this.parseAnswer(result.data());
   }
+  async getRevision(id: string, version: number): Promise<AnswerDocument> {
+    const result = await backend(() => this.answerRef(id).collection("revisions").doc(String(version)).get(), true);
+    return this.parseAnswer(result.data());
+  }
+  async listRevisions(id: string, options: { limit: number }): Promise<AnswerDocument[]> {
+    // The revisions.version index is disabled (infra/firestore.indexes.json); revision ids are
+    // the version numbers, so read them by name instead of querying.
+    const current = await this.getAnswer(id);
+    const versions = Array.from({ length: Math.min(options.limit, current.version) }, (_, index) => current.version - index);
+    const results = await Promise.all(versions.map(version =>
+      backend(() => this.answerRef(id).collection("revisions").doc(String(version)).get(), true)));
+    return results.map(result => result.data()).filter(value => value !== undefined).map(value => this.parseAnswer(value));
+  }
   async listAnswers(): Promise<AnswerDocument[]> {
     const result = await backend(() => this.options.firestore.collection(this.userPath + "/answers").orderBy("updatedAt", "desc").get());
     return result.docs.map(doc => this.parseAnswer(doc.data()));

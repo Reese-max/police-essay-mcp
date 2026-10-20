@@ -350,6 +350,136 @@ export function updateSectionFormatting(
   );
 }
 
+export const textEditSchema = z.object({
+  find: z.string().min(1).max(2_000).refine((value) => !/[\r\n]/.test(value), "find 不可包含換行；跨段落的修改請改用 replace_text。"),
+  replace: z.string().max(10_000),
+  sectionId: z.string().min(1).optional(),
+  occurrence: z.number().int().positive().optional(),
+  replaceAll: z.boolean().optional(),
+}).refine((edit) => !(edit.occurrence !== undefined && edit.replaceAll), {
+  path: ["occurrence"],
+  message: "occurrence 與 replaceAll 只能擇一。",
+});
+
+export type TextEdit = z.input<typeof textEditSchema>;
+
+/** Upper bound for an answer's heading and paragraph text after edit_text, in UTF-16 units. */
+export const MAX_EDITED_TEXT_LENGTH = 300_000;
+
+function clipText(text: string, max = 40): string {
+  const chars = Array.from(text);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : text;
+}
+
+/** Spaces and half-width punctuation removed or widened, to explain a near miss. */
+function looseText(text: string): string {
+  const wide: Record<string, string> = { ",": "，", ";": "；", ":": "：", "?": "？", "!": "！", "(": "（", ")": "）" };
+  return text.replace(/\s+/g, "").replace(/[,;:?!()]/g, (char) => wide[char]);
+}
+
+/**
+ * Applies exact find/replace edits to headings and paragraphs, in order and all-or-nothing.
+ * A find that matches more than once must name occurrence or replaceAll; a newline in replace
+ * splits the paragraph (each part keeps its format) and emptying a paragraph removes it.
+ */
+export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { sections: AnswerSection[]; replacements: number[] } {
+  const working = sections.map((section) => ({
+    section,
+    heading: section.heading,
+    paragraphs: (section.paragraphs?.length
+      ? section.paragraphs
+      : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text })))
+      .map((paragraph) => ({ ...paragraph, original: paragraph.text })),
+    changed: false,
+  }));
+  let totalLength = working.reduce((sum, item) => sum + (item.heading?.length ?? 0)
+    + item.paragraphs.reduce((count, paragraph) => count + paragraph.text.length, 0), 0);
+  const replacements = edits.map((edit, editIndex) => {
+    const label = `第 ${editIndex + 1} 項修改`;
+    const scope = working.filter((item) => edit.sectionId === undefined || item.section.id === edit.sectionId);
+    if (scope.length === 0) throw new Error(`${label}：找不到 sectionId ${edit.sectionId}。`);
+    const matches: Array<{ item: typeof working[number]; paragraph: number | "heading"; start: number; text: string }> = [];
+    for (const item of scope) {
+      const scan = (text: string, paragraph: number | "heading") => {
+        for (let at = text.indexOf(edit.find); at >= 0; at = text.indexOf(edit.find, at + edit.find.length)) {
+          matches.push({ item, paragraph, start: at, text });
+        }
+      };
+      if (item.heading) scan(item.heading, "heading");
+      item.paragraphs.forEach((paragraph, index) => scan(paragraph.text, index));
+    }
+    if (matches.length === 0) {
+      const near = scope.some((item) => [item.heading ?? "", ...item.paragraphs.map((paragraph) => paragraph.text)]
+        .some((text) => looseText(text).includes(looseText(edit.find))));
+      throw new Error(`${label}：找不到「${clipText(edit.find)}」${edit.sectionId ? `（限區塊 ${edit.sectionId}）` : ""}。`
+        + (near ? "忽略空白與全形／半形標點後可以找到，請照原文的空白與標點填寫 find。" : "find 必須與目前內容逐字相同；請先 read_answer 確認原文。"));
+    }
+    let selected = matches;
+    if (edit.occurrence !== undefined) {
+      if (edit.occurrence > matches.length) throw new Error(`${label}：「${clipText(edit.find)}」只出現 ${matches.length} 次，沒有第 ${edit.occurrence} 處。`);
+      selected = [matches[edit.occurrence - 1]];
+    } else if (!edit.replaceAll && matches.length > 1) {
+      const places = matches.slice(0, 5).map((match, index) => {
+        const where = match.paragraph === "heading" ? "標題" : `第 ${match.paragraph + 1} 段`;
+        const chars = Array.from(match.text);
+        const start = Array.from(match.text.slice(0, match.start)).length;
+        const length = Array.from(edit.find).length;
+        const before = chars.slice(Math.max(0, start - 10), start).join("");
+        const after = chars.slice(start + length, start + length + 10).join("");
+        return `${index + 1}) 「${match.item.heading ?? match.item.section.id}」${where}：…${before}【${clipText(edit.find, 20)}】${after}…`;
+      });
+      throw new Error(`${label}：「${clipText(edit.find)}」出現 ${matches.length} 次：${places.join("；")}${matches.length > 5 ? "；…" : ""}。`
+        + "請加長 find 讓它只對應一處，或指定 occurrence（第幾處，依上列順序）或 replaceAll=true。");
+    }
+    // Chained replaceAll edits could otherwise grow the text geometrically before any save limit applies.
+    totalLength += selected.length * (edit.replace.length - edit.find.length);
+    if (totalLength > MAX_EDITED_TEXT_LENGTH) {
+      throw new Error(`${label}：修改後全文會超過 ${MAX_EDITED_TEXT_LENGTH} 字元的上限。`);
+    }
+    // Later matches first, so earlier offsets in the same text stay valid.
+    for (const match of [...selected].reverse()) {
+      const { item, paragraph, start } = match;
+      const replaceIn = (text: string) => text.slice(0, start) + edit.replace + text.slice(start + edit.find.length);
+      if (paragraph === "heading") {
+        if (/[\r\n]/.test(edit.replace)) throw new Error(`${label}：標題的 replace 不可包含換行。`);
+        const heading = replaceIn(item.heading ?? "");
+        item.changed ||= heading !== item.heading;
+        item.heading = heading;
+      } else {
+        const text = replaceIn(item.paragraphs[paragraph].text);
+        item.changed ||= text !== item.paragraphs[paragraph].text;
+        item.paragraphs[paragraph].text = text;
+      }
+    }
+    return selected.length;
+  });
+
+  const updated = working.map((item) => {
+    if (!item.changed) return item.section;
+    const paragraphs = item.paragraphs
+      .filter((paragraph) => paragraph.text !== "" || paragraph.original === "")
+      .flatMap((paragraph) => paragraph.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n")
+        .map((text) => ({ text, format: paragraph.format })));
+    if (paragraphs.length === 0) {
+      throw new Error(`修改會清空區塊「${item.heading || item.section.heading || item.section.id}」的全部內容；要刪除整個區塊請用 delete_text。`);
+    }
+    return normalizeSection({
+      id: item.section.id,
+      heading: item.heading || undefined,
+      paragraphs,
+      paragraphFormat: item.section.paragraphFormat,
+      headingStyle: item.section.headingStyle,
+      required: item.section.required,
+      priority: item.section.priority,
+      compressible: item.section.compressible,
+    }, item.section.order);
+  });
+  if (!working.some((item) => item.changed) || JSON.stringify(updated) === JSON.stringify(sections)) {
+    throw new Error("修改後的內容與原文相同，沒有需要儲存的變更。");
+  }
+  return { sections: updated, replacements };
+}
+
 export function createAnswerDocument(input: {
   templateId: string;
   title: string;
