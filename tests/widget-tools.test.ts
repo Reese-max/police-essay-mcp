@@ -286,6 +286,8 @@ test("the section editor does not switch back either, and an answer without sect
     await h.show({ answerId: "ans_other" });
     await h.release("replace_text");
     assert.match(h.element("answer-id").textContent!, /ans_other/);
+    // The finished write of the other answer does not report on this one.
+    assert.doesNotMatch(h.element("notice").textContent!, /修改已套用/);
 
     // A panel write that ends after the host showed an answer without sections leaves editing off.
     h.type("find", "前言");
@@ -297,5 +299,7 @@ test("the section editor does not switch back either, and an answer without sect
     for (const id of ["heading", "text", "preview-edit", "move-up", "move-down"]) {
       assert.equal(h.element<HTMLButtonElement>(id).disabled, true, id);
     }
+    assert.doesNotMatch(h.element("notice").textContent!, /已修改/);
+    assert.equal(h.element("preview").textContent, "");
   } finally { h.dom.window.close(); }
 });

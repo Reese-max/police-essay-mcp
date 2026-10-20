@@ -224,6 +224,10 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       let renumberArgs = null;
       let snapshotEpoch = 0;
 
+      function noticeFor(answerId, message, isError) {
+        if (state?.answer.id === answerId) setNotice(message, isError);
+      }
+
       function setNotice(message, isError) {
         notice.textContent = message || "";
         notice.className = isError ? "notice error" : "notice";
@@ -313,6 +317,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         else {
           // No section of this answer can still be selected.
           selectedSectionId = "";
+          pendingEdit = null;
+          previewText.textContent = "";
+          previewText.className = "preview";
           headingInput.value = "";
           textInput.value = "";
           previewButton.disabled = true;
@@ -391,10 +398,10 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           const rendered = extract(await callTool("render_answer_sheet", { answerId }));
           // The host may have shown another answer meanwhile; never switch the view back to this one.
           if (rendered && state?.answer.id === answerId) renderSnapshot(rendered);
-          setNotice(summaryOf(result), false);
+          noticeFor(answerId, summaryOf(result), false);
           return result;
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "操作失敗，可能需要重新載入最新版本。", true);
+          noticeFor(args.answerId, error instanceof Error ? error.message : "操作失敗，可能需要重新載入最新版本。", true);
           return null;
         } finally {
           applying = false;
@@ -618,16 +625,16 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       async function refresh() {
         if (!state) return;
         const button = byId("refresh");
+        const answerId = state.answer.id;
         setBusy(button, true);
         try {
-          const answerId = state.answer.id;
           const result = await callTool("render_answer_sheet", { answerId });
           if (state?.answer.id !== answerId) return;
           const snapshot = extract(result);
           if (!snapshot) throw new Error("工具沒有回傳可顯示的答題紙資料。");
           renderSnapshot(snapshot);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "重新顯示失敗。", true);
+          noticeFor(answerId, error instanceof Error ? error.message : "重新顯示失敗。", true);
         } finally {
           setBusy(button, false);
         }
@@ -636,9 +643,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       async function checkLayout() {
         if (!state) return;
         const button = byId("check");
+        const answerId = state.answer.id;
         setBusy(button, true);
         try {
-          const answerId = state.answer.id;
           await callTool("check_layout", { answerId });
           const result = await callTool("render_answer_sheet", { answerId });
           if (state?.answer.id !== answerId) return;
@@ -646,7 +653,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           if (!snapshot) throw new Error("工具沒有回傳最新答案與版面資料。");
           renderSnapshot(snapshot);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "版面檢查失敗。", true);
+          noticeFor(answerId, error instanceof Error ? error.message : "版面檢查失敗。", true);
         } finally {
           setBusy(button, false);
         }
@@ -723,9 +730,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           const rendered = extract(await callTool("render_answer_sheet", { answerId: snapshot.answer.id }));
           // The host may have shown another answer meanwhile; never switch the view back to this one.
           if (state?.answer.id === snapshot.answer.id) renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
-          setNotice("修改已套用並重新計算版面。", false);
+          noticeFor(edit.args.answerId, "修改已套用並重新計算版面。", false);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
+          noticeFor(edit.args.answerId, error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
         } finally {
           applying = false;
           setBusy(applyButton, false);
