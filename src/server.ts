@@ -182,10 +182,15 @@ function snapshot(answer: AnswerDocument, template: AnswerTemplate): AnswerSnaps
   return { answer, layout: layoutSections(template, answer.sections) };
 }
 
+/** `order`, not the array position, decides the layout; changes start from that order so renumbering keeps it. */
+function inLayoutOrder(sections: AnswerSection[]): AnswerSection[] {
+  return [...sections].sort((a, b) => a.order - b.order);
+}
+
 async function loadSnapshot(store: EssayStore, answerId: string): Promise<AnswerSnapshot> {
-  const answer = await store.getAnswer(answerId);
-  const template = await store.getTemplate(answer.templateId);
-  return snapshot(answer, template);
+  const stored = await store.getAnswer(answerId);
+  const template = await store.getTemplate(stored.templateId);
+  return snapshot({ ...stored, sections: inLayoutOrder(stored.sections) }, template);
 }
 
 function sectionFromInput(input: AnswerSectionInput, order: number): AnswerSection {
@@ -714,11 +719,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     {
       title: "預覽修改",
       description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId) or edit_text (edits).",
-      inputSchema: {
+      // Every previewed tool's arguments, all optional here; previewedSections checks them per operation.
+      // Strict, so a misspelled or invented argument is reported instead of silently dropped.
+      inputSchema: z.object({
         answerId: answerIdSchema,
         operation: z.enum(PREVIEW_OPERATIONS),
         expectedVersion: expectedVersionSchema,
-        // Every previewed tool's arguments, all optional here; previewedSections checks them per operation.
         sections: previewArgumentSchemas.write_answer.shape.sections.optional(),
         sectionId: sectionIdSchema.optional(),
         ...replacementContentSchema.shape,
@@ -726,7 +732,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         afterSectionId: sectionIdSchema.optional(),
         section: answerSectionInputSchema.optional(),
         edits: textEditsSchema.optional(),
-      },
+      }).strict(),
       outputSchema: changePreviewOutputSchema,
       _meta: { ui: { visibility: ["model", "app"] } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -817,7 +823,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
       throw error;
     }
-    return hypotheticalAnswer(before.answer, revision.sections);
+    return hypotheticalAnswer(before.answer, inLayoutOrder(revision.sections));
   }
 
   const restoreRevisionTool = registerTool(

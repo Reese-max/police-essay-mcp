@@ -77,6 +77,33 @@ test("preview_change shows exactly the sections each write tool then saves", asy
   });
 });
 
+test("edits keep the layout order when stored sections are not in array order", async () => {
+  await withClient(async (client, store) => {
+    // `order` decides the layout: this answer shows end before intro although intro comes first in the array.
+    const base = sample();
+    const answer = { ...base, sections: [{ ...base.sections[0], order: 2 }, { ...base.sections[1], order: 0 }, { ...base.sections[2], order: 1 }] };
+    await store.saveAnswer(answer);
+    const laidOut = (doc: AnswerDocument) => [...doc.sections].sort((a, b) => a.order - b.order).map((section) => section.id);
+    assert.deepEqual(laidOut(answer), ["body", "end", "intro"]);
+    let version = 1;
+    for (const [name, args] of [
+      ["replace_text", { sectionId: "intro", newText: "新的前言。" }],
+      ["format_section", { sectionId: "end", paragraphFormat: { leftIndent: 2 } }],
+      ["edit_text", { edits: [{ find: "降低浪費", replace: "減少浪費" }] }],
+    ] as const) {
+      const previewed = await client.callTool({ name: "preview_change", arguments: { answerId: answer.id, operation: name, expectedVersion: version, ...args } });
+      assert.deepEqual(laidOut((previewed.structuredContent as Preview).after.answer), ["body", "end", "intro"], name);
+      const written = await client.callTool({ name, arguments: { answerId: answer.id, expectedVersion: version, ...args } });
+      assert.equal(written.isError, undefined, `${name}: ${text(written)}`);
+      assert.deepEqual(laidOut(await store.getAnswer(answer.id)), ["body", "end", "intro"], name);
+      version += 1;
+    }
+    const restored = await client.callTool({ name: "restore_revision", arguments: { answerId: answer.id, version: 1, expectedVersion: version } });
+    assert.equal(restored.isError, undefined, text(restored));
+    assert.deepEqual(laidOut(await store.getAnswer(answer.id)), ["body", "end", "intro"]);
+  });
+});
+
 test("preview_change explains arguments that do not fit the previewed tool and saves nothing", async () => {
   await withClient(async (client, store) => {
     const answer = sample();
@@ -109,6 +136,11 @@ test("preview_change explains arguments that do not fit the previewed tool and s
 
     result = await preview({ operation: "rename_answer", sectionId: "intro" });
     assert.equal(result.isError, true);
+
+    // Arguments no tool takes are reported too, not silently dropped.
+    result = await preview({ operation: "delete_text", sectionId: "intro", newTitle: "x" });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /newTitle/);
 
     assert.deepEqual(plain(await store.getAnswer(answer.id)), plain(answer));
   });

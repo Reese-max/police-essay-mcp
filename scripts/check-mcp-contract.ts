@@ -127,6 +127,12 @@ export async function checkMcpContract() {
   // Everything except the declared differences must still equal base.
   assert.match(PAPER_FORMAT_NOTE, /^ The 166 original-paper template .*left-aligned.*bold.*italic/);
   assert.notEqual(ANSWER_SHEET_WIDGET_URI, BASE_WIDGET_URI);
+  // Every reference must have moved to the versioned URI, or normalizing would hide a stale one.
+  for (const view of ["owner", "reader"] as const) {
+    assert.ok(!JSON.stringify(current[view]).includes(JSON.stringify(BASE_WIDGET_URI)), `${view} still references ${BASE_WIDGET_URI}`);
+    assert.ok((current[view].resources as Array<{ uri: string }>).some(resource => resource.uri === ANSWER_SHEET_WIDGET_URI),
+      `${view} does not register ${ANSWER_SHEET_WIDGET_URI}`);
+  }
   const comparable = withBaseWidgetUri(current);
   assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(comparable.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(comparable.reader), ADDED_READ_TOOLS) },
     { owner: withoutOutputSchemas(fixture.contract.owner, REMOVED_TOOLS), reader: withoutOutputSchemas(fixture.contract.reader, REMOVED_TOOLS) });
