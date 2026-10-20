@@ -186,7 +186,8 @@ export async function exportDocx(
   const pages = outputPageCount(report, template, allowOverflow);
   const children: Array<Table | Paragraph> = [];
   for (let page = 1; page <= pages; page += 1) {
-    if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [], ...(template.paperProfile ? { spacing: { before: 0, after: 0, line: 1, lineRule: LineRuleType.EXACT }, run: { size: 2 } } : {}) }));
+    // Keep the break paragraph near zero height so every page's table starts at the top margin.
+    if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [], spacing: { before: 0, after: 0, line: 1, lineRule: LineRuleType.EXACT }, run: { size: 2 } }));
     children.push(makeDocxPageTable(template, pageLines(report, page), page));
   }
 

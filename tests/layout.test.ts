@@ -205,6 +205,10 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     // Only the 166 paper embeds its font; the grid template keeps the plain Word font table.
     const zip = await (await import("jszip")).default.loadAsync(await fs.readFile(docxPath));
     assert.equal(zip.file(/^word\/fonts\//).length, 0);
+    // A full-height page-break paragraph would push the page 2 grid below where page 1 starts.
+    const breaks = (await zip.file("word/document.xml")!.async("string")).match(/<w:p>(?:(?!<\/w:p>).)*<w:pageBreakBefore\/>(?:(?!<\/w:p>).)*<\/w:p>/g);
+    assert.equal(breaks?.length, 1);
+    assert.match(breaks![0], /w:line="1" w:lineRule="exact"/);
     assert.ok((await fs.stat(pdfPath)).size > 1000);
     assert.match(await fs.readFile(textPath, "utf8"), /\f/);
   } finally {
