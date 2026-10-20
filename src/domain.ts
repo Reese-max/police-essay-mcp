@@ -144,6 +144,9 @@ export const answerDocumentSchema = z.object({
   templateId: z.string().min(1),
   title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(),
+  /** Exam the answer belongs to (e.g. 114年警察特考), and its question number there; set with update_answer_info. */
+  exam: z.string().min(1).max(100).optional(),
+  questionNo: z.number().int().min(1).max(20).optional(),
   sections: z.array(answerSectionSchema).max(100),
   /** Planned lines per section id (heading and spacing included); set with set_line_targets. */
   lineTargets: z.record(z.string(), z.number().int().min(1).max(200)).optional(),

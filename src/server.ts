@@ -27,6 +27,7 @@ import {
 import { describeChanges } from "./changes.js";
 import { renumberItems } from "./numbering.js";
 import { describeLines, describeTargetChanges, planLines } from "./planning.js";
+import { answerFileName, describeAnswerList, describeInfoChanges, sortAnswers, type ExportFormat } from "./answer-info.js";
 import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
@@ -144,6 +145,7 @@ const revisionListOutputSchema = z.object({
   olderVersions: z.number().int().nonnegative(),
 });
 
+// Loose: the export tools also return the readable fileName and, when configured, a downloadUrl.
 const exportOutputSchema = z.object({
   answerId: answerIdSchema,
   version: z.number().int().positive(),
@@ -155,7 +157,7 @@ const exportOutputSchema = z.object({
   layout: layoutSummarySchema,
   font: z.string().optional(),
   fontWarning: z.string().optional(),
-});
+}).loose();
 
 const ANSWER_SHEET_UI_META = {
   ui: { resourceUri: ANSWER_SHEET_WIDGET_URI, visibility: ["model", "app"] },
@@ -371,13 +373,18 @@ export const PAPER_FORMAT_NOTE = " The 166 original-paper template (police_infor
 const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "preview_change"]);
 const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
 
-const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。任何修改都可先用 preview_change（operation 填要預覽的工具名稱，其餘參數與該工具相同）把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。搬移區塊用 move_section；插入、刪除或搬移後若手寫的編號（壹、一、（一）、1.）不再連續，用 renumber_items 重新編號。使用者規劃各節行數時用 set_line_targets，之後 check_layout 會回報各節行數、與目標的差距，以及要補滿或壓縮時該從哪一節增減。";
+const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。任何修改都可先用 preview_change（operation 填要預覽的工具名稱，其餘參數與該工具相同）把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。搬移區塊用 move_section；插入、刪除或搬移後若手寫的編號（壹、一、（一）、1.）不再連續，用 renumber_items 重新編號。使用者規劃各節行數時用 set_line_targets，之後 check_layout 會回報各節行數、與目標的差距，以及要補滿或壓縮時該從哪一節增減。使用者要檔案時用 export_answer（預設一次輸出 Word 與 PDF，檔名用考試、題號與標題），回覆裡有下載連結時直接提供給使用者。答案屬於哪場考試、第幾題用 update_answer_info 記錄；想試寫另一個版本時用 duplicate_answer 複製。";
 
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store: EssayStore = new FileStore(), options: { readOnly?: boolean; scopes?: string[] } = {}): McpServer {
+/**
+ * downloadBaseUrl: public https origin of this server; export results then carry a direct download link
+ * (served by the HTTP handler at /downloads/<handle>/<file name>).
+ */
+export function createEssayMcpServer(store: EssayStore = new FileStore(),
+  options: { readOnly?: boolean; scopes?: string[]; downloadBaseUrl?: string } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -450,14 +457,16 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
           "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
           "5. edit_text：改字詞或句子時只送原文片段（find）與新文字（replace），一次可改多處、全部成功才存檔。",
           "6. replace_text / insert_text / delete_text：整段改寫、插入或刪除區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
-          "7. preview_change：任何修改前都可預覽；operation 填要預覽的工具（write_answer、replace_text、format_section、insert_text、delete_text、edit_text），其餘參數與該工具相同，不會存檔。",
+          "7. preview_change：任何修改前都可預覽；operation 填要預覽的工具（write_answer、replace_text、format_section、insert_text、delete_text、edit_text、move_section、renumber_items），其餘參數與該工具相同，不會存檔。",
           "8. list_revisions / restore_revision：查看每個版本改了什麼，必要時還原舊版本；還原會另存新版本。",
           "9. move_section：把區塊移到另一個區塊之前或之後；插入、刪除或搬移後編號不連續時，用 renumber_items 重新編號（標題自成一串，各區塊段落各自一串）。",
           "10. set_line_targets：設定各節目標行數；check_layout 回報各節行數與目標差距，並建議補滿或壓縮時從哪一節增減。",
-          "11. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "12. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
-          "13. fits=true 後才呼叫 export_docx 或 export_pdf。",
-          "14. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
+          "11. update_answer_info：改標題、題目，或記錄考試名稱與題號（list_answers 依考試分組、依題號排序）；duplicate_answer：複製一份答案試寫另一個版本。",
+          "12. export_answer：一次輸出 Word 與 PDF（formats 可選 docx、pdf、txt），檔名用考試、題號與標題；有下載連結時直接給使用者。",
+          "13. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
+          "14. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
+          "15. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "16. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
         ].join("\n"),
       }],
     }),
@@ -546,8 +555,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
-      const answers = await store.listAnswers();
-      return { structuredContent: { answers }, content: textContent(`目前有 ${answers.length} 份已儲存答案。`) };
+      const answers = sortAnswers(await store.listAnswers());
+      return { structuredContent: { answers },
+        content: textContent([`目前有 ${answers.length} 份已儲存答案。`, ...describeAnswerList(answers)].join("\n")) };
     },
   );
 
@@ -942,7 +952,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
           const after = snapshot(revision, template);
           const previous = byVersion.get(revision.version - 1);
           const content = previous && describeChanges(snapshot(previous, template), after, 8);
-          const targets = previous ? describeTargetChanges(previous, revision) : [];
+          const targets = previous ? [...describeInfoChanges(previous, revision), ...describeTargetChanges(previous, revision)] : [];
           // A version that only changed line targets lists just those, without "版面沒有改變。".
           const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
           const changes = revision.version === 1 ? ["建立答案。"] : compared ?? ["（前一版紀錄不存在，無法比較。）"];
@@ -1098,36 +1108,50 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     },
   );
 
-  const exportDocxTool = registerTool(
-    "export_docx",
-    {
-      title: "輸出申論 Word",
-      description: "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
-      inputSchema: {
-        answerId: answerIdSchema,
-        filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
-        allowOverflow: z.boolean().default(false),
+  const exporters = {
+    docx: { run: exportDocx, label: " Word" },
+    pdf: { run: exportPdf, label: " PDF" },
+    txt: { run: exportText, label: "純文字" },
+  } as const;
+
+  /** Exports one format of the given snapshot; the readable file name is used for the link and the download. */
+  async function exportSnapshot(current: AnswerSnapshot, format: ExportFormat, filename: string | undefined, allowOverflow: boolean) {
+    const answerId = current.answer.id;
+    const template = await store.getTemplate(current.answer.templateId);
+    const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, format);
+    return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
+      const output = await exporters[format].run(current.layout, template, outputPath, allowOverflow);
+      const artifact = await store.createExportHandle(output.path, { answerId, answerVersion: current.answer.version, format, temporaryDir });
+      const fileName = answerFileName(current.answer, format);
+      const downloadUrl = options.downloadBaseUrl
+        ? `${options.downloadBaseUrl}/downloads/${artifact.handle}/${encodeURIComponent(fileName)}` : undefined;
+      return { output, artifact, exportUri: `essay://exports/${artifact.handle}`, fileName, downloadUrl };
+    });
+  }
+
+  function registerExportTool(name: "export_docx" | "export_text" | "export_pdf", format: ExportFormat, base: {
+    title: string; description: string; invoking: string; invoked: string;
+  }) {
+    return registerTool(
+      name,
+      {
+        title: base.title,
+        description: base.description,
+        inputSchema: {
+          answerId: answerIdSchema,
+          filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
+          allowOverflow: z.boolean().default(false),
+        },
+        outputSchema: exportOutputSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+        _meta: {
+          "openai/toolInvocation/invoking": base.invoking,
+          "openai/toolInvocation/invoked": base.invoked,
+        },
       },
-      outputSchema: exportOutputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-      _meta: {
-        "openai/toolInvocation/invoking": "產生固定格線 Word…",
-        "openai/toolInvocation/invoked": "Word 已產生。",
-      },
-    },
-    async ({ answerId, filename, allowOverflow }) => {
-      const current = await loadSnapshot(store, answerId);
-      const template = await store.getTemplate(current.answer.templateId);
-      const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
-        const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
-        const artifact = await store.createExportHandle(output.path, {
-          answerId,
-          answerVersion: current.answer.version,
-          format: "docx",
-          temporaryDir,
-        });
-        const exportUri = `essay://exports/${artifact.handle}`;
+      async ({ answerId, filename, allowOverflow }) => {
+        const current = await loadSnapshot(store, answerId);
+        const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, filename, allowOverflow);
         return {
           structuredContent: {
             answerId,
@@ -1136,109 +1160,143 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
             exportUri,
             exportExpiresAt: artifact.expiresAt,
             layout: current.layout,
+            fileName,
+            ...(downloadUrl ? { downloadUrl } : {}),
           },
           content: [
-            ...textContent(`已輸出 Word：${output.path}；${summarizeLayout(current.layout)}`),
-            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
+            ...textContent(`已輸出${exporters[format].label}：${output.path}；${summarizeLayout(current.layout)}`
+              + (downloadUrl ? `\n下載「${fileName}」（24 小時內有效）：${downloadUrl}` : "")),
+            exportArtifactLink(fileName, exportUri, artifact.mimeType),
           ],
         };
-      });
+      },
+    );
+  }
+
+  const exportDocxTool = registerExportTool("export_docx", "docx", {
+    title: "輸出申論 Word",
+    description: "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
+    invoking: "產生固定格線 Word…",
+    invoked: "Word 已產生。",
+  });
+
+  const exportTextTool = registerExportTool("export_text", "txt", {
+    title: "輸出申論純文字",
+    description: "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
+    invoking: "產生固定換行純文字…",
+    invoked: "純文字已產生。",
+  });
+
+  const exportPdfTool = registerExportTool("export_pdf", "pdf", {
+    title: "輸出申論 PDF",
+    description: "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
+    invoking: "產生固定格線 PDF…",
+    invoked: "PDF 已產生。",
+  });
+
+  const exportAnswerTool = registerTool(
+    "export_answer",
+    {
+      title: "一次輸出答案檔案",
+      description: "Use this when the user wants the answer files: Word and PDF by default (formats picks any of docx, pdf, txt), all from the same version and named after the exam, question number and title. Refused unless the answer fits, unless allowOverflow.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        formats: z.array(z.enum(["docx", "pdf", "txt"])).min(1).max(3).default(["docx", "pdf"]),
+        allowOverflow: z.boolean().default(false),
+      },
+      outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(),
+        files: z.array(z.object({ format: z.string(), fileName: z.string(), exportUri: z.string() }).loose()),
+        failed: z.array(z.object({ format: z.string(), error: z.string() })) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "產生答案檔案…",
+        "openai/toolInvocation/invoked": "答案檔案已產生。",
+      },
+    },
+    async ({ answerId, formats, allowOverflow }) => {
+      const current = await loadSnapshot(store, answerId);
+      if (!allowOverflow && !current.layout.fits) {
+        throw new Error(`答案超出版面 ${current.layout.overflowLines} 行，請先壓縮到兩頁內；確定要輸出超出的版本時帶 allowOverflow=true。`);
+      }
+      const files = [];
+      const failed: Array<{ format: ExportFormat; error: string }> = [];
+      // One failing format does not lose the files already made: they are returned with the failures.
+      for (const format of [...new Set(formats)]) {
+        try {
+          const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, undefined, allowOverflow);
+          files.push({ format, fileName, exportUri, exportExpiresAt: artifact.expiresAt, pages: output.pages, mimeType: artifact.mimeType,
+            ...("fontWarning" in output && output.fontWarning ? { fontWarning: output.fontWarning } : {}), ...(downloadUrl ? { downloadUrl } : {}) });
+        } catch (error) {
+          failed.push({ format, error: error instanceof Error ? error.message : String(error) });
+        }
+      }
+      if (files.length === 0) throw new Error(failed.map((item) => `${item.format}：${item.error}`).join("；"));
+      return {
+        structuredContent: { answerId, version: current.answer.version, files, failed },
+        content: [
+          ...textContent(`已輸出第 ${current.answer.version} 版：${files.map((file) => `${file.fileName}（${file.pages} 頁）`).join("、")}；${summarizeLayout(current.layout)}`
+            + files.filter((file) => file.fontWarning).map((file) => `\n${file.fileName}：${file.fontWarning}`).join("")
+            + failed.map((item) => `\n${item.format} 沒有輸出：${item.error}`).join("")
+            + files.filter((file) => file.downloadUrl).map((file) => `\n下載「${file.fileName}」（24 小時內有效）：${file.downloadUrl}`).join("")),
+          ...files.map((file) => exportArtifactLink(file.fileName, file.exportUri, file.mimeType)),
+        ],
+      };
     },
   );
 
-  const exportTextTool = registerTool(
-    "export_text",
+  const updateAnswerInfoTool = registerTool(
+    "update_answer_info",
     {
-      title: "輸出申論純文字",
-      description: "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
+      title: "修改答案資訊",
+      description: "Use this when the user wants to rename an answer or record which exam and question number it belongs to (or the question text); null clears exam, questionNo or question. list_answers groups answers by exam and orders them by question number.",
       inputSchema: {
         answerId: answerIdSchema,
-        filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
-        allowOverflow: z.boolean().default(false),
+        title: z.string().min(1).max(300).optional(),
+        exam: z.string().min(1).max(100).nullable().optional(),
+        questionNo: z.number().int().min(1).max(20).nullable().optional(),
+        question: z.string().max(10_000).nullable().optional(),
+        expectedVersion: expectedVersionSchema,
       },
-      outputSchema: exportOutputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-      _meta: {
-        "openai/toolInvocation/invoking": "產生固定換行純文字…",
-        "openai/toolInvocation/invoked": "純文字已產生。",
-      },
+      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     },
-    async ({ answerId, filename, allowOverflow }) => {
+    async ({ answerId, title, exam, questionNo, question, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const pick = <T>(value: T | null | undefined, current: T | undefined) => value === undefined ? current : value ?? undefined;
+      const updated = hypotheticalAnswer({ ...before.answer, title: title ?? before.answer.title, exam: pick(exam, before.answer.exam),
+        questionNo: pick(questionNo, before.answer.questionNo), question: pick(question, before.answer.question) }, before.answer.sections);
+      const changes = describeInfoChanges(before.answer, updated);
+      if (changes.length === 0) throw new Error("答案資訊與目前相同，沒有需要儲存的變更。");
+      await store.saveAnswer(updated, { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
-      const template = await store.getTemplate(current.answer.templateId);
-      const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
-        const output = await exportText(current.layout, template, outputPath, allowOverflow);
-        const artifact = await store.createExportHandle(output.path, {
-          answerId,
-          answerVersion: current.answer.version,
-          format: "txt",
-          temporaryDir,
-        });
-        const exportUri = `essay://exports/${artifact.handle}`;
-        return {
-          structuredContent: {
-            answerId,
-            version: current.answer.version,
-            ...output,
-            exportUri,
-            exportExpiresAt: artifact.expiresAt,
-            layout: current.layout,
-          },
-          content: [
-            ...textContent(`已輸出純文字：${output.path}；${summarizeLayout(current.layout)}`),
-            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
-          ],
-        };
-      });
+      return {
+        structuredContent: { ...current, changes },
+        content: textContent(`已更新答案資訊（版本 ${before.answer.version} → ${current.answer.version}）` + changes.map((line) => `\n・${line}`).join("")),
+      };
     },
   );
 
-  const exportPdfTool = registerTool(
-    "export_pdf",
+  const duplicateAnswerTool = registerTool(
+    "duplicate_answer",
     {
-      title: "輸出申論 PDF",
-      description: "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
-      inputSchema: {
-        answerId: answerIdSchema,
-        filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
-        allowOverflow: z.boolean().default(false),
-      },
-      outputSchema: exportOutputSchema,
+      title: "複製申論答案",
+      description: "Use this when the user wants to try another version of an answer without touching the original: copies the current content, formats, exam, question number and line targets into a new answer (version 1, own history).",
+      inputSchema: { answerId: answerIdSchema, title: z.string().min(1).max(300).optional() },
+      outputSchema: z.object(compactSnapshotShape),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-      _meta: {
-        "openai/toolInvocation/invoking": "產生固定格線 PDF…",
-        "openai/toolInvocation/invoked": "PDF 已產生。",
-      },
     },
-    async ({ answerId, filename, allowOverflow }) => {
-      const current = await loadSnapshot(store, answerId);
-      const template = await store.getTemplate(current.answer.templateId);
-      const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
-        const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
-        const artifact = await store.createExportHandle(output.path, {
-          answerId,
-          answerVersion: current.answer.version,
-          format: "pdf",
-          temporaryDir,
-        });
-        const exportUri = `essay://exports/${artifact.handle}`;
-        return {
-          structuredContent: {
-            answerId,
-            version: current.answer.version,
-            ...output,
-            exportUri,
-            exportExpiresAt: artifact.expiresAt,
-            layout: current.layout,
-          },
-          content: [
-            ...textContent(`已輸出 PDF：${output.path}；${summarizeLayout(current.layout)}`),
-            exportArtifactLink(artifact.name, exportUri, artifact.mimeType),
-          ],
-        };
-      });
+    async ({ answerId, title }) => {
+      const source = await loadSnapshot(store, answerId);
+      const fresh = createAnswerDocument({ templateId: source.answer.templateId, title: title ?? `${source.answer.title}（副本）`.slice(0, 300) });
+      const copy = answerDocumentSchema.parse({ ...fresh, question: source.answer.question, exam: source.answer.exam,
+        questionNo: source.answer.questionNo, lineTargets: source.answer.lineTargets, sections: source.answer.sections });
+      await store.saveAnswer(copy);
+      const current = await loadSnapshot(store, copy.id);
+      return {
+        structuredContent: current,
+        content: textContent(`已複製「${source.answer.title}」第 ${source.answer.version} 版為新答案「${copy.title}」（${copy.id}）；${summarizeLayout(current.layout)}`),
+      };
     },
   );
 
@@ -1247,7 +1305,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],
-    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
+    ["update_answer_info", updateAnswerInfoTool], ["duplicate_answer", duplicateAnswerTool],
+    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool], ["export_answer", exportAnswerTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }

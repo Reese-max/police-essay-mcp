@@ -120,7 +120,7 @@ test("OAuth HTTP discovery, challenge, independent scopes and principal isolatio
     const scpClient = await connect(base, jwt({ scope: undefined, scp: ["essay.read"] })); clients.push(scpClient);
     assert.equal((await scpClient.listTools()).tools.length, 9);
     const owner = await connect(base, jwt()); clients.push(owner);
-    assert.equal((await owner.listTools()).tools.length, 24);
+    assert.equal((await owner.listTools()).tools.length, 27);
     const missingTemplate = await owner.callTool({ name: "load_exam_paper", arguments: { templateId: "nonexistent" } });
     assert.equal(missingTemplate.isError, true);
     assert.match(JSON.stringify(missingTemplate), /找不到模板/);
@@ -154,10 +154,10 @@ test("OAuth HTTP discovery, challenge, independent scopes and principal isolatio
     await assert.rejects(reader.callTool({ name: "write_answer", arguments: { answerId: id, sections: [] } }));
     await assert.rejects(reader.readResource({ uri }));
     const writer = await connect(base, jwt({ scope: "essay.read essay.write" })); clients.push(writer);
-    assert.equal((await writer.listTools()).tools.length, 21);
+    assert.equal((await writer.listTools()).tools.length, 23);
     await assert.rejects(writer.callTool({ name: "export_text", arguments: { answerId: id } }));
     const exporter = await connect(base, jwt({ scope: "essay.read essay.export" })); clients.push(exporter);
-    assert.equal((await exporter.listTools()).tools.length, 12);
+    assert.equal((await exporter.listTools()).tools.length, 13);
     assert.ok((await exporter.readResource({ uri })).contents.length);
     await assert.rejects(exporter.callTool({ name: "write_answer", arguments: { answerId: id, sections: [] } }));
     const bob = await connect(base, jwt({ sub: "bob" })); clients.push(bob);
@@ -188,11 +188,11 @@ test("default bearer stays owner=26/read=14; both accepts JWT and fixed tokens; 
       const clients: Client[] = [];
       try {
         const owner = await connect(base, "fixed-owner"), reader = await connect(base, "fixed-reader"); clients.push(owner, reader);
-        assert.equal((await owner.listTools()).tools.length, 24); assert.equal((await reader.listTools()).tools.length, 9);
+        assert.equal((await owner.listTools()).tools.length, 27); assert.equal((await reader.listTools()).tools.length, 9);
         assert.equal((await reader.callTool({ name: "create_answer", arguments: { title: "denied" } })).isError, true);
         const missing = await fetch(base + "/mcp"); assert.equal(missing.status, 401);
         if (env === bearerEnv) { assert.equal(missing.headers.get("www-authenticate"), 'Bearer realm="police-essay-mcp"'); await assert.rejects(connect(base, jwt())); }
-        else { const alice = await connect(base, jwt()); clients.push(alice); assert.equal((await alice.listTools()).tools.length, 24); await assert.rejects(connect(base, jwt({ sub: "bob" }))); }
+        else { const alice = await connect(base, jwt()); clients.push(alice); assert.equal((await alice.listTools()).tools.length, 27); await assert.rejects(connect(base, jwt({ sub: "bob" }))); }
       } finally { await Promise.all(clients.map(c => c.close())); await close(server); }
     }
     const oauthOnly = createServer(createHttpHandler(store, { ...oauthEnv, AUTH_MODE: "oauth" }));

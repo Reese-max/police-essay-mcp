@@ -8,7 +8,7 @@ import { createRuntimeStore } from "./runtime-store.js";
 import { initializeRuntimeFont, validateRuntimeFont } from "./runtime-font.js";
 import { createReadinessCheck, isCloudSdkRejection } from "./readiness.js";
 
-import type { EssayStore } from "./storage.js";
+import { isStoreNotFound, type EssayStore } from "./storage.js";
 import { createOAuthVerifier, oauthConfiguration, OAuthError, oauthChallenge,
   protectedResourceMetadata, requireScope, toolScope, type OAuthPrincipal } from "./oauth.js";
 
@@ -24,6 +24,8 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   const allowAnonymousLoopback = env.MCP_ALLOW_ANONYMOUS_LOOPBACK === "true";
   const allowAnonymousRemote = env.MCP_ALLOW_ANONYMOUS_REMOTE === "true";
   const corsOrigin = env.CORS_ORIGIN?.trim();
+  // Public origin of this server; when set, export results carry a direct download link served below.
+  const publicBaseUrl = env.ESSAY_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "") || undefined;
   const checkReadiness = createReadinessCheck(store, { requirePaperFont: env.REQUIRE_PAPER_FONT === "true", fontPath: () => env.ESSAY_MCP_PAPER_FONT });
 
   function isLoopbackHost(value: string): boolean {
@@ -48,6 +50,13 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     }
     if (verifyOAuth && !store.forPrincipal && !/^[a-f0-9]{64}$/.test(env.OAUTH_FILE_OWNER_KEY ?? "")) {
       throw new Error("OAuth FileStore requires OAUTH_FILE_OWNER_KEY for its single owner.");
+    }
+    if (publicBaseUrl) {
+      let url: URL | undefined;
+      try { url = new URL(publicBaseUrl); } catch { /* reported below */ }
+      if (!url || url.origin !== publicBaseUrl || (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname)))) {
+        throw new Error("ESSAY_PUBLIC_BASE_URL 必須是單一明確的 HTTPS origin，或本機 HTTP origin。");
+      }
     }
     if (corsOrigin) {
       let url: URL;
@@ -83,6 +92,43 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   function reject(response: ServerResponse, status: number, error: string): void {
     if (!response.headersSent) response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
     if (!response.writableEnded) response.end(JSON.stringify({ error }));
+  }
+
+  /**
+   * GET /downloads/<handle>/<file name>: the export as an attachment. The random handle is the capability, as with
+   * a signed URL, and expires with the export (24 h); links are only issued to the default (non-OAuth) owner.
+   */
+  async function serveDownload(request: IncomingMessage, response: ServerResponse, handle: string, requestedName: string): Promise<void> {
+    if (originDenied(request)) {
+      reject(response, 403, "Origin not allowed");
+      return;
+    }
+    let artifact: Awaited<ReturnType<EssayStore["readExport"]>>;
+    try {
+      artifact = await store.readExport(handle);
+    } catch (error) {
+      if (isStoreNotFound(error)) {
+        reject(response, 404, "Download not found or expired");
+        return;
+      }
+      throw error;
+    }
+    let name = artifact.name;
+    try {
+      const decoded = decodeURIComponent(requestedName);
+      if (decoded.endsWith(`.${artifact.format}`) && Array.from(decoded).length <= 100 && !/[\\/:*?"<>|\u0000-\u001f\u007f]/u.test(decoded)) name = decoded;
+    } catch { /* keep the stored name */ }
+    response.writeHead(200, {
+      "content-type": artifact.mimeType,
+      "content-length": String(artifact.data.length),
+      // RFC 5987 also wants ' ( ) * ! percent-encoded, which encodeURIComponent leaves alone.
+      "content-disposition": `attachment; filename="${artifact.name}"; filename*=UTF-8''${encodeURIComponent(name)
+        .replace(/['()*!]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)}`,
+      "cache-control": "private, no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
+    });
+    response.end(request.method === "HEAD" ? undefined : artifact.data);
   }
 
   async function readHealth(_request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -173,7 +219,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       ? store.forPrincipal(principal.ownerKey, !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export")) : store;
     const server = createEssayMcpServer(requestStore, principal
       ? { readOnly: !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export"), scopes: principal.scopes }
-      : { readOnly: scope === "read" });
+      : { readOnly: scope === "read", downloadBaseUrl: scope === "owner" ? publicBaseUrl : undefined });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     response.on("close", () => {
       void server.close().catch(() => undefined);
@@ -273,6 +319,16 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       setCorsHeaders(request, response);
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify(protectedResourceMetadata(oauth)));
+      return;
+    }
+    const download = /^\/downloads\/([0-9a-f-]{36})\/([^/]+)$/.exec(requestUrl.pathname);
+    // OAuth principals get no links, so the route is off in pure OAuth mode.
+    if (download && publicBaseUrl && oauth.mode !== "oauth" && (request.method === "GET" || request.method === "HEAD")) {
+      try {
+        await serveDownload(request, response, download[1], download[2]);
+      } catch {
+        reject(response, 500, "Download failed");
+      }
       return;
     }
     setCorsHeaders(request, response);

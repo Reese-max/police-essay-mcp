@@ -383,30 +383,30 @@ export class FileStore implements EssayStore {
     expiresAt: string;
     data: Buffer;
   }> {
-    if (!exportArtifactHandlePattern.test(handle)) throw new Error("Export artifact not found.");
+    if (!exportArtifactHandlePattern.test(handle)) throw new StoreNotFoundError("Export artifact not found.");
 
     const manifestPath = path.join(this.artifactDir, `${handle}.json`);
     try {
       const raw = await fs.readFile(manifestPath, "utf8");
       const value: unknown = JSON.parse(raw);
-      if (!isExportArtifactManifest(value, handle)) throw new Error("Export artifact not found.");
+      if (!isExportArtifactManifest(value, handle)) throw new StoreNotFoundError("Export artifact not found.");
       if (value.expiresAt <= Date.now()) {
         await Promise.all([
           fs.rm(manifestPath, { force: true }).catch(() => undefined),
           fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true }).catch(() => undefined),
         ]);
-        throw new Error("Export artifact not found.");
+        throw new StoreNotFoundError("Export artifact not found.");
       }
       // Never serve bytes of an answer that has been deleted.
       await this.getAnswer(value.answerId);
 
       const artifactRoot = path.resolve(this.artifactDir);
       const artifactPath = path.resolve(artifactRoot, value.artifactFilename);
-      if (!artifactPath.startsWith(artifactRoot + path.sep)) throw new Error("Export artifact not found.");
+      if (!artifactPath.startsWith(artifactRoot + path.sep)) throw new StoreNotFoundError("Export artifact not found.");
       const stats = await fs.lstat(artifactPath);
       const real = await fs.realpath(artifactPath);
       if (!stats.isFile() || !real.startsWith((await fs.realpath(artifactRoot)) + path.sep)) {
-        throw new Error("Export artifact not found.");
+        throw new StoreNotFoundError("Export artifact not found.");
       }
       const data = await fs.readFile(real);
       return {
@@ -419,7 +419,7 @@ export class FileStore implements EssayStore {
         data,
       };
     } catch {
-      throw new Error("Export artifact not found.");
+      throw new StoreNotFoundError("Export artifact not found.");
     }
   }
 

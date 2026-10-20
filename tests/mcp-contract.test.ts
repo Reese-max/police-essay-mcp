@@ -18,7 +18,7 @@ test("contract provenance is reproduced from the actual pinned base code and git
 test("every existing tool has exactly one explicit scope classification; unknown tools require write", async () => {
   const fixture = JSON.parse(await readFile(path.resolve("tests/fixtures/mcp-contract.json"), "utf8"));
   const classified = [...READ_TOOLS, ...WRITE_TOOLS, ...EXPORT_TOOLS];
-  assert.equal(new Set(classified).size, 24);
+  assert.equal(new Set(classified).size, 27);
   assert.deepEqual([...classified].sort(), [...fixture.contract.owner.tools.map((t: { name: string }) => t.name)
     .filter((name: string) => !REMOVED_TOOLS.includes(name)), ...ADDED_TOOLS].sort());
   for (const [names, scope] of [[READ_TOOLS, "essay.read"], [WRITE_TOOLS, "essay.write"], [EXPORT_TOOLS, "essay.export"]] as const)
