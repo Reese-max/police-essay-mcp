@@ -1205,7 +1205,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         allowOverflow: z.boolean().default(false),
       },
       outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(),
-        files: z.array(z.object({ format: z.string(), fileName: z.string(), exportUri: z.string() }).loose()) }),
+        files: z.array(z.object({ format: z.string(), fileName: z.string(), exportUri: z.string() }).loose()),
+        failed: z.array(z.object({ format: z.string(), error: z.string() })) }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "產生答案檔案…",
@@ -1218,15 +1219,24 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         throw new Error(`答案超出版面 ${current.layout.overflowLines} 行，請先壓縮到兩頁內；確定要輸出超出的版本時帶 allowOverflow=true。`);
       }
       const files = [];
+      const failed: Array<{ format: ExportFormat; error: string }> = [];
+      // One failing format does not lose the files already made: they are returned with the failures.
       for (const format of [...new Set(formats)]) {
-        const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, undefined, allowOverflow);
-        files.push({ format, fileName, exportUri, exportExpiresAt: artifact.expiresAt, pages: output.pages, mimeType: artifact.mimeType,
-          ...(downloadUrl ? { downloadUrl } : {}) });
+        try {
+          const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, undefined, allowOverflow);
+          files.push({ format, fileName, exportUri, exportExpiresAt: artifact.expiresAt, pages: output.pages, mimeType: artifact.mimeType,
+            ...("fontWarning" in output && output.fontWarning ? { fontWarning: output.fontWarning } : {}), ...(downloadUrl ? { downloadUrl } : {}) });
+        } catch (error) {
+          failed.push({ format, error: error instanceof Error ? error.message : String(error) });
+        }
       }
+      if (files.length === 0) throw new Error(failed.map((item) => `${item.format}：${item.error}`).join("；"));
       return {
-        structuredContent: { answerId, version: current.answer.version, files },
+        structuredContent: { answerId, version: current.answer.version, files, failed },
         content: [
           ...textContent(`已輸出第 ${current.answer.version} 版：${files.map((file) => `${file.fileName}（${file.pages} 頁）`).join("、")}；${summarizeLayout(current.layout)}`
+            + files.filter((file) => file.fontWarning).map((file) => `\n${file.fileName}：${file.fontWarning}`).join("")
+            + failed.map((item) => `\n${item.format} 沒有輸出：${item.error}`).join("")
             + files.filter((file) => file.downloadUrl).map((file) => `\n下載「${file.fileName}」（24 小時內有效）：${file.downloadUrl}`).join("")),
           ...files.map((file) => exportArtifactLink(file.fileName, file.exportUri, file.mimeType)),
         ],

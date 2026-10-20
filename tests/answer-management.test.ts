@@ -40,6 +40,9 @@ test("readable file names, exam grouping and question order", () => {
   assert.equal(answerFileName({ title: "MIS／IS：比較*", exam: "114年警察特考", questionNo: 2 }, "docx"), "114年警察特考_第2題_MIS／IS：比較_.docx");
   assert.equal(answerFileName({ title: "a/b\\c", exam: undefined, questionNo: undefined }, "pdf"), "a_b_c.pdf");
   assert.equal(answerFileName({ title: "x".repeat(200), exam: undefined, questionNo: undefined }, "txt"), `${"x".repeat(80)}.txt`);
+  assert.equal(answerFileName({ title: "CON", exam: undefined, questionNo: undefined }, "pdf"), "CON_.pdf");
+  assert.equal(answerFileName({ title: "com1", exam: undefined, questionNo: undefined }, "pdf"), "com1_.pdf");
+  assert.equal(answerFileName({ title: "Console", exam: undefined, questionNo: undefined }, "pdf"), "Console.pdf");
   const answers = [
     { id: "ans_c", title: "未分類", version: 1, exam: undefined, questionNo: undefined },
     { id: "ans_b", title: "第二題", version: 3, exam: "114年警察特考", questionNo: 2 },
@@ -139,7 +142,7 @@ async function rpc(base: string, name: string, args: Record<string, unknown>) {
 
 test("the download link serves the export as an attachment with its readable name", async () => {
   await withStore(async (store) => {
-    const answer = { ...sample(), exam: "114年警察特考", questionNo: 1 } as AnswerDocument;
+    const answer = { ...sample("O'Brien (草稿)"), exam: "114年警察特考", questionNo: 1 } as AnswerDocument;
     await store.saveAnswer(answer);
     const server = createServer();
     const base = await listen(server);
@@ -150,7 +153,8 @@ test("the download link serves the export as an attachment with its readable nam
       const download = await fetch(file.downloadUrl);
       assert.equal(download.status, 200);
       const disposition = download.headers.get("content-disposition") ?? "";
-      assert.ok(disposition.startsWith('attachment; filename="') && disposition.endsWith(`.txt"; filename*=UTF-8''${encodeURIComponent(file.fileName)}`), disposition);
+      assert.ok(disposition.startsWith('attachment; filename="') && disposition.endsWith(`.txt"; filename*=UTF-8''${encodeURIComponent(file.fileName).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}`), disposition);
+      assert.ok(disposition.includes("%27Brien%20%28") && !/filename\*=[^;]*['()]/.test(disposition.replace("UTF-8''", "")), disposition);
       assert.equal(download.headers.get("cache-control"), "private, no-store");
       assert.match(await download.text(), /政府建置資訊系統應以業務需求為本/);
       const head = await fetch(file.downloadUrl, { method: "HEAD" });
@@ -178,4 +182,49 @@ test("the download link serves the export as an attachment with its readable nam
   });
   assert.throws(() => createHttpHandler(new FileStore({ templateDir }), { MCP_ALLOW_ANONYMOUS_LOOPBACK: "true", ESSAY_PUBLIC_BASE_URL: "http://example.test" }),
     /ESSAY_PUBLIC_BASE_URL/);
+});
+
+test("export_answer keeps the files already made when one format fails, and passes on font warnings", async () => {
+  await withStore(async (_store, root) => {
+    class FailingPdfStore extends FileStore {
+      override async createExportHandle(...args: Parameters<FileStore["createExportHandle"]>) {
+        if (args[1].format === "pdf") throw new Error("儲存 PDF 失敗（測試）");
+        return super.createExportHandle(...args);
+      }
+    }
+    const store = new FailingPdfStore({ templateDir, answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
+    const answer = sample();
+    await store.saveAnswer(answer);
+    const client = await connect(store);
+    try {
+      const result = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["txt", "pdf"] } });
+      assert.equal(result.isError, undefined, text(result));
+      const content = result.structuredContent as { files: Array<{ format: string }>; failed: Array<{ format: string; error: string }> };
+      assert.deepEqual(content.files.map((file) => file.format), ["txt"]);
+      assert.deepEqual(content.failed, [{ format: "pdf", error: "儲存 PDF 失敗（測試）" }]);
+      assert.match(text(result), /pdf 沒有輸出：儲存 PDF 失敗（測試）/);
+      const none = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["pdf"] } });
+      assert.equal(none.isError, true);
+      assert.match(text(none), /pdf：儲存 PDF 失敗（測試）/);
+    } finally { await client.close(); }
+  });
+  await withStore(async (store) => {
+    // An italic paragraph without an italic font (or no CJK font at all) makes the PDF exporter warn.
+    const previous = process.env.ESSAY_MCP_PDF_ITALIC_FONT;
+    delete process.env.ESSAY_MCP_PDF_ITALIC_FONT;
+    const answer = createAnswerDocument({ templateId: "police_information_essay", title: "Italic",
+      sections: [{ id: "a", paragraphs: [{ text: "Italic text.", format: { italic: true } }] }] });
+    await store.saveAnswer(answer);
+    const client = await connect(store);
+    try {
+      const result = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["pdf"] } });
+      assert.equal(result.isError, undefined, text(result));
+      const file = (result.structuredContent as { files: Array<{ fontWarning?: string }> }).files[0];
+      assert.ok(file.fontWarning, JSON.stringify(file));
+      assert.ok(text(result).includes(file.fontWarning!));
+    } finally {
+      await client.close();
+      if (previous !== undefined) process.env.ESSAY_MCP_PDF_ITALIC_FONT = previous;
+    }
+  });
 });

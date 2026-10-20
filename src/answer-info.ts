@@ -10,7 +10,9 @@ export function answerFileName(answer: Pick<AnswerDocument, "title" | "exam" | "
     .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/gu, "_")
     .replace(/\s+/gu, " ")
     .trim();
-  return `${Array.from(base || "申論答案").slice(0, 80).join("")}.${format}`;
+  const name = Array.from(base || "申論答案").slice(0, 80).join("");
+  // Windows refuses device names such as CON or COM1 whatever the extension.
+  return `${/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/iu.test(name) ? `${name}_` : name}.${format}`;
 }
 
 /** Orders answers by exam, then question number, then title; answers without an exam come last. */
