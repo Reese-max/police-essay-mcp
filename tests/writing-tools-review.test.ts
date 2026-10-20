@@ -56,6 +56,12 @@ test("titles that start with a numeral word stay items; prose numbers only skip 
   assert.deepEqual(inserted.skipped, []);
 });
 
+test("indented prose numbers are recognised too", () => {
+  const { sections, skipped } = renumberItems(answer([{ id: "a", text: "  二、三級機關應依規定辦理。\n一、組織。\n三、預算。" }]).sections);
+  assert.deepEqual(texts(sections[0]), ["  二、三級機關應依規定辦理。", "一、組織。", "二、預算。"]);
+  assert.equal(skipped.length, 1);
+});
+
 test("arabic markers of any length are renumbered", () => {
   const { sections } = renumberItems(answer([{ id: "a", text: "9999. 甲\n10000. 乙\n3. 丙" }]).sections);
   assert.deepEqual(texts(sections[0]), ["1. 甲", "2. 乙", "3. 丙"]);

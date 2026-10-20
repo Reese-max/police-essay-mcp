@@ -22,7 +22,7 @@ function arabic(value: number, original: string): string {
 const NUMERALS = "一二三四五六七八九十壹貳參肆伍陸柒捌玖拾";
 /** Measure words that make "二、三級" or "一、二年" read as numbers in the prose rather than a marker and a title. */
 const MEASURES = "級年月日天週周季個種項次位名成倍人層類款條審期階段等線屆代套份件頁行歲";
-const PROSE_NUMBERS = new RegExp(`^\s*[${NUMERALS}]+、[${NUMERALS}]+[${MEASURES}]`, "u");
+const PROSE_NUMBERS = new RegExp(String.raw`^\s*[${NUMERALS}]+、[${NUMERALS}]+[${MEASURES}]`, "u");
 
 /**
  * Item markers from the highest level to the lowest, as in Taiwanese exam answers: 壹、 一、 （一） 1. （1）
