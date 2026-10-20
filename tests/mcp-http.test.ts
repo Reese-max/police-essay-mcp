@@ -226,11 +226,11 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     const renderTool = tools.tools.find((tool) => tool.name === "render_answer_sheet");
     assert.ok(renderTool, "missing tool render_answer_sheet");
     const renderMeta = renderTool._meta as { ui?: { resourceUri?: string } } | undefined;
-    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet-v2.html");
+    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet-v3.html");
 
     const resources = await client.listResources();
-    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet-v2.html"));
-    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet-v2.html" });
+    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet-v3.html"));
+    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet-v3.html" });
     const widgetText = String(widgetResource.contents.find((content) => "text" in content)?.text ?? "");
     assert.match(widgetText, /警察資訊三等/);
     assert.match(widgetText, /tools\/call/);

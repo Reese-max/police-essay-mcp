@@ -153,6 +153,8 @@ test("the download link serves the export as an attachment with its readable nam
     try {
       const exported = await rpc(base, "export_answer", { answerId: answer.id, formats: ["txt"] });
       const file = exported.structuredContent.files[0];
+      // The link itself encodes ' ( ) too, so link detectors do not cut it short.
+      assert.match(file.downloadUrl, /O%27Brien%20%28%E8%8D%89%E7%A8%BF%29\.txt$/);
       const download = await fetch(file.downloadUrl);
       assert.equal(download.status, 200);
       const disposition = download.headers.get("content-disposition") ?? "";

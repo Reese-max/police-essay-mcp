@@ -9,6 +9,7 @@ import { initializeRuntimeFont, validateRuntimeFont } from "./runtime-font.js";
 import { createReadinessCheck, isCloudSdkRejection } from "./readiness.js";
 
 import { isStoreNotFound, type EssayStore } from "./storage.js";
+import { encodeStrict } from "./answer-info.js";
 import { createOAuthVerifier, oauthConfiguration, OAuthError, oauthChallenge,
   protectedResourceMetadata, requireScope, toolScope, type OAuthPrincipal } from "./oauth.js";
 
@@ -121,9 +122,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     response.writeHead(200, {
       "content-type": artifact.mimeType,
       "content-length": String(artifact.data.length),
-      // RFC 5987 also wants ' ( ) * ! percent-encoded, which encodeURIComponent leaves alone.
-      "content-disposition": `attachment; filename="${artifact.name}"; filename*=UTF-8''${encodeURIComponent(name)
-        .replace(/['()*!]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)}`,
+      "content-disposition": `attachment; filename="${artifact.name}"; filename*=UTF-8''${encodeStrict(name)}`,
       "cache-control": "private, no-store",
       "x-content-type-options": "nosniff",
       "referrer-policy": "no-referrer",
