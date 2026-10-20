@@ -142,15 +142,11 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `list_answers` | 列出已儲存答案 | 否 |
 | `create_answer` | 建立答案文件，可附初始 sections | 是 |
 | `read_answer` | 讀完整 sections、版本、逐行結果與版面報告 | 否 |
-| `preview_write_answer` | 預覽完整答案修改、差異與版面結果，不寫入 | 否 |
+| `preview_change` | 預覽任一修改工具（`operation` 填工具名稱，其餘參數與該工具相同）的差異與版面結果，不寫入 | 否 |
 | `write_answer` | 以完整 sections 覆寫答案後重新計算 | 是 |
-| `preview_replace_text` | 預覽指定 section 的文字修改與版面結果，不寫入 | 否 |
 | `replace_text` | 替換指定 `sectionId`，保留其他段落 | 是 |
-| `preview_format_section` | 預覽格式修改與版面結果，不寫入 | 否 |
 | `format_section` | 不改文字，只更新 section 或指定 paragraphs 的格式 | 是 |
-| `preview_insert_text` | 預覽插入 section 與版面結果，不寫入 | 否 |
 | `insert_text` | 在指定段落後插入新 section | 是 |
-| `preview_delete_text` | 預覽刪除 section 與版面結果，不寫入 | 否 |
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
@@ -161,7 +157,7 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 
 所有修改工具接受可選 `expectedVersion`。寫入成功後 `version + 1`，並回傳更新後的 authoritative snapshot。
 
-所有 preview 工具都回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
+`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
 
 ## 6. Resources 與 Prompts
 

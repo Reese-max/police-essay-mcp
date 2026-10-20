@@ -72,7 +72,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 建立文件，或 `write_answer` 寫入 sections。
 3. `read_answer` / `check_layout` 讀取真實行數。
-4. 修改前先用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 查看差異。
+4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text` 或 `edit_text`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。

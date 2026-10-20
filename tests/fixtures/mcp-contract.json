@@ -29315,11 +29315,19 @@
       "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
     },
     {
-      "path": "*.tools[edit_text,list_revisions,preview_edit_text,restore_revision]",
-      "reason": "New fine-grained editing and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)."
+      "path": "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
+      "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)."
     },
     {
-      "path": "*.tools[create_answer,format_section,insert_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer,replace_text,write_answer].description",
+      "path": "*.tools[preview_delete_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer]",
+      "reason": "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments."
+    },
+    {
+      "path": "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
+      "reason": "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing."
+    },
+    {
+      "path": "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
       "reason": "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix."
     }
   ]

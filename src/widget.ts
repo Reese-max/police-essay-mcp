@@ -1,4 +1,5 @@
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet.html";
+// Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v2.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
@@ -376,7 +377,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
             args.paragraphs = carryFormats(section.paragraphs, textInput.value.split("\n"));
             delete args.newText;
           }
-          const result = await callTool("preview_replace_text", args);
+          const result = await callTool("preview_change", { operation: "replace_text", ...args });
           const preview = result?.structuredContent || result?.result?.structuredContent;
           if (epoch !== editEpoch) return;
           if (!preview) throw new Error("工具沒有回傳預覽資料。");
