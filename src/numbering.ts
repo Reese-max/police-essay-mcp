@@ -19,19 +19,22 @@ function arabic(value: number, original: string): string {
   return /[０-９]/.test(original) ? text.replace(/[0-9]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) + 0xfee0)) : text;
 }
 
+const NUMERALS = "一二三四五六七八九十壹貳參肆伍陸柒捌玖拾";
+/** Measure words that make "二、三級" or "一、二年" read as numbers in the prose rather than a marker and a title. */
+const MEASURES = "級年月日天週周季個種項次位名成倍人層類款條審期階段等線屆代套份件頁行歲";
+const PROSE_NUMBERS = new RegExp(`^\s*[${NUMERALS}]+、[${NUMERALS}]+[${MEASURES}]`, "u");
+
 /**
  * Item markers from the highest level to the lowest, as in Taiwanese exam answers: 壹、 一、 （一） 1. （1）
- * A numeral and 、 directly followed by another numeral ("二、三級機關", "1、2 年") is a list of numbers in the
- * prose, not a marker; `ambiguous` catches the numeral-led cases so they are left alone and reported.
+ * Arabic markers never match numbers in the prose ("1.5 億", "1、2 年"); `prose` flags the Chinese openings that may be
+ * such numbers ("二、三級機關") so they can be told apart from titles like "二、三權分立".
  */
-const LEVELS: Array<{ pattern: RegExp; ambiguous?: RegExp; number: (value: number, original: string) => string | undefined }> = [
-  { pattern: /^(\s*)([壹貳參肆伍陸柒捌玖拾]+)(、)/u, ambiguous: /^\s*[壹貳參肆伍陸柒捌玖拾]+、[壹貳參肆伍陸柒捌玖拾一二三四五六七八九十]/u,
-    number: (value) => spelled(value, FORMAL_DIGITS, "拾") },
-  { pattern: /^(\s*)([一二三四五六七八九十]+)(、)/u, ambiguous: /^\s*[一二三四五六七八九十]+、[一二三四五六七八九十壹貳參肆伍陸柒捌玖拾]/u,
-    number: (value) => spelled(value, CHINESE_DIGITS, "十") },
+const LEVELS: Array<{ pattern: RegExp; prose?: RegExp; number: (value: number, original: string) => string | undefined }> = [
+  { pattern: /^(\s*)([壹貳參肆伍陸柒捌玖拾]+)(、)/u, prose: PROSE_NUMBERS, number: (value) => spelled(value, FORMAL_DIGITS, "拾") },
+  { pattern: /^(\s*)([一二三四五六七八九十]+)(、)/u, prose: PROSE_NUMBERS, number: (value) => spelled(value, CHINESE_DIGITS, "十") },
   { pattern: /^(\s*[（(])([一二三四五六七八九十]+)([）)])/u, number: (value) => spelled(value, CHINESE_DIGITS, "十") },
-  { pattern: /^(\s*)([0-9０-９]{1,4})([.．、](?![0-9０-９]))/u, number: arabic },
-  { pattern: /^(\s*[（(])([0-9０-９]{1,4})([）)])/u, number: arabic },
+  { pattern: /^(\s*)([0-9０-９]+)([.．、](?![0-9０-９]))/u, number: arabic },
+  { pattern: /^(\s*[（(])([0-9０-９]+)([）)])/u, number: arabic },
 ];
 
 /** Numbers one sequence of texts: each level counts up and restarts under a higher-level item. */
@@ -42,14 +45,15 @@ function renumberSequence(texts: string[], where: (index: number) => string): { 
   const result = texts.map((text, index) => {
     const level = LEVELS.findIndex(({ pattern }) => pattern.test(text));
     if (level < 0) return text;
-    if (LEVELS[level].ambiguous?.test(text)) {
+    const [, lead, original, tail] = LEVELS[level].pattern.exec(text)!;
+    const number = LEVELS[level].number(counters[level] + 1, original);
+    // Possibly prose: counted as an item only when it already carries the next number, otherwise left alone.
+    if (LEVELS[level].prose?.test(text) && number !== original) {
       skipped.push(`${where(index)}「${Array.from(text.trim()).slice(0, 12).join("")}…」`);
       return text;
     }
     counters[level] += 1;
     counters.fill(0, level + 1);
-    const [, lead, original, tail] = LEVELS[level].pattern.exec(text)!;
-    const number = LEVELS[level].number(counters[level], original);
     if (number === undefined) throw new Error(`${where(index)}是同一層的第 ${counters[level]} 項，超過中文數字編號的上限 ${MAX_SPELLED}；沒有修改任何內容。`);
     const renumbered = `${lead}${number}${tail}${text.slice(lead.length + original.length + tail.length)}`;
     if (renumbered !== text) changed += 1;

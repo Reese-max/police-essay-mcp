@@ -283,9 +283,15 @@ function numberingHint(sections: AnswerSection[]): string {
   try {
     renumberItems(sections);
     return "\n編號已不連續；可先用 preview_change（operation: renumber_items）預覽，再呼叫 renumber_items 重新編號。";
-  } catch {
-    return "";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.startsWith("編號已經是連續的") ? "" : `\n編號已不連續，但無法自動重新編號：${message}`;
   }
+}
+
+/** The renumber_items note about openings that were left alone because they read as numbers in the prose. */
+function skippedNote(skipped: string[]): string {
+  return skipped.length ? `未計入、也未修改（開頭的數字像是內文，例如「二、三級」，請確認）：${skipped.join("、")}` : "";
 }
 
 /** Checks preview_change arguments against the previewed tool, naming the fields that tool expects. */
@@ -300,7 +306,15 @@ function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperatio
 }
 
 /** The sections the previewed write tool would save. */
-function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): AnswerSection[] {
+function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): { sections: AnswerSection[]; notes: string[] } {
+  if (operation === "renumber_items") {
+    const { sections, skipped } = renumberItems(answer.sections, previewArguments(operation, previewArgumentSchemas.renumber_items, args).sectionId);
+    return { sections, notes: skipped.length ? [skippedNote(skipped)] : [] };
+  }
+  return { sections: proposedSections(answer, operation, args), notes: [] };
+}
+
+function proposedSections(answer: AnswerDocument, operation: Exclude<PreviewOperation, "renumber_items">, args: Record<string, unknown>): AnswerSection[] {
   const schemas = previewArgumentSchemas;
   switch (operation) {
     case "write_answer": return writtenSections(previewArguments(operation, schemas.write_answer, args).sections);
@@ -322,7 +336,6 @@ function previewedSections(answer: AnswerDocument, operation: PreviewOperation, 
       const value = previewArguments(operation, schemas.move_section, args);
       return movedSections(answer, value.sectionId, value);
     }
-    case "renumber_items": return renumberItems(answer.sections, previewArguments(operation, schemas.renumber_items, args).sectionId).sections;
   }
 }
 
@@ -779,8 +792,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     async ({ answerId, operation, expectedVersion, ...args }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
-      const sections = previewedSections(before.answer, operation, args);
+      const { sections, notes } = previewedSections(before.answer, operation, args);
       const preview = await makeChangePreview(store, operation, before, hypotheticalAnswer(before.answer, sections));
+      preview.summary.push(...notes);
       return { structuredContent: preview, content: textContent(preview.summary.join("；")) };
     },
   );
@@ -844,7 +858,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       title: "重新編號",
       description: "Use this after items or sections were inserted, deleted or moved and their written numbers (壹、 一、 （一） 1. （1）) are no longer consecutive. Headings are numbered as one list and each section's paragraphs as their own, each level restarting under a higher one; sectionId limits it to that section's paragraphs. Preview with preview_change first.",
       inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
-      outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), changes: z.array(z.string()) }),
+      outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), skipped: z.array(z.string()), changes: z.array(z.string()) }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     },
     async ({ answerId, sectionId, expectedVersion }) => {
@@ -858,7 +872,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         structuredContent: { ...current, renumbered, skipped, changes },
         content: textContent(`已重新編號 ${renumbered} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
           + changes.map((line) => `\n・${line}`).join("")
-          + (skipped.length ? `\n未計入、也未修改（開頭的數字像是內文，例如「二、三級」）：${skipped.join("、")}` : "")),
+          + (skipped.length ? `\n${skippedNote(skipped)}` : "")),
       };
     },
   );

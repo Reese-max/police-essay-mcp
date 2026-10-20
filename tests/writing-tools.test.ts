@@ -26,6 +26,8 @@ async function withClient(run: (client: Client, store: FileStore) => Promise<voi
   const client = new Client({ name: "writing-tools-test", version: "1" });
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  // Listing the tools makes the client check every structuredContent against its outputSchema.
+  await client.listTools();
   try { await run(client, store); }
   finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
 }
@@ -150,4 +152,22 @@ test("the read-only server lists none of the new writing tools", async () => {
     for (const name of ["move_section", "renumber_items", "set_line_targets"]) assert.ok(!names.includes(name), name);
     assert.ok(names.includes("check_layout") && names.includes("preview_change"));
   } finally { await client.close(); }
+});
+
+test("renumbering notes reach the preview, and an impossible renumbering is still reported after an edit", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([{ id: "a", heading: "一、說明", text: "二、三級機關應依規定辦理。\n一、組織。\n三、預算。" }]);
+    await store.saveAnswer(answer);
+    const preview = await client.callTool({ name: "preview_change", arguments: { answerId: answer.id, operation: "renumber_items", expectedVersion: 1 } });
+    assert.equal(preview.isError, undefined, text(preview));
+    assert.ok((preview.structuredContent as { summary: string[] }).summary.some((line) => /未計入.*「一、說明」第1段/.test(line)));
+    const renumbered = await client.callTool({ name: "renumber_items", arguments: { answerId: answer.id, expectedVersion: 1 } });
+    assert.equal(renumbered.isError, undefined, text(renumbered));
+    assert.deepEqual((renumbered.structuredContent as { skipped: string[] }).skipped.length, 1);
+
+    const inserted = await client.callTool({ name: "insert_text", arguments: { answerId: answer.id, expectedVersion: 2,
+      section: { id: "long", text: Array.from({ length: 100 }, () => "（一）項目").join("\n") } } });
+    assert.equal(inserted.isError, undefined, text(inserted));
+    assert.match(text(inserted), /無法自動重新編號：.*第 100 項/);
+  });
 });

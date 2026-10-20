@@ -45,3 +45,18 @@ test("a target that alone exceeds the sheet is reported even when other sections
   const plan = planLines(doc, layoutSections(grid, doc.sections));
   assert.ok(plan.notes.some((note) => /各節目標合計 46 行（未設定目標的區塊以目前行數計），超過答案紙容量 44 行/.test(note)), plan.notes.join("|"));
 });
+
+test("titles that start with a numeral word stay items; prose numbers only skip when out of sequence", () => {
+  for (const text of ["一、前言\n二、三權分立\n三、結論", "壹、參考資料\n貳、結論", "一、組織\n二、三級機關之職權\n三、預算"]) {
+    assert.throws(() => renumberItems(answer([{ id: "a", text }]).sections), (error: Error) => /^編號已經是連續的/.test(error.message)
+      && !error.message.includes("未計入"), text);
+  }
+  const inserted = renumberItems(answer([{ id: "a", text: "一、前言\n一、新增\n二、三權分立\n三、結論" }]).sections);
+  assert.deepEqual(texts(inserted.sections[0]), ["一、前言", "二、新增", "三、三權分立", "四、結論"]);
+  assert.deepEqual(inserted.skipped, []);
+});
+
+test("arabic markers of any length are renumbered", () => {
+  const { sections } = renumberItems(answer([{ id: "a", text: "9999. 甲\n10000. 乙\n3. 丙" }]).sections);
+  assert.deepEqual(texts(sections[0]), ["1. 甲", "2. 乙", "3. 丙"]);
+});
