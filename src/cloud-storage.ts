@@ -134,7 +134,9 @@ export class CloudStore implements EssayStore {
   async deleteAnswer(id: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
     this.requireWriter();
     const ref = this.answerRef(id);
-    const artifacts = this.options.firestore.collection(this.userPath + "/artifacts").where("answerId", "==", safeId(id));
+    // infra/firestore.indexes.json disables the artifacts.answerId index, so read the owner's
+    // (small) manifest collection by document name and match the answer in memory.
+    const artifacts = this.options.firestore.collection(this.userPath + "/artifacts");
     // Firestore has no 500-write cap per transaction, so the answer, its whole revision
     // history and its export manifests disappear together or not at all. Revisions are
     // read as bare references (empty field mask) to keep large histories out of memory.
@@ -145,7 +147,7 @@ export class CloudStore implements EssayStore {
         throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + answer.version + ". Read the answer again before deleting.");
       }
       const revisions = (await transaction.get(ref.collection("revisions").select())).docs;
-      const manifests = (await transaction.get(artifacts)).docs;
+      const manifests = (await transaction.get(artifacts)).docs.filter(doc => doc.data().answerId === answer.id);
       for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
       transaction.delete(ref);
       return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
