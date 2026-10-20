@@ -19,15 +19,18 @@ export function planLines(answer: AnswerDocument, layout: LayoutReport): { secti
   const targets = answer.lineTargets ?? {};
   const sections = [...answer.sections].sort((a, b) => a.order - b.order).map((section): SectionLines => {
     const lines = counts.get(section.id) ?? 0;
-    const targetLines = targets[section.id];
+    // Own keys only: a section id such as "constructor" must not read Object.prototype.
+    const targetLines = Object.hasOwn(targets, section.id) ? targets[section.id] : undefined;
     return { sectionId: section.id, heading: section.heading, lines,
       ...(targetLines === undefined ? {} : { targetLines, overTarget: lines - targetLines }) };
   });
   const notes: string[] = [];
   const targeted = sections.filter((section) => section.targetLines !== undefined);
-  const plannedTotal = targeted.reduce((sum, section) => sum + section.targetLines!, 0);
-  if (targeted.length === sections.length && plannedTotal > layout.capacity) {
-    notes.push(`各節目標合計 ${plannedTotal} 行，超過答案紙容量 ${layout.capacity} 行；請下修目標。`);
+  // Sections without a target count with the lines they use now.
+  const plannedTotal = sections.reduce((sum, section) => sum + (section.targetLines ?? section.lines), 0);
+  if (targeted.length && plannedTotal > layout.capacity) {
+    notes.push(`各節目標合計 ${plannedTotal} 行${targeted.length < sections.length ? "（未設定目標的區塊以目前行數計）" : ""}，`
+      + `超過答案紙容量 ${layout.capacity} 行；請下修目標。`);
   }
   const label = (section: SectionLines) => name({ id: section.sectionId, heading: section.heading });
   const over = targeted.filter((section) => section.overTarget! > 0).sort((a, b) => b.overTarget! - a.overTarget!);
@@ -57,13 +60,14 @@ export function describeLines(sections: SectionLines[]): string {
 
 /** What changed in the line targets between two versions. */
 export function describeTargetChanges(before: AnswerDocument, after: AnswerDocument): string[] {
-  const left = before.lineTargets ?? {};
-  const right = after.lineTargets ?? {};
-  return [...new Set([...Object.keys(left), ...Object.keys(right)])]
-    .filter((id) => left[id] !== right[id])
+  const own = (targets: Record<string, number> | undefined, id: string) => targets && Object.hasOwn(targets, id) ? targets[id] : undefined;
+  const left = before.lineTargets;
+  const right = after.lineTargets;
+  return [...new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})])]
+    .filter((id) => own(left, id) !== own(right, id))
     .map((id) => {
       const section = after.sections.find((item) => item.id === id) ?? before.sections.find((item) => item.id === id);
       const show = (value: number | undefined) => value === undefined ? "未設定" : `${value} 行`;
-      return `${name(section ?? { id })}目標行數：${show(left[id])}→${show(right[id])}`;
+      return `${name(section ?? { id })}目標行數：${show(own(left, id))}→${show(own(right, id))}`;
     });
 }

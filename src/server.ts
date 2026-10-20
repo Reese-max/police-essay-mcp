@@ -850,14 +850,15 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     async ({ answerId, sectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
-      const { sections, renumbered } = renumberItems(before.answer.sections, sectionId);
+      const { sections, renumbered, skipped } = renumberItems(before.answer.sections, sectionId);
       await store.saveAnswer(hypotheticalAnswer(before.answer, sections), { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
       const changes = describeChanges(before, current);
       return {
-        structuredContent: { ...current, renumbered, changes },
+        structuredContent: { ...current, renumbered, skipped, changes },
         content: textContent(`已重新編號 ${renumbered} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
-          + changes.map((line) => `\n・${line}`).join("")),
+          + changes.map((line) => `\n・${line}`).join("")
+          + (skipped.length ? `\n未計入、也未修改（開頭的數字像是內文，例如「二、三級」）：${skipped.join("、")}` : "")),
       };
     },
   );
@@ -926,9 +927,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         .map((revision) => {
           const after = snapshot(revision, template);
           const previous = byVersion.get(revision.version - 1);
-          const compared = previous && [...describeChanges(snapshot(previous, template), after, 8), ...describeTargetChanges(previous, revision)];
-          const changes = revision.version === 1 ? ["建立答案。"]
-            : !compared ? ["（前一版紀錄不存在，無法比較。）"] : compared.length ? compared : ["內容沒有變更。"];
+          const content = previous && describeChanges(snapshot(previous, template), after, 8);
+          const targets = previous ? describeTargetChanges(previous, revision) : [];
+          // A version that only changed line targets lists just those, without "版面沒有改變。".
+          const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
+          const changes = revision.version === 1 ? ["建立答案。"] : compared ?? ["（前一版紀錄不存在，無法比較。）"];
           return { version: revision.version, updatedAt: revision.updatedAt, totalLines: after.layout.totalLines, fits: after.layout.fits, changes };
         });
       const olderVersions = Math.max(0, current.version - limit);

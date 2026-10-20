@@ -124,7 +124,8 @@ test("line targets drive check_layout's per-section report and survive later edi
     assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, { intro: 3, body: 2 });
     result = await client.callTool({ name: "list_revisions", arguments: { answerId: answer.id } });
     const revisions = (result.structuredContent as { revisions: Array<{ version: number; changes: string[] }> }).revisions;
-    assert.ok(revisions.find((revision) => revision.version === 2)!.changes.some((line) => line.includes("目標行數")));
+    assert.deepEqual(revisions.find((revision) => revision.version === 2)!.changes,
+      ["「一、前言」目標行數：未設定→3 行", "「二、本文」目標行數：未設定→2 行"]);
 
     result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 3, targets: [{ sectionId: "intro", lines: null }] } });
     assert.equal(result.isError, undefined, text(result));
