@@ -25,6 +25,8 @@ import {
   textEditSchema,
 } from "./domain.js";
 import { describeChanges } from "./changes.js";
+import { renumberItems } from "./numbering.js";
+import { describeLines, describeTargetChanges, planLines } from "./planning.js";
 import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
@@ -53,11 +55,12 @@ const snapshotOutputSchema = z.object({
   layout: layoutSummarySchema,
 });
 
+// Loose: check_layout also returns the lines each section uses against its target.
 const layoutOutputSchema = z.object({
   answerId: answerIdSchema,
   version: z.number().int().positive(),
   layout: layoutSummarySchema,
-});
+}).loose();
 
 const sectionOutputSchema = z.object({
   section: sectionSummarySchema,
@@ -93,7 +96,8 @@ const formattingPayloadSchema = z.object({
 });
 
 /** The write tools preview_change can preview; their own argument names are reused unchanged. */
-const PREVIEW_OPERATIONS = ["write_answer", "replace_text", "format_section", "insert_text", "delete_text", "edit_text"] as const;
+const PREVIEW_OPERATIONS = ["write_answer", "replace_text", "format_section", "insert_text", "delete_text", "edit_text",
+  "move_section", "renumber_items"] as const;
 type PreviewOperation = typeof PREVIEW_OPERATIONS[number];
 
 const sectionIdSchema = z.string().min(1);
@@ -107,6 +111,8 @@ const previewArgumentSchemas = {
   insert_text: z.object({ afterSectionId: sectionIdSchema.optional(), section: answerSectionInputSchema }),
   delete_text: z.object({ sectionId: sectionIdSchema }),
   edit_text: z.object({ edits: textEditsSchema }),
+  move_section: z.object({ sectionId: sectionIdSchema, beforeSectionId: sectionIdSchema.optional(), afterSectionId: sectionIdSchema.optional() }),
+  renumber_items: z.object({ sectionId: sectionIdSchema.optional() }),
 } satisfies Record<PreviewOperation, z.ZodObject>;
 
 // Output schemas of the tools added after the base contract stay minimal to fit the tools/list
@@ -259,6 +265,35 @@ function deletedSections(answer: AnswerDocument, sectionId: string): AnswerSecti
   return answer.sections.filter((item) => item.id !== sectionId);
 }
 
+function movedSections(answer: AnswerDocument, sectionId: string,
+  { beforeSectionId, afterSectionId }: { beforeSectionId?: string; afterSectionId?: string }): AnswerSection[] {
+  const moving = findSection(answer, sectionId);
+  if ((beforeSectionId === undefined) === (afterSectionId === undefined)) throw new Error("beforeSectionId 與 afterSectionId 須擇一提供。");
+  const anchorId = (beforeSectionId ?? afterSectionId)!;
+  if (anchorId === sectionId) throw new Error("不能把區塊移到自己的前面或後面。");
+  findSection(answer, anchorId);
+  const sections = answer.sections.filter((item) => item.id !== sectionId);
+  sections.splice(sections.findIndex((item) => item.id === anchorId) + (afterSectionId ? 1 : 0), 0, moving);
+  if (sections.every((item, index) => item.id === answer.sections[index].id)) throw new Error("區塊已經在這個位置，不需要移動。");
+  return sections;
+}
+
+/** A nudge appended to structural edits when the written item numbers are no longer consecutive. */
+function numberingHint(sections: AnswerSection[]): string {
+  try {
+    renumberItems(sections);
+    return "\n編號已不連續；可先用 preview_change（operation: renumber_items）預覽，再呼叫 renumber_items 重新編號。";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.startsWith("編號已經是連續的") ? "" : `\n編號已不連續，但無法自動重新編號：${message}`;
+  }
+}
+
+/** The renumber_items note about openings that were left alone because they read as numbers in the prose. */
+function skippedNote(skipped: string[]): string {
+  return skipped.length ? `未計入、也未修改（開頭的數字像是內文，例如「二、三級」，請確認）：${skipped.join("、")}` : "";
+}
+
 /** Checks preview_change arguments against the previewed tool, naming the fields that tool expects. */
 function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperation, schema: Schema, args: Record<string, unknown>): z.infer<Schema> {
   const stray = Object.keys(args).filter((key) => args[key] !== undefined && !(key in schema.shape));
@@ -271,7 +306,15 @@ function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperatio
 }
 
 /** The sections the previewed write tool would save. */
-function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): AnswerSection[] {
+function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): { sections: AnswerSection[]; notes: string[] } {
+  if (operation === "renumber_items") {
+    const { sections, skipped } = renumberItems(answer.sections, previewArguments(operation, previewArgumentSchemas.renumber_items, args).sectionId);
+    return { sections, notes: skipped.length ? [skippedNote(skipped)] : [] };
+  }
+  return { sections: proposedSections(answer, operation, args), notes: [] };
+}
+
+function proposedSections(answer: AnswerDocument, operation: Exclude<PreviewOperation, "renumber_items">, args: Record<string, unknown>): AnswerSection[] {
   const schemas = previewArgumentSchemas;
   switch (operation) {
     case "write_answer": return writtenSections(previewArguments(operation, schemas.write_answer, args).sections);
@@ -289,6 +332,10 @@ function previewedSections(answer: AnswerDocument, operation: PreviewOperation, 
     }
     case "delete_text": return deletedSections(answer, previewArguments(operation, schemas.delete_text, args).sectionId);
     case "edit_text": return applyTextEdits(answer.sections, previewArguments(operation, schemas.edit_text, args).edits).sections;
+    case "move_section": {
+      const value = previewArguments(operation, schemas.move_section, args);
+      return movedSections(answer, value.sectionId, value);
+    }
   }
 }
 
@@ -324,7 +371,7 @@ export const PAPER_FORMAT_NOTE = " The 166 original-paper template (police_infor
 const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "preview_change"]);
 const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
 
-const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。任何修改都可先用 preview_change（operation 填要預覽的工具名稱，其餘參數與該工具相同）把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。";
+const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。任何修改都可先用 preview_change（operation 填要預覽的工具名稱，其餘參數與該工具相同）把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。搬移區塊用 move_section；插入、刪除或搬移後若手寫的編號（壹、一、（一）、1.）不再連續，用 renumber_items 重新編號。使用者規劃各節行數時用 set_line_targets，之後 check_layout 會回報各節行數、與目標的差距，以及要補滿或壓縮時該從哪一節增減。";
 
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
@@ -405,10 +452,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
           "6. replace_text / insert_text / delete_text：整段改寫、插入或刪除區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
           "7. preview_change：任何修改前都可預覽；operation 填要預覽的工具（write_answer、replace_text、format_section、insert_text、delete_text、edit_text），其餘參數與該工具相同，不會存檔。",
           "8. list_revisions / restore_revision：查看每個版本改了什麼，必要時還原舊版本；還原會另存新版本。",
-          "9. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "10. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
-          "11. fits=true 後才呼叫 export_docx 或 export_pdf。",
-          "12. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
+          "9. move_section：把區塊移到另一個區塊之前或之後；插入、刪除或搬移後編號不連續時，用 renumber_items 重新編號（標題自成一串，各區塊段落各自一串）。",
+          "10. set_line_targets：設定各節目標行數；check_layout 回報各節行數與目標差距，並建議補滿或壓縮時從哪一節增減。",
+          "11. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
+          "12. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
+          "13. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "14. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
         ].join("\n"),
       }],
     }),
@@ -677,7 +726,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       const { sections, inserted: newSection } = insertedSections(answer, afterSectionId, section);
       await store.saveAnswer(hypotheticalAnswer(answer, sections), { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
+      return { structuredContent: current, content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`
+        + numberingHint(current.answer.sections)) };
     },
   );
 
@@ -704,7 +754,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       assertExpectedVersion(answer, expectedVersion);
       await store.saveAnswer(hypotheticalAnswer(answer, deletedSections(answer, sectionId)), { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
+      return { structuredContent: current, content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}${changeText(before, current)}`
+        + numberingHint(current.answer.sections)) };
     },
   );
 
@@ -718,7 +769,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     "preview_change",
     {
       title: "預覽修改",
-      description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId) or edit_text (edits).",
+      description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId), edit_text (edits), move_section (sectionId, beforeSectionId or afterSectionId) or renumber_items (sectionId).",
       // Every previewed tool's arguments, all optional here; previewedSections checks them per operation.
       // Strict, so a misspelled or invented argument is reported instead of silently dropped.
       inputSchema: z.object({
@@ -730,6 +781,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         ...replacementContentSchema.shape,
         ...formattingPayloadSchema.shape,
         afterSectionId: sectionIdSchema.optional(),
+        beforeSectionId: sectionIdSchema.optional(),
         section: answerSectionInputSchema.optional(),
         edits: textEditsSchema.optional(),
       }).strict(),
@@ -740,8 +792,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     async ({ answerId, operation, expectedVersion, ...args }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
-      const sections = previewedSections(before.answer, operation, args);
+      const { sections, notes } = previewedSections(before.answer, operation, args);
       const preview = await makeChangePreview(store, operation, before, hypotheticalAnswer(before.answer, sections));
+      preview.summary.push(...notes);
       return { structuredContent: preview, content: textContent(preview.summary.join("；")) };
     },
   );
@@ -770,7 +823,95 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       return {
         structuredContent: { ...current, replacements: total, changes },
         content: textContent(`已修改 ${total} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
-          + changes.map((line) => `\n・${line}`).join("")),
+          + changes.map((line) => `\n・${line}`).join("") + numberingHint(current.answer.sections)),
+      };
+    },
+  );
+
+  const moveSectionTool = registerTool(
+    "move_section",
+    {
+      title: "搬移申論區塊",
+      description: "Use this when the user wants a section moved to another position: give beforeSectionId or afterSectionId (one of them). Only the order changes; the result lists the new order and the layout effect.",
+      inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.move_section.shape, expectedVersion: expectedVersionSchema },
+      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    },
+    async ({ answerId, sectionId, beforeSectionId, afterSectionId, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const sections = movedSections(before.answer, sectionId, { beforeSectionId, afterSectionId });
+      await store.saveAnswer(hypotheticalAnswer(before.answer, sections), { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      const changes = describeChanges(before, current);
+      return {
+        structuredContent: { ...current, changes },
+        content: textContent(`已搬移「${findSection(current.answer, sectionId).heading ?? sectionId}」（版本 ${before.answer.version} → ${current.answer.version}）；`
+          + summarizeLayout(current.layout) + changes.map((line) => `\n・${line}`).join("") + numberingHint(current.answer.sections)),
+      };
+    },
+  );
+
+  const renumberItemsTool = registerTool(
+    "renumber_items",
+    {
+      title: "重新編號",
+      description: "Use this after items or sections were inserted, deleted or moved and their written numbers (壹、 一、 （一） 1. （1）) are no longer consecutive. Headings are numbered as one list and each section's paragraphs as their own, each level restarting under a higher one; sectionId limits it to that section's paragraphs. Preview with preview_change first.",
+      inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
+      outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), skipped: z.array(z.string()), changes: z.array(z.string()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ answerId, sectionId, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const { sections, renumbered, skipped } = renumberItems(before.answer.sections, sectionId);
+      await store.saveAnswer(hypotheticalAnswer(before.answer, sections), { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      const changes = describeChanges(before, current);
+      return {
+        structuredContent: { ...current, renumbered, skipped, changes },
+        content: textContent(`已重新編號 ${renumbered} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
+          + changes.map((line) => `\n・${line}`).join("")
+          + (skipped.length ? `\n${skippedNote(skipped)}` : "")),
+      };
+    },
+  );
+
+  const setLineTargetsTool = registerTool(
+    "set_line_targets",
+    {
+      title: "設定各節目標行數",
+      description: "Use this when the user plans how many lines each section should take (heading and spacing included); lines null clears a target. check_layout then reports each section against its target and where to expand or condense to fill or fit the sheet.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        targets: z.array(z.object({ sectionId: sectionIdSchema, lines: z.number().int().min(1).max(200).nullable() })).min(1).max(100),
+        expectedVersion: expectedVersionSchema,
+      },
+      outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(),
+        sections: z.array(z.object({ sectionId: z.string(), lines: z.number() }).loose()), notes: z.array(z.string()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+    },
+    async ({ answerId, targets, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const ids = new Set(before.answer.sections.map((section) => section.id));
+      // Targets of sections that no longer exist are dropped with this write.
+      const lineTargets = Object.fromEntries(Object.entries(before.answer.lineTargets ?? {}).filter(([id]) => ids.has(id)));
+      for (const { sectionId, lines } of targets) {
+        findSection(before.answer, sectionId);
+        if (lines === null) delete lineTargets[sectionId];
+        else lineTargets[sectionId] = lines;
+      }
+      const updated = hypotheticalAnswer({ ...before.answer, lineTargets }, before.answer.sections);
+      const changes = describeTargetChanges(before.answer, updated);
+      if (changes.length === 0) throw new Error("目標行數與目前設定相同，沒有需要儲存的變更。");
+      await store.saveAnswer(updated, { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      const plan = planLines(current.answer, current.layout);
+      return {
+        structuredContent: { answerId, version: current.answer.version, sections: plan.sections, notes: plan.notes },
+        content: textContent(`已更新目標行數（版本 ${before.answer.version} → ${current.answer.version}）`
+          + changes.map((line) => `\n・${line}`).join("") + `\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}`),
       };
     },
   );
@@ -800,8 +941,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         .map((revision) => {
           const after = snapshot(revision, template);
           const previous = byVersion.get(revision.version - 1);
-          const changes = revision.version === 1 ? ["建立答案。"]
-            : previous ? describeChanges(snapshot(previous, template), after, 8) : ["（前一版紀錄不存在，無法比較。）"];
+          const content = previous && describeChanges(snapshot(previous, template), after, 8);
+          const targets = previous ? describeTargetChanges(previous, revision) : [];
+          // A version that only changed line targets lists just those, without "版面沒有改變。".
+          const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
+          const changes = revision.version === 1 ? ["建立答案。"] : compared ?? ["（前一版紀錄不存在，無法比較。）"];
           return { version: revision.version, updatedAt: revision.updatedAt, totalLines: after.layout.totalLines, fits: after.layout.fits, changes };
         });
       const olderVersions = Math.max(0, current.version - limit);
@@ -927,8 +1071,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     },
     async ({ answerId }) => {
       const current = await loadSnapshot(store, answerId);
-      const structuredContent = { answerId, version: current.answer.version, layout: current.layout };
-      return { structuredContent, content: textContent(summarizeLayout(current.layout)) };
+      const plan = planLines(current.answer, current.layout);
+      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes: plan.notes };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}`) };
     },
   );
 
@@ -1101,6 +1246,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     ["create_answer", createAnswerTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
+    ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],
     ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();

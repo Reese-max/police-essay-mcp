@@ -148,6 +148,9 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `format_section` | 不改文字，只更新 section 或指定 paragraphs 的格式 | 是 |
 | `insert_text` | 在指定段落後插入新 section | 是 |
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
+| `move_section` | 把指定 section 移到另一個 section 之前或之後 | 是 |
+| `renumber_items` | 依層級重新編號標題與段首的手寫編號 | 是 |
+| `set_line_targets` | 設定各節目標行數，供 `check_layout` 回報差距 | 是 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
 | `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |

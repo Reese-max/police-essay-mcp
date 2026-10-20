@@ -133,7 +133,8 @@ test("edit_text core: a newline splits a paragraph keeping its format and an emp
   assert.deepEqual(body.paragraphs!.map((p) => p.text), [
     "（一）技術可行性：評估既有設備與人力。", "（二）經濟可行性：比較成本與效益。", "另應判斷預算是否合理。", "（三）作業可行性：確認使用者接受度與教育訓練需求。",
   ]);
-  assert.deepEqual(body.paragraphs!.map((p) => p.format?.leftIndent), [0, 2, 2, undefined]);
+  // The first paragraph never set leftIndent, so it still inherits it.
+  assert.deepEqual(body.paragraphs!.map((p) => p.format?.leftIndent), [undefined, 2, 2, undefined]);
   const removed = applyTextEdits(answer.sections, [{ find: "（三）作業可行性：確認使用者接受度與教育訓練需求。", replace: "" }]).sections;
   assert.deepEqual(texts({ ...answer, sections: removed }, "body").length, 2);
 });

@@ -17,14 +17,21 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
   reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)." },
+{ path: "owner.tools[move_section,renumber_items,set_line_targets]",
+  reason: "New writing tools (essay.write): move a section, renumber written item numbers, and set per-section line targets that check_layout reports against." },
+{ path: "*.tools[check_layout].outputSchema.additionalProperties",
+  reason: "Loosened so check_layout can also return each section's lines against its target (sections, notes)." },
 { path: "*.tools[preview_delete_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer]",
   reason: "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments." },
 { path: "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
   reason: "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing." },
+{ path: "*.tools[*].inputSchema,*.tools[*].outputSchema,*.prompts[*].argsSchema: paragraph format and heading style fields",
+  reason: "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing." },
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "preview_change", "restore_revision"];
+export const ADDED_TOOLS = ["delete_answer", "edit_text", "list_revisions", "move_section", "preview_change", "renumber_items",
+  "restore_revision", "set_line_targets"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["list_revisions", "preview_change"];
 /** Base tools that no longer exist; all of them were read-only. */
@@ -32,6 +39,8 @@ export const REMOVED_TOOLS = ["preview_delete_text", "preview_format_section", "
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
 export const PAPER_NOTE_TOOLS = ["create_answer", "format_section", "insert_text", "replace_text", "write_answer"];
 const BASE_WIDGET_URI = "ui://widget/police-essay-answer-sheet.html";
+/** Fields only paragraph formats and heading styles have together; their schema objects lost their defaults. */
+const FORMAT_FIELDS = ["firstLineIndent", "tabSize"];
 /** Upper bound for the serialized owner tools/list; the base contract was ~262 KB. */
 export const TOOLS_LIST_BUDGET_BYTES = 80_000;
 export function stableJson(value: unknown): string {
@@ -79,6 +88,20 @@ function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T): T {
 }
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
   return { ...view, tools: view.tools.filter(tool => !drop.includes(tool.name)).map(({ outputSchema: _output, ...tool }) => tool) };
+}
+/** Drops the default keyword of paragraph-format and heading-style fields anywhere in a contract view. */
+export function withoutFormatDefaults<T>(value: T): T {
+  const strip = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(strip);
+    if (!node || typeof node !== "object") return node;
+    const result = Object.fromEntries(Object.entries(node).map(([key, item]) => [key, strip(item)])) as JsonSchema;
+    const properties = result.properties as Record<string, JsonSchema> | undefined;
+    if (properties && FORMAT_FIELDS.every(field => field in properties)) {
+      result.properties = Object.fromEntries(Object.entries(properties).map(([key, { default: _default, ...schema }]) => [key, schema]));
+    }
+    return result;
+  };
+  return strip(value) as T;
 }
 /** Puts the base widget URI back so the versioned one is the only difference. */
 function withBaseWidgetUri<T>(view: T): T {
@@ -134,13 +157,15 @@ export async function checkMcpContract() {
       `${view} does not register ${ANSWER_SHEET_WIDGET_URI}`);
   }
   const comparable = withBaseWidgetUri(current);
+  assert.deepEqual(withoutFormatDefaults(current), current, "format fields must not declare defaults");
+  const base = withoutFormatDefaults(fixture.contract) as typeof fixture.contract;
   assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(comparable.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(comparable.reader), ADDED_READ_TOOLS) },
-    { owner: withoutOutputSchemas(fixture.contract.owner, REMOVED_TOOLS), reader: withoutOutputSchemas(fixture.contract.reader, REMOVED_TOOLS) });
+    { owner: withoutOutputSchemas(base.owner, REMOVED_TOOLS), reader: withoutOutputSchemas(base.reader, REMOVED_TOOLS) });
   for (const view of ["owner", "reader"] as const) {
-    for (const base of fixture.contract[view].tools as ContractTool[]) {
-      if (REMOVED_TOOLS.includes(base.name)) continue;
-      const tool = (current[view].tools as ContractTool[]).find(item => item.name === base.name)!;
-      assertSchemaSubset(tool.outputSchema, base.outputSchema, `${view}.${base.name}.outputSchema`);
+    for (const baseTool of base[view].tools as ContractTool[]) {
+      if (REMOVED_TOOLS.includes(baseTool.name)) continue;
+      const tool = (current[view].tools as ContractTool[]).find(item => item.name === baseTool.name)!;
+      assertSchemaSubset(tool.outputSchema, baseTool.outputSchema, `${view}.${baseTool.name}.outputSchema`);
     }
   }
   const toolsListBytes = Buffer.byteLength(JSON.stringify(current.owner.tools));
@@ -164,7 +189,7 @@ export async function checkMcpContract() {
       const kept = (fixture.oauthTools[name] as string[]).filter(tool => !REMOVED_TOOLS.includes(tool));
       assert.deepEqual(tools.map(t => t.name).sort(), [...kept, ...added].sort());
       // Base-surface difference: the existing OAuth declaration, with exact expected scopes.
-      const expected = fixture.contract.owner.tools.filter((t: { name: string }) => kept.includes(t.name))
+      const expected = base.owner.tools.filter((t: { name: string }) => kept.includes(t.name))
         .map((tool: ContractTool) => {
           const required = fixture.oauthTools.read.includes(tool.name) ? "essay.read"
             : ["export_docx", "export_pdf", "export_text"].includes(tool.name) ? "essay.export" : "essay.write";

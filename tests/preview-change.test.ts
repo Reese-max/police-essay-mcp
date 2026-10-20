@@ -39,6 +39,8 @@ async function withClient(run: (client: Client, store: FileStore) => Promise<voi
   const client = new Client({ name: "preview-change-test", version: "1" });
   await server.connect(serverTransport);
   await client.connect(clientTransport);
+  // Listing the tools makes the client check every structuredContent against its outputSchema.
+  await client.listTools();
   try { await run(client, store); }
   finally { await client.close(); await fs.rm(root, { recursive: true, force: true }); }
 }
