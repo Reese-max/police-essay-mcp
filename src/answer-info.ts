@@ -11,8 +11,8 @@ export function answerFileName(answer: Pick<AnswerDocument, "title" | "exam" | "
     .replace(/\s+/gu, " ")
     .trim();
   const name = Array.from(base || "申論答案").slice(0, 80).join("");
-  // Windows refuses device names such as CON or COM1 whatever the extension.
-  return `${/^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/iu.test(name) ? `${name}_` : name}.${format}`;
+  // Windows refuses device names such as CON or COM1 before the first dot, whatever follows ("CON.notes.pdf").
+  return `${name.replace(/^(con|prn|aux|nul|com[0-9]|lpt[0-9])(?=\.|$)/iu, "$1_")}.${format}`;
 }
 
 /** Orders answers by exam, then question number, then title; answers without an exam come last. */

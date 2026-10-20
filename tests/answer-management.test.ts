@@ -43,6 +43,8 @@ test("readable file names, exam grouping and question order", () => {
   assert.equal(answerFileName({ title: "CON", exam: undefined, questionNo: undefined }, "pdf"), "CON_.pdf");
   assert.equal(answerFileName({ title: "com1", exam: undefined, questionNo: undefined }, "pdf"), "com1_.pdf");
   assert.equal(answerFileName({ title: "Console", exam: undefined, questionNo: undefined }, "pdf"), "Console.pdf");
+  assert.equal(answerFileName({ title: "CON.notes", exam: undefined, questionNo: undefined }, "pdf"), "CON_.notes.pdf");
+  assert.equal(answerFileName({ title: "nul", exam: undefined, questionNo: undefined }, "txt"), "nul_.txt");
   const answers = [
     { id: "ans_c", title: "未分類", version: 1, exam: undefined, questionNo: undefined },
     { id: "ans_b", title: "第二題", version: 3, exam: "114年警察特考", questionNo: 2 },
