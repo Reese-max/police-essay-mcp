@@ -311,6 +311,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         textInput.disabled = !hasSections || state.readOnly || applying;
         if (hasSections) selectSection(selectedSectionId || state.answer.sections[0].id);
         else {
+          // No section of this answer can still be selected.
+          selectedSectionId = "";
           headingInput.value = "";
           textInput.value = "";
           previewButton.disabled = true;
@@ -341,10 +343,11 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       // After any write, both the section editor and the tool panels reflect the current state again.
       function restoreControls() {
+        const hasSelection = Boolean(state?.answer.sections.some((section) => section.id === selectedSectionId));
         sectionSelect.disabled = !state?.answer.sections.length;
-        headingInput.disabled = state?.readOnly || !selectedSectionId;
-        textInput.disabled = state?.readOnly || !selectedSectionId;
-        previewButton.disabled = state?.readOnly || !selectedSectionId;
+        headingInput.disabled = state?.readOnly || !hasSelection;
+        textInput.disabled = state?.readOnly || !hasSelection;
+        previewButton.disabled = state?.readOnly || !hasSelection;
         updateTools();
       }
 
@@ -718,7 +721,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           pendingEdit = null;
           // Fetch the current snapshot and regenerated SVG after a committed edit.
           const rendered = extract(await callTool("render_answer_sheet", { answerId: snapshot.answer.id }));
-          renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
+          // The host may have shown another answer meanwhile; never switch the view back to this one.
+          if (state?.answer.id === snapshot.answer.id) renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
           setNotice("修改已套用並重新計算版面。", false);
         } catch (error) {
           setNotice(error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);

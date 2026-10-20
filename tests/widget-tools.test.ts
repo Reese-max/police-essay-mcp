@@ -59,6 +59,10 @@ async function host(options: { readOnly?: boolean } = {}) {
       ] } };
     }
     if (name === "restore_revision") return write(`已把第 ${args.version} 版的內容存成第 ${version + 1} 版`);
+    if (name === "replace_text") {
+      sections = sections.map((section) => section.id === args.sectionId ? { ...section, text: String(args.newText) } : section);
+      return write("已修改");
+    }
     return result();
   };
   let window!: DOMWindow;
@@ -85,8 +89,9 @@ async function host(options: { readOnly?: boolean } = {}) {
   const type = (id: string, value: string) => { element<HTMLInputElement>(id).value = value; element(id).dispatchEvent(new dom.window.Event("input")); };
   const select = (id: string) => { element<HTMLSelectElement>("section").value = id; element("section").dispatchEvent(new dom.window.Event("change")); };
   // The host shows another answer (or a newer version) while the widget is busy.
-  const show = async (next: { answerId?: string; bump?: boolean }) => {
+  const show = async (next: { answerId?: string; bump?: boolean; empty?: boolean }) => {
     if (next.answerId) answerId = next.answerId;
+    if (next.empty) sections = [];
     if (next.bump) version += 1;
     window.dispatchEvent(new window.MessageEvent("message", { source: parent as unknown as Window, origin: "https://host.test",
       data: { jsonrpc: "2.0", method: "ui/notifications/tool-result", params: result() } }));
@@ -267,5 +272,30 @@ test("selection from an unsaved draft and a non-integer occurrence are refused",
     assert.equal(h.calls.filter((call) => call.name === "preview_change").length, 0);
     assert.match(h.element("phrase-preview").textContent!, /正整數/);
     assert.equal(h.element<HTMLButtonElement>("apply-phrase").disabled, true);
+  } finally { h.dom.window.close(); }
+});
+
+test("the section editor does not switch back either, and an answer without sections keeps editing off", async () => {
+  const h = await host();
+  try {
+    h.element<HTMLTextAreaElement>("text").value = "改寫的段落。";
+    h.element("text").dispatchEvent(new h.dom.window.Event("input"));
+    await h.click("preview-edit");
+    h.hold("replace_text");
+    await h.click("apply-edit");
+    await h.show({ answerId: "ans_other" });
+    await h.release("replace_text");
+    assert.match(h.element("answer-id").textContent!, /ans_other/);
+
+    // A panel write that ends after the host showed an answer without sections leaves editing off.
+    h.type("find", "前言");
+    await h.click("preview-phrase");
+    h.hold("edit_text");
+    await h.click("apply-phrase");
+    await h.show({ answerId: "ans_empty", empty: true });
+    await h.release("edit_text");
+    for (const id of ["heading", "text", "preview-edit", "move-up", "move-down"]) {
+      assert.equal(h.element<HTMLButtonElement>(id).disabled, true, id);
+    }
   } finally { h.dom.window.close(); }
 });
