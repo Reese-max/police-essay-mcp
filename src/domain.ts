@@ -389,7 +389,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     paragraphs: (section.paragraphs?.length
       ? section.paragraphs
       : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text })))
-      .map((paragraph) => ({ ...paragraph, original: paragraph.text })),
+      .map((paragraph) => ({ ...paragraph, edited: false })),
     changed: false,
   }));
   let totalLength = working.reduce((sum, item) => sum + (item.heading?.length ?? 0)
@@ -409,8 +409,9 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
       item.paragraphs.forEach((paragraph, index) => scan(paragraph.text, index));
     }
     if (matches.length === 0) {
-      const near = scope.some((item) => [item.heading ?? "", ...item.paragraphs.map((paragraph) => paragraph.text)]
-        .some((text) => looseText(text).includes(looseText(edit.find))));
+      const loose = looseText(edit.find);
+      const near = loose !== "" && scope.some((item) => [item.heading ?? "", ...item.paragraphs.map((paragraph) => paragraph.text)]
+        .some((text) => looseText(text).includes(loose)));
       throw new Error(`${label}：找不到「${clipText(edit.find)}」${edit.sectionId ? `（限區塊 ${edit.sectionId}）` : ""}。`
         + (near ? "忽略空白與全形／半形標點後可以找到，請照原文的空白與標點填寫 find。" : "find 必須與目前內容逐字相同；請先 read_answer 確認原文。"));
     }
@@ -426,7 +427,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
         const length = Array.from(edit.find).length;
         const before = chars.slice(Math.max(0, start - 10), start).join("");
         const after = chars.slice(start + length, start + length + 10).join("");
-        return `${index + 1}) 「${match.item.heading ?? match.item.section.id}」${where}：…${before}【${clipText(edit.find, 20)}】${after}…`;
+        return `${index + 1}) 「${match.item.heading || match.item.section.id}」${where}：…${before}【${clipText(edit.find, 20)}】${after}…`;
       });
       throw new Error(`${label}：「${clipText(edit.find)}」出現 ${matches.length} 次：${places.join("；")}${matches.length > 5 ? "；…" : ""}。`
         + "請加長 find 讓它只對應一處，或指定 occurrence（第幾處，依上列順序）或 replaceAll=true。");
@@ -446,9 +447,21 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
         item.changed ||= heading !== item.heading;
         item.heading = heading;
       } else {
-        const text = replaceIn(item.paragraphs[paragraph].text);
-        item.changed ||= text !== item.paragraphs[paragraph].text;
-        item.paragraphs[paragraph].text = text;
+        const target = item.paragraphs[paragraph];
+        const text = replaceIn(target.text);
+        target.edited ||= text !== target.text;
+        item.changed ||= target.edited;
+        target.text = text;
+      }
+    }
+    // Split and drop emptied parts now, so the next edit sees (and numbers) the resulting paragraphs.
+    // Blank paragraphs that no edit touched stay as they are.
+    for (const item of new Set(selected.map((match) => match.item))) {
+      item.paragraphs = item.paragraphs.flatMap((paragraph) => !paragraph.edited ? [paragraph]
+        : paragraph.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").filter((text) => text !== "")
+          .map((text) => ({ text, format: paragraph.format, edited: false })));
+      if (item.paragraphs.length === 0) {
+        throw new Error(`${label}：會清空區塊「${item.heading || item.section.heading || item.section.id}」的全部內容；要刪除整個區塊請用 delete_text。`);
       }
     }
     return selected.length;
@@ -456,13 +469,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
 
   const updated = working.map((item) => {
     if (!item.changed) return item.section;
-    const paragraphs = item.paragraphs
-      .filter((paragraph) => paragraph.text !== "" || paragraph.original === "")
-      .flatMap((paragraph) => paragraph.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n")
-        .map((text) => ({ text, format: paragraph.format })));
-    if (paragraphs.length === 0) {
-      throw new Error(`修改會清空區塊「${item.heading || item.section.heading || item.section.id}」的全部內容；要刪除整個區塊請用 delete_text。`);
-    }
+    const paragraphs = item.paragraphs.map((paragraph) => ({ text: paragraph.text, format: paragraph.format }));
     return normalizeSection({
       id: item.section.id,
       heading: item.heading || undefined,

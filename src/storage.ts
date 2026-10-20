@@ -163,18 +163,26 @@ export class FileStore implements EssayStore {
         throw new Error(`答案 ${answerId} 已存在；更新既有答案時必須提供 expectedVersion。`);
       }
 
-      // The revision goes first: a failed answer write leaves a revision the next commit overwrites.
       const revisionDir = path.join(this.revisionDir, answerId);
       await fs.mkdir(revisionDir, { recursive: true });
-      for (const target of [path.join(revisionDir, `${normalized.version}.json`), filename]) {
+      const write = async (target: string, value: AnswerDocument) => {
         const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
         try {
-          await fs.writeFile(temporary, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+          await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
           await fs.rename(temporary, target);
         } finally {
           await fs.rm(temporary, { force: true }).catch(() => undefined);
         }
+      };
+      // Answers saved before revisions existed get their current version recorded on the first
+      // edit, so that edit can still be restored.
+      if (current) {
+        const currentRevision = path.join(revisionDir, `${current.version}.json`);
+        if (!(await fs.access(currentRevision).then(() => true, () => false))) await write(currentRevision, current);
       }
+      // The revision goes first: a failed answer write leaves a revision the next commit overwrites.
+      await write(path.join(revisionDir, `${normalized.version}.json`), normalized);
+      await write(filename, normalized);
     });
   }
 

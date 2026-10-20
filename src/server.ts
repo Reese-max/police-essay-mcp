@@ -900,7 +900,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
       byVersion.set(current.version, current);
       const revisions = [...byVersion.values()].sort((a, b) => b.version - a.version)
-        .filter((revision) => revision.version > current.version - limit)
+        // A version committed after `current` was read stays out, so at most `limit` are listed.
+        .filter((revision) => revision.version <= current.version && revision.version > current.version - limit)
         .map((revision) => {
           const after = snapshot(revision, template);
           const previous = byVersion.get(revision.version - 1);

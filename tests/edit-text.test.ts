@@ -85,6 +85,32 @@ test("edit_text core: ambiguous, missing and no-op edits fail with actionable me
   assert.equal(JSON.stringify(answer), before);
 });
 
+test("edit_text core: parts emptied after a split are dropped and later edits see the new paragraph numbers", () => {
+  const answer = sample();
+  const splitThenDelete = applyTextEdits(answer.sections, [
+    { find: "比較成本與效益，", replace: "比較成本與效益。\n" },
+    { find: "判斷預算是否合理。", replace: "" },
+  ]).sections;
+  assert.deepEqual(texts({ ...answer, sections: splitThenDelete }, "body"),
+    ["（一）技術可行性：評估既有設備與人力。", "（二）經濟可行性：比較成本與效益。", "（三）作業可行性：確認使用者接受度與教育訓練需求。"]);
+  assert.throws(() => applyTextEdits(answer.sections, [{ find: "政府建置資訊系統應以業務需求為本。", replace: "\n" }]), /第 1 項修改：會清空區塊「一、前言」/);
+  assert.throws(() => applyTextEdits(answer.sections, [
+    { find: "比較成本與效益，", replace: "比較成本與效益。\n另應" },
+    { find: "可行性：", replace: "x" },
+  ]), /第 2 項修改：「可行性：」出現 3 次：.*2\) 「二、可行性評估」第 2 段.*3\) 「二、可行性評估」第 4 段/);
+  assert.throws(() => applyTextEdits(answer.sections, [{ find: " ", replace: "x" }]), (error: Error) =>
+    /read_answer/.test(error.message) && !/忽略空白/.test(error.message));
+});
+
+test("change descriptions report a rewritten paragraph's format change too", () => {
+  const before = sample();
+  const body = before.sections[1];
+  const after = { ...before, sections: [before.sections[0], { ...body, paragraphs: body.paragraphs!.map((p, i) => i === 1
+    ? { text: "（二）經濟可行性：比較成本與效果。", format: { ...p.format!, leftIndent: 4 } } : p) }, before.sections[2]] };
+  const lines = describeChanges(snap(before), snap(after));
+  assert.equal(lines[0], "「二、可行性評估」第2段（第1頁第5行）：「益，判斷預算是否合理」改為「果」；格式：leftIndent 2→4");
+});
+
 test("edit_text core: chained replaceAll growth is capped before any text is built", () => {
   const answer = sample();
   const edits = Array.from({ length: 6 }, () => ({ find: "可", replace: "可".repeat(10_000), replaceAll: true }));
@@ -230,6 +256,25 @@ test("edit_text, list_revisions and restore_revision work end to end on the file
     const store = new FileStore({ templateDir, answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
     await exerciseStore(store);
     assert.equal((await fs.readdir(path.join(root, "answers"))).length, 1);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("a file-store answer saved before revisions existed can restore the version before its first edit", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-legacy-"));
+  try {
+    const store = new FileStore({ templateDir, answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
+    const answer = sample();
+    await store.saveAnswer(answer);
+    await fs.rm(store.revisionDir, { recursive: true });
+    assert.deepEqual(await store.listRevisions(answer.id, { limit: 5 }), []);
+    const client = await connect(store);
+    try {
+      await client.callTool({ name: "edit_text", arguments: { answerId: answer.id, edits: [{ find: "前言", replace: "緒論" }], expectedVersion: 1 } });
+      assert.deepEqual((await store.listRevisions(answer.id, { limit: 5 })).map((revision) => revision.version), [2, 1]);
+      const restored = await client.callTool({ name: "restore_revision", arguments: { answerId: answer.id, version: 1, expectedVersion: 2 } });
+      assert.equal(restored.isError, undefined, JSON.stringify(restored));
+      assert.equal((await store.getAnswer(answer.id)).sections[0].heading, "一、前言");
+    } finally { await client.close(); }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

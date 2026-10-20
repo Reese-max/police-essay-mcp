@@ -344,6 +344,11 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       // replaces and an added one takes its neighbour's, so adding or removing lines loses no formatting.
       function carryFormats(paragraphs, texts) {
         const rows = paragraphs.length, columns = texts.length;
+        // Very long sections are matched by position, keeping the alignment table small.
+        if (rows * columns > 250000) return texts.map((text, i) => {
+          const source = paragraphs[Math.min(i, rows - 1)];
+          return {text, ...(source.format ? {format: source.format} : {})};
+        });
         const table = Array.from({length: rows + 1}, () => new Array(columns + 1).fill(0));
         for (let i = rows - 1; i >= 0; i--) for (let j = columns - 1; j >= 0; j--) {
           table[i][j] = paragraphs[i].text === texts[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);

@@ -128,8 +128,9 @@ function describeSection(before: AnswerSection, after: AnswerSection, beforeLayo
     const paired = Math.min(removed.length, added.length);
     for (let k = 0; k < paired; k++) {
       const position = added[k];
+      const format = describeFormat(oldParagraphs[removed[k]].format, newParagraphs[position].format);
       lines.push(`${name}第${position + 1}段${locate(afterLayout, after.id, position + 1)}：`
-        + describeTextChange(oldParagraphs[removed[k]].text, newParagraphs[position].text));
+        + describeTextChange(oldParagraphs[removed[k]].text, newParagraphs[position].text) + (format ? `；格式：${format}` : ""));
     }
     for (const position of added.slice(paired)) {
       lines.push(`${name}新增第${position + 1}段${locate(afterLayout, after.id, position + 1)}：「${clip(Array.from(newParagraphs[position].text))}」`);
@@ -142,7 +143,9 @@ function describeSection(before: AnswerSection, after: AnswerSection, beforeLayo
 }
 
 function lineKey(line: LayoutLine | undefined): string {
-  return line ? JSON.stringify([line.text, line.displayWidth, line.isHeading, line.isSpacer, line.format]) : "";
+  // Paragraph-end flags matter too: justified and distributed lines render differently when last.
+  return line ? JSON.stringify([line.text, line.displayWidth, line.isHeading, line.isSpacer,
+    line.isFirstLineOfParagraph, line.isLastLineOfParagraph, line.format]) : "";
 }
 
 /**
