@@ -5,6 +5,19 @@ function normalizeNewlines(text: string): string {
   return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
 }
 
+type WithoutDefaults<Shape extends z.ZodRawShape> = {
+  [Key in keyof Shape]: z.ZodOptional<Shape[Key] extends z.ZodDefault<infer Inner> ? Inner : Shape[Key]>;
+};
+
+/**
+ * The same fields, all optional and without defaults. Zod 4 still fills a default inside .partial(),
+ * which would turn every omitted format field into an explicit value overriding the section and template.
+ */
+function withoutDefaults<Shape extends z.ZodRawShape>(schema: z.ZodObject<Shape>): z.ZodObject<WithoutDefaults<Shape>> {
+  return z.object(Object.fromEntries(Object.entries(schema.shape).map(([key, field]) =>
+    [key, z.optional(field instanceof z.ZodDefault ? field.removeDefault() : field)]))) as unknown as z.ZodObject<WithoutDefaults<Shape>>;
+}
+
 export const overflowPolicySchema = z.enum(["compress", "report", "reject"]);
 
 export const alignmentSchema = z.enum(["left", "right", "justify", "distributed"]);
@@ -21,7 +34,7 @@ export const paragraphFormatSchema = z.object({
   italic: z.boolean().default(false),
 });
 
-export const paragraphFormatInputSchema = paragraphFormatSchema.partial();
+export const paragraphFormatInputSchema = withoutDefaults(paragraphFormatSchema);
 export type ParagraphFormat = z.infer<typeof paragraphFormatSchema>;
 export type ParagraphFormatInput = z.input<typeof paragraphFormatInputSchema>;
 
@@ -40,7 +53,7 @@ export const headingStyleSchema = z.object({
   tabSize: z.number().int().positive().default(4),
 });
 
-export const headingStyleInputSchema = headingStyleSchema.partial();
+export const headingStyleInputSchema = withoutDefaults(headingStyleSchema);
 export type HeadingStyle = z.infer<typeof headingStyleSchema>;
 export type HeadingStyleInput = z.input<typeof headingStyleInputSchema>;
 
