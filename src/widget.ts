@@ -221,6 +221,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       let pendingPhrase = null;
       let phraseEpoch = 0;
       let renumberArmed = false;
+      let renumberArgs = null;
+      let snapshotEpoch = 0;
 
       function setNotice(message, isError) {
         notice.textContent = message || "";
@@ -337,8 +339,20 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         revisionsButton.disabled = !state || applying;
       }
 
-      // A new snapshot makes pending previews, the armed renumbering and the listed history stale.
+      // After any write, both the section editor and the tool panels reflect the current state again.
+      function restoreControls() {
+        sectionSelect.disabled = !state?.answer.sections.length;
+        headingInput.disabled = state?.readOnly || !selectedSectionId;
+        textInput.disabled = state?.readOnly || !selectedSectionId;
+        previewButton.disabled = state?.readOnly || !selectedSectionId;
+        updateTools();
+      }
+
+      // A new snapshot makes pending previews, the armed renumbering and the listed history stale;
+      // anything still in flight from before compares its epoch and is dropped.
       function invalidateTools() {
+        snapshotEpoch += 1;
+        renumberArgs = null;
         phraseEpoch += 1;
         pendingPhrase = null;
         phrasePreviewText.textContent = "";
@@ -369,10 +383,11 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         setBusy(button, true);
         updateTools();
         try {
-          const answerId = state.answer.id;
+          const answerId = args.answerId;
           const result = await callTool(name, args);
           const rendered = extract(await callTool("render_answer_sheet", { answerId }));
-          if (rendered) renderSnapshot(rendered);
+          // The host may have shown another answer meanwhile; never switch the view back to this one.
+          if (rendered && state?.answer.id === answerId) renderSnapshot(rendered);
           setNotice(summaryOf(result), false);
           return result;
         } catch (error) {
@@ -381,15 +396,18 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         } finally {
           applying = false;
           setBusy(button, false);
-          updateTools();
+          restoreControls();
         }
       }
 
       function phraseArgs() {
         const edit = { find: findInput.value, replace: replaceInput.value };
-        const occurrence = Number.parseInt(occurrenceInput.value, 10);
+        const occurrence = occurrenceInput.value.trim();
         if (replaceAllInput.checked) edit.replaceAll = true;
-        else if (occurrence > 0) edit.occurrence = occurrence;
+        else if (occurrence) {
+          if (!/^[1-9][0-9]*$/.test(occurrence)) throw new Error("「只改第幾處」要填正整數，或留空。");
+          edit.occurrence = Number(occurrence);
+        }
         return { answerId: state.answer.id, expectedVersion: state.answer.version, edits: [edit] };
       }
 
@@ -430,6 +448,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       }
 
       function useSelection() {
+        // The find text must exist in the saved answer, so an unsaved draft cannot be the source.
+        const section = state?.answer.sections.find((item) => item.id === selectedSectionId);
+        if (!section || textInput.value !== section.text || (headingInput.value || "") !== (section.heading || "")) {
+          setNotice("上方區塊有尚未套用的修改；請先套用或重新選取區塊，再帶入選取文字。", true);
+          return;
+        }
         const selected = textInput.value.slice(textInput.selectionStart, textInput.selectionEnd);
         if (!selected || selected.includes("\n")) {
           setNotice("請先在上方文字框選取同一段內的一段字。", true);
@@ -455,22 +479,29 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       // First click previews the renumbering; a second click while armed applies it.
       async function renumber() {
         if (!state || state.readOnly || applying) return;
-        const args = { answerId: state.answer.id, expectedVersion: state.answer.version };
-        if (renumberArmed) {
+        if (renumberArmed && renumberArgs) {
+          // Apply exactly the version that was previewed; a newer answer makes the server refuse it.
+          const args = renumberArgs;
           renumberArmed = false;
+          renumberArgs = null;
           renumberButton.textContent = "重新編號";
           toolsText.textContent = "";
           await runWrite(renumberButton, "renumber_items", args);
           return;
         }
+        const epoch = snapshotEpoch;
+        const args = { answerId: state.answer.id, expectedVersion: state.answer.version };
         setBusy(renumberButton, true);
         try {
           const result = await callTool("preview_change", { operation: "renumber_items", ...args });
+          if (epoch !== snapshotEpoch) return;
           const preview = result?.structuredContent || result?.result?.structuredContent;
           toolsText.textContent = (preview?.summary || []).slice(3).join("；") || "預覽完成。";
           toolsText.className = "preview";
+          renumberArgs = args;
           renumberArmed = true;
         } catch (error) {
+          if (epoch !== snapshotEpoch) return;
           toolsText.textContent = error instanceof Error ? error.message : "預覽失敗。";
           toolsText.className = "preview bad";
         } finally {
@@ -482,9 +513,13 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       async function loadRevisions() {
         if (!state) return;
+        const epoch = snapshotEpoch;
+        const answerId = state.answer.id;
         setBusy(revisionsButton, true);
         try {
-          const result = await callTool("list_revisions", { answerId: state.answer.id, limit: 10 });
+          const result = await callTool("list_revisions", { answerId, limit: 10 });
+          // A list for an answer or version no longer shown is dropped rather than offering wrong restores.
+          if (epoch !== snapshotEpoch) return;
           const list = result?.structuredContent || result?.result?.structuredContent;
           if (!list) throw new Error("工具沒有回傳版本紀錄。");
           revisionList.replaceChildren();
@@ -497,8 +532,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
             else if (!state.readOnly) {
               const restore = makeElement("button", "", "還原成這一版");
               restore.type = "button";
+              // Bound to the listed answer and version: if either changed, the server refuses the restore.
               restore.addEventListener("click", () => runWrite(restore, "restore_revision",
-                { answerId: state.answer.id, version: revision.version, expectedVersion: state.answer.version }));
+                { answerId, version: revision.version, expectedVersion: list.currentVersion }));
               head.append(restore);
             }
             item.append(head);
@@ -507,6 +543,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           }
           if (list.olderVersions) revisionList.append(makeElement("li", "editor-help", "另有 " + list.olderVersions + " 個更早的版本未列出。"));
         } catch (error) {
+          if (epoch !== snapshotEpoch) return;
           setNotice(error instanceof Error ? error.message : "讀取版本紀錄失敗。", true);
         } finally {
           setBusy(revisionsButton, false);
@@ -687,11 +724,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           setNotice(error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
         } finally {
           applying = false;
-          sectionSelect.disabled = !state?.answer.sections.length;
-          headingInput.disabled = state?.readOnly || !selectedSectionId;
-          textInput.disabled = state?.readOnly || !selectedSectionId;
-          previewButton.disabled = state?.readOnly || !selectedSectionId;
           setBusy(applyButton, false);
+          restoreControls();
           applyButton.disabled = true;
         }
       }
