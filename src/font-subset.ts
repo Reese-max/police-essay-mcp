@@ -33,24 +33,29 @@ export async function subsetFont(fontPath: string, characters: Iterable<string>)
   hb._initialize?.();
   const font = readFileSync(fontPath);
   const fontPointer = hb.malloc(font.byteLength);
-  new Uint8Array(hb.memory.buffer).set(font, fontPointer);
-  const blob = hb.hb_blob_create(fontPointer, font.byteLength, HB_MEMORY_MODE_WRITABLE, 0, 0);
-  const face = hb.hb_face_create(blob, 0);
-  hb.hb_blob_destroy(blob);
-  const input = hb.hb_subset_input_create_or_fail();
-  if (!input) throw new Error("字型子集初始化失敗。");
-  const unicodes = hb.hb_subset_input_unicode_set(input);
-  for (const character of characters) for (const symbol of character) hb.hb_set_add(unicodes, symbol.codePointAt(0)!);
-  const subset = hb.hb_subset_or_fail(face, input);
-  hb.hb_subset_input_destroy(input);
-  if (!subset) throw new Error("字型子集產生失敗。");
-  const result = hb.hb_face_reference_blob(subset);
-  // Read the heap only after subsetting: the wasm memory may have grown and detached older views.
-  const data = Buffer.from(new Uint8Array(hb.memory.buffer, hb.hb_blob_get_data(result, 0), hb.hb_blob_get_length(result)));
-  hb.hb_blob_destroy(result);
-  hb.hb_face_destroy(subset);
-  hb.hb_face_destroy(face);
-  hb.free(fontPointer);
-  if (!data.length) throw new Error("字型子集為空。");
-  return data;
+  if (!fontPointer) throw new Error("字型子集記憶體配置失敗。");
+  let face = 0, input = 0, subset = 0, result = 0;
+  try {
+    new Uint8Array(hb.memory.buffer).set(font, fontPointer);
+    const blob = hb.hb_blob_create(fontPointer, font.byteLength, HB_MEMORY_MODE_WRITABLE, 0, 0);
+    face = hb.hb_face_create(blob, 0);
+    hb.hb_blob_destroy(blob);
+    input = hb.hb_subset_input_create_or_fail();
+    if (!input) throw new Error("字型子集初始化失敗。");
+    const unicodes = hb.hb_subset_input_unicode_set(input);
+    for (const character of characters) for (const symbol of character) hb.hb_set_add(unicodes, symbol.codePointAt(0)!);
+    subset = hb.hb_subset_or_fail(face, input);
+    if (!subset) throw new Error("字型子集產生失敗。");
+    result = hb.hb_face_reference_blob(subset);
+    // Read the heap only after subsetting: the wasm memory may have grown and detached older views.
+    const data = Buffer.from(new Uint8Array(hb.memory.buffer, hb.hb_blob_get_data(result, 0), hb.hb_blob_get_length(result)));
+    if (!data.length) throw new Error("字型子集為空。");
+    return data;
+  } finally {
+    if (result) hb.hb_blob_destroy(result);
+    if (subset) hb.hb_face_destroy(subset);
+    if (input) hb.hb_subset_input_destroy(input);
+    if (face) hb.hb_face_destroy(face);
+    hb.free(fontPointer);
+  }
 }
