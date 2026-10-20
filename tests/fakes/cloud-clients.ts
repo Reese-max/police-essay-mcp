@@ -3,7 +3,7 @@ import type { FirestoreClient, StorageClient } from "../../src/cloud-storage.js"
 
 type Data = Record<string, unknown>;
 export type Read = { path: string; revision: number; value?: Data };
-export type Write = { path: string; value: Data; create: boolean };
+export type Write = { path: string; value: Data; create: boolean; delete?: boolean };
 function clone<T>(value: T): T {
   if (value instanceof Timestamp) return Timestamp.fromMillis(value.toMillis()) as T;
   if (Buffer.isBuffer(value)) return Buffer.from(value) as T;
@@ -34,6 +34,7 @@ export class MemoryFirestore {
     if (writes.some(write => write.create && this.documents.has(write.path))) throw new Error("Already exists.");
     if (this.failManifest && writes.some(write => write.path.includes("/artifacts/"))) throw new Error("synthetic manifest failure");
     for (const write of writes) {
+      if (write.delete) { this.documents.delete(write.path); continue; }
       const revision = (this.documents.get(write.path)?.revision ?? 0) + 1;
       this.documents.set(write.path, { revision, value: clone(write.value) });
     }
@@ -52,30 +53,44 @@ export class MemoryFirestore {
   collection(path: string) {
     let order: string | undefined;
     let maximum = Infinity;
+    const filters: Array<[string, unknown]> = [];
     const query = {
       doc: (id: string) => this.doc(path + "/" + id),
       orderBy: (field: string, _direction: string) => { order = field; return query; },
       limit: (limit: number) => { maximum = limit; return query; },
+      where: (field: string, operator: "==", value: unknown) => {
+        if (operator !== "==") throw new Error("Only == filters are faked.");
+        filters.push([field, value]);
+        return query;
+      },
       get: async () => {
         if (this.failRead) throw new Error("synthetic dependency failure");
-        const entries = [...this.documents.entries()].filter(([key]) =>
-          key.startsWith(path + "/") && key.slice(path.length + 1).indexOf("/") === -1);
+        const entries = [...this.documents.entries()].filter(([key, item]) =>
+          key.startsWith(path + "/") && key.slice(path.length + 1).indexOf("/") === -1
+          && filters.every(([field, value]) => item.value[field] === value));
         if (order) entries.sort((a, b) => String(b[1].value[order!]).localeCompare(String(a[1].value[order!])));
-        return { docs: entries.slice(0, maximum).map(([, item]) => ({ data: () => clone(item.value) })) };
+        return { docs: entries.slice(0, maximum).map(([key, item]) => ({ ref: this.doc(key), data: () => clone(item.value) })) };
       },
     };
     return query;
   }
   async runTransaction<T>(callback: (transaction: {
-    get: (ref: { path: string }) => Promise<{ data: () => Data | undefined }>;
+    get: (ref: { path: string } | { get: () => Promise<{ docs: Array<{ ref: { path: string } }> }> }) => Promise<unknown>;
     set: (ref: { path: string }, value: Data) => void;
     create: (ref: { path: string }, value: Data) => void;
+    delete: (ref: { path: string }) => void;
   }) => Promise<T>): Promise<T> {
     for (let attempt = 0; attempt < 5; attempt++) {
       const reads: Read[] = [];
       const writes: Write[] = [];
       const result = await callback({
         get: async ref => {
+          if (!("path" in ref)) {
+            // Query read: every returned document joins the optimistic read set.
+            const snapshot = await ref.get();
+            for (const doc of snapshot.docs) reads.push(await this.read(doc.ref.path));
+            return snapshot;
+          }
           const read = await this.read(ref.path);
           reads.push(read);
           await this.onTransactionRead?.(read);
@@ -83,6 +98,7 @@ export class MemoryFirestore {
         },
         set: (ref, value) => { writes.push({ path: ref.path, value, create: false }); },
         create: (ref, value) => { writes.push({ path: ref.path, value, create: true }); },
+        delete: ref => { writes.push({ path: ref.path, value: {}, create: false, delete: true }); },
       });
       if (await this.commit(reads, writes)) return result;
       this.retries++;

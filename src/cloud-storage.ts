@@ -9,7 +9,7 @@ import { answerDocumentSchema, type AnswerDocument } from "./domain.js";
 import { layoutSections } from "./layout.js";
 import {
   FileStore, StoreNotFoundError, safeId, exportMimeType, exportArtifactHandlePattern,
-  EXPORT_ARTIFACT_TTL_MS, type EssayStore, type ExportDetails,
+  EXPORT_ARTIFACT_TTL_MS, type DeletedAnswer, type EssayStore, type ExportDetails,
 } from "./storage.js";
 
 export const MAX_ANSWER_BYTES = 700 * 1024;
@@ -129,6 +129,36 @@ export class CloudStore implements EssayStore {
       transaction.set(ref, committed);
       transaction.create(ref.collection("revisions").doc(String(committed.version)), committed);
     }));
+  }
+
+  async deleteAnswer(id: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
+    this.requireWriter();
+    const ref = this.answerRef(id);
+    const artifacts = this.options.firestore.collection(this.userPath + "/artifacts").where("answerId", "==", safeId(id));
+    // Firestore has no 500-write cap per transaction, so the answer, its whole revision
+    // history and its export manifests disappear together or not at all.
+    const deleted = await backend(() => this.options.firestore.runTransaction(async transaction => {
+      const answer = this.parseAnswer((await transaction.get(ref)).data());
+      if (answer.version !== options.expectedVersion) {
+        throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + answer.version + ". Read the answer again before deleting.");
+      }
+      const revisions = (await transaction.get(ref.collection("revisions"))).docs;
+      const manifests = (await transaction.get(artifacts)).docs;
+      for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
+      transaction.delete(ref);
+      return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
+    }), true);
+    // Without manifests the objects are unreachable; remove them now instead of waiting for
+    // the bucket lifecycle, which still covers any delete that fails here.
+    for (const value of deleted.manifests) {
+      const parsed = manifestSchema.safeParse(value);
+      if (!parsed.success || parsed.data.bucket !== this.options.artifactBucket
+        || !parsed.data.objectName.startsWith(this.options.environment + "/" + this.options.ownerKey + "/")) continue;
+      const { objectName, generation } = parsed.data;
+      try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
+      catch (error) { if (errorCode(error) !== 404) logStorageFailure("artifact_delete_failed"); }
+    }
+    return { answer: deleted.answer, revisions: deleted.revisions, exports: deleted.manifests.length };
   }
 
   async createExportHandle(outputPath: string, details: ExportDetails) {

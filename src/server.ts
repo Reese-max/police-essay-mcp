@@ -35,21 +35,31 @@ export const DEFAULT_TEMPLATE_ID = "police_information_essay";
 const expectedVersionSchema = z.number().int().positive().optional();
 const answerIdSchema = z.string().regex(/^ans_[A-Za-z0-9-]+$/);
 
+// tools/list sends every outputSchema on each connection; inlining the full nested answer/layout
+// schemas made it ~262 KB. Output schemas keep the key fields typed and let nested detail
+// (paragraphs, formats, rendered lines) pass through unchanged in structuredContent.
+const answerSummarySchema = answerDocumentSchema.pick({ id: true, templateId: true, title: true, version: true }).loose();
+const layoutSummarySchema = layoutReportSchema.pick({
+  capacity: true, totalLines: true, pagesUsed: true, overflowLines: true, remainingLines: true, fits: true, status: true,
+}).loose();
+const sectionSummarySchema = storedSectionSchema.pick({ id: true, heading: true, order: true }).loose();
+const templateSummarySchema = templateSchema.pick({ id: true, name: true, pages: true, linesPerPage: true, paperProfile: true }).loose();
+
 const snapshotOutputSchema = z.object({
-  answer: answerDocumentSchema,
-  layout: layoutReportSchema,
+  answer: answerSummarySchema,
+  layout: layoutSummarySchema,
 });
 
 const layoutOutputSchema = z.object({
   answerId: answerIdSchema,
   version: z.number().int().positive(),
-  layout: layoutReportSchema,
+  layout: layoutSummarySchema,
 });
 
 const sectionOutputSchema = z.object({
-  section: storedSectionSchema,
-  answer: answerDocumentSchema,
-  layout: layoutReportSchema,
+  section: sectionSummarySchema,
+  answer: answerSummarySchema,
+  layout: layoutSummarySchema,
 });
 
 const replacementContentSchema = z.object({
@@ -98,7 +108,7 @@ const exportOutputSchema = z.object({
   exportUri: z.string(),
   exportExpiresAt: z.string(),
   pages: z.number().int().positive(),
-  layout: layoutReportSchema,
+  layout: layoutSummarySchema,
   font: z.string().optional(),
   fontWarning: z.string().optional(),
 });
@@ -158,7 +168,7 @@ async function makeChangePreview(
   operation: "write" | "replace" | "format" | "insert" | "delete",
   before: AnswerSnapshot,
   afterAnswer: AnswerDocument,
-): Promise<z.infer<typeof changePreviewOutputSchema>> {
+): Promise<Omit<z.infer<typeof changePreviewOutputSchema>, "before" | "after"> & { before: AnswerSnapshot; after: AnswerSnapshot }> {
   const template = await store.getTemplate(before.answer.templateId);
   const after = snapshot(afterAnswer, template);
   const lineDelta = after.layout.totalLines - before.layout.totalLines;
@@ -256,6 +266,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
           "6. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
           "7. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
           "8. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "9. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
         ].join("\n"),
       }],
     }),
@@ -288,7 +299,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       title: "列出答題紙模板",
       description: "Use this when the user wants to inspect available essay answer-sheet templates before creating an answer.",
       inputSchema: {},
-      outputSchema: z.object({ templates: z.array(templateSchema) }),
+      outputSchema: z.object({ templates: z.array(templateSummarySchema) }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
@@ -307,9 +318,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         answerId: answerIdSchema.optional(),
       },
       outputSchema: z.object({
-        template: templateSchema,
-        answer: answerDocumentSchema.optional(),
-        layout: layoutReportSchema.optional(),
+        template: templateSummarySchema,
+        answer: answerSummarySchema.optional(),
+        layout: layoutSummarySchema.optional(),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: ANSWER_SHEET_UI_META,
@@ -340,7 +351,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
       title: "列出申論答案",
       description: "Use this when the user wants to find saved essay answers that can be reopened or edited.",
       inputSchema: {},
-      outputSchema: z.object({ answers: z.array(answerDocumentSchema) }),
+      outputSchema: z.object({ answers: z.array(answerSummarySchema) }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
@@ -758,6 +769,49 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     },
   );
 
+  const deleteAnswerTool = registerTool(
+    "delete_answer",
+    {
+      title: "刪除申論答案",
+      description: "Use this only when the user explicitly asks to permanently delete a saved answer. Pass the current version from read_answer or list_answers as expectedVersion. The answer, its revision history and its exports are removed and cannot be restored.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        expectedVersion: z.number().int().positive(),
+      },
+      outputSchema: z.object({
+        answerId: answerIdSchema,
+        title: z.string(),
+        version: z.number().int().positive(),
+        deletedRevisions: z.number().int().nonnegative(),
+        deletedExports: z.number().int().nonnegative(),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "刪除答案…",
+        "openai/toolInvocation/invoked": "答案已永久刪除。",
+      },
+    },
+    async ({ answerId, expectedVersion }) => {
+      let deleted;
+      try {
+        deleted = await store.deleteAnswer(answerId, { expectedVersion });
+      } catch (error) {
+        if (isStoreNotFound(error)) throw new Error(`找不到答案 ${answerId}；可能已刪除，或請確認 answerId。`);
+        throw error;
+      }
+      return {
+        structuredContent: {
+          answerId,
+          title: deleted.answer.title,
+          version: deleted.answer.version,
+          deletedRevisions: deleted.revisions,
+          deletedExports: deleted.exports,
+        },
+        content: textContent(`已永久刪除「${deleted.answer.title}」（${answerId}，版本 ${deleted.answer.version}）；一併刪除 ${deleted.revisions} 筆修改紀錄與 ${deleted.exports} 個匯出檔。`),
+      };
+    },
+  );
+
   registerTool(
     "reflow_answer",
     {
@@ -958,7 +1012,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
   for (const [name, tool] of [
     ["create_answer", createAnswerTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
-    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
+    ["delete_answer", deleteAnswerTool], ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }

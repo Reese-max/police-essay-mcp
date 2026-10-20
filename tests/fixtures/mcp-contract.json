@@ -29305,6 +29305,14 @@
     {
       "path": "oauth.tools[*]._meta.securitySchemes",
       "reason": "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base."
+    },
+    {
+      "path": "*.tools[*].outputSchema",
+      "reason": "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema."
+    },
+    {
+      "path": "owner.tools[delete_answer]",
+      "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
     }
   ]
 }

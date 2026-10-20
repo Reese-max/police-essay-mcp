@@ -23,12 +23,20 @@ export interface ExportDetails {
   temporaryDir?: string;
 }
 
+export interface DeletedAnswer {
+  answer: AnswerDocument;
+  revisions: number;
+  exports: number;
+}
+
 export interface EssayStore {
   ensureDirectories(): Promise<void>;
   getTemplate(templateId: string): Promise<AnswerTemplate>;
   listTemplates(): Promise<AnswerTemplate[]>;
   getAnswer(answerId: string): Promise<AnswerDocument>;
   saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
+  /** Permanently removes the answer, its revision history and its export artifacts. */
+  deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer>;
   listAnswers(): Promise<AnswerDocument[]>;
   resolveExportPath(filename: string, extension: ExportFormat): string;
   createExportHandle(outputPath: string, details: ExportDetails): Promise<{
@@ -155,6 +163,37 @@ export class FileStore implements EssayStore {
       } finally {
         await fs.rm(temporary, { force: true }).catch(() => undefined);
       }
+    });
+  }
+
+  async deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
+    const id = safeId(answerId);
+    return this.withAnswerWriteLock(id, async () => {
+      const answer = await this.getAnswer(id);
+      if (answer.version !== options.expectedVersion) {
+        throw new Error(
+          `Version conflict: expected ${options.expectedVersion}, current version is ${answer.version}. Read the answer again before deleting.`,
+        );
+      }
+      await fs.rm(path.join(this.answerDir, `${id}.json`));
+      let exports = 0;
+      const names = await fs.readdir(this.artifactDir).catch(() => [] as string[]);
+      for (const name of names.filter((item) => item.endsWith(".json"))) {
+        const handle = name.slice(0, -".json".length);
+        let value: unknown;
+        try {
+          value = JSON.parse(await fs.readFile(path.join(this.artifactDir, name), "utf8"));
+        } catch {
+          continue;
+        }
+        if (!isExportArtifactManifest(value, handle) || value.answerId !== id) continue;
+        await Promise.all([
+          fs.rm(path.join(this.artifactDir, name), { force: true }),
+          fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true }),
+        ]);
+        exports++;
+      }
+      return { answer, revisions: 0, exports };
     });
   }
 
