@@ -9,6 +9,24 @@ import {
   type AnswerTemplate,
 } from "./domain.js";
 
+const TRANSIENT_RENAME_ERRORS = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+/**
+ * rename() that rides out Windows' brief locks: replacing a file that another handle (a concurrent
+ * read, antivirus, the indexer) holds open fails with EPERM, EACCES or EBUSY for a moment.
+ */
+export async function renameReplacing(from: string, to: string, rename: (from: string, to: string) => Promise<void> = fs.rename): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await rename(from, to);
+    } catch (error) {
+      if (attempt >= 8 || !TRANSIENT_RENAME_ERRORS.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+      // 10 ms doubling to 1.28 s: about 2.5 s in all before the error is reported.
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** attempt));
+    }
+  }
+}
+
 export function safeId(id: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)) {
     throw new Error("Invalid identifier.");
@@ -169,7 +187,7 @@ export class FileStore implements EssayStore {
         const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
         try {
           await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-          await fs.rename(temporary, target);
+          await renameReplacing(temporary, target);
         } finally {
           await fs.rm(temporary, { force: true }).catch(() => undefined);
         }
@@ -339,7 +357,7 @@ export class FileStore implements EssayStore {
     try {
       await fs.copyFile(source, artifactPath);
       await fs.writeFile(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
-      await fs.rename(temporaryPath, manifestPath);
+      await renameReplacing(temporaryPath, manifestPath);
     } catch (error) {
       await Promise.all([
         fs.rm(artifactPath, { force: true }).catch(() => undefined),
