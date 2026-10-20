@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { CloudStore } from "../src/cloud-storage.js";
+import { CloudStore, StoreUnavailableError } from "../src/cloud-storage.js";
 import { createAnswerDocument, type AnswerDocument } from "../src/domain.js";
 import { withTemporaryExport } from "../src/exporters.js";
 import { createEssayMcpServer } from "../src/server.js";
@@ -153,4 +153,88 @@ test("delete_answer tool reports counts, requires expectedVersion and is absent 
   } finally {
     await Promise.all([owner.close(), reader.close()]);
   }
+});
+
+test("an export manifest that outlives its answer is never readable (cloud and file)", async () => {
+  const s = cloud();
+  const doc = answer("raced export");
+  await s.store().saveAnswer(doc);
+  const orphan = await exportText(s.store(), doc);
+  // Simulate an export whose manifest committed after a concurrent delete removed the answer.
+  for (const key of [...s.firestore.documents.keys()]) if (key.includes("/answers/" + doc.id)) s.firestore.documents.delete(key);
+  const downloads = s.storage.downloads;
+  await assert.rejects(s.store().readExport(orphan.handle), isStoreNotFound);
+  assert.equal(s.storage.downloads, downloads, "no object bytes are fetched for an orphan manifest");
+
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-orphan-"));
+  const store = new FileStore({ templateDir, answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
+  try {
+    const local = answer("raced local export");
+    await store.saveAnswer(local);
+    const exported = await exportText(store, local);
+    await fs.rm(path.join(store.answerDir, local.id + ".json"));
+    await assert.rejects(store.readExport(exported.handle), /Export artifact not found/);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("file delete_answer keeps the answer when artifact cleanup cannot run", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-delete-fail-"));
+  const store = new FileStore({ templateDir, answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
+  try {
+    const doc = answer("cleanup blocked");
+    await store.saveAnswer(doc);
+    await fs.writeFile(store.artifactDir, "not a directory");
+    await assert.rejects(store.deleteAnswer(doc.id, { expectedVersion: 1 }));
+    assert.equal((await store.getAnswer(doc.id)).title, "cleanup blocked", "a retry is still possible");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a write racing the delete transaction retries it and ends in a version conflict", async () => {
+  const s = cloud();
+  const doc = answer("racing write");
+  await s.store().saveAnswer(doc);
+  let raced = false;
+  s.firestore.onTransactionRead = async read => {
+    if (raced || !read.path.endsWith("/answers/" + doc.id)) return;
+    raced = true;
+    s.firestore.onTransactionRead = undefined;
+    await edit(s.store(), doc, "concurrent edit");
+  };
+  await assert.rejects(s.store().deleteAnswer(doc.id, { expectedVersion: 1 }), /Version conflict: expected 1, current version is 2/);
+  assert.equal((await s.store().getAnswer(doc.id)).version, 2);
+  assert.ok(s.firestore.retries >= 1);
+});
+
+test("an export committed during the delete transaction is deleted too", async () => {
+  const s = cloud();
+  const doc = answer("racing export");
+  await s.store().saveAnswer(doc);
+  await exportText(s.store(), doc);
+  let raced = false;
+  s.firestore.onTransactionRead = async read => {
+    // Fires after the manifest query returned, so the new manifest is a phantom for this attempt.
+    if (raced || !read.path.includes("/artifacts/")) return;
+    raced = true;
+    s.firestore.onTransactionRead = undefined;
+    await exportText(s.store(), doc);
+  };
+  const deleted = await s.store().deleteAnswer(doc.id, { expectedVersion: 1 });
+  assert.equal(deleted.exports, 2);
+  assert.ok(![...s.firestore.documents.values()].some(item => item.value.answerId === doc.id));
+  assert.equal(s.storage.objects.size, 0);
+});
+
+test("infrastructure 404/5 during delete is unavailable, not a missing answer", async () => {
+  class MissingDatabase extends MemoryFirestore {
+    override async runTransaction<T>(): Promise<T> { throw Object.assign(new Error("database not found"), { code: 5 }); }
+  }
+  const firestore = new MissingDatabase();
+  const store = new CloudStore({ firestore: firestore.client(), storage: new MemoryStorage().client(), environment: "staging",
+    ownerKey, artifactBucket: "synthetic-artifacts", templateDir });
+  await assert.rejects(store.deleteAnswer(answer("x").id, { expectedVersion: 1 }),
+    (error: unknown) => error instanceof StoreUnavailableError && !isStoreNotFound(error));
 });

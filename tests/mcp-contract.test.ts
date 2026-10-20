@@ -30,4 +30,7 @@ test("compact output schemas may only drop fields or loosen additionalProperties
   assert.throws(() => assertSchemaSubset({ type: "object", properties: { extra: { type: "string" } } }, base, "added"), /not a base field/);
   assert.throws(() => assertSchemaSubset({ type: "object", properties: { n: { type: "string" } } }, base, "retyped"), /differs from base/);
   assert.throws(() => assertSchemaSubset({ type: "object", required: ["missing"] }, base, "required"), /requires a field/);
+  assert.throws(() => assertSchemaSubset({ type: "object", properties: { id: {} }, required: ["id"], additionalProperties: {} }, base, "emptied"), /drops base keyword/);
+  assert.throws(() => assertSchemaSubset({ type: "object", properties: { id: { type: "string" } }, required: ["id"], additionalProperties: false }, base, "closed"),
+    /must allow the dropped base fields/);
 });

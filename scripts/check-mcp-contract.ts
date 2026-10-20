@@ -24,10 +24,19 @@ export function stableJson(value: unknown): string {
 }
 type JsonSchema = Record<string, unknown>;
 type ContractTool = { name: string; outputSchema?: JsonSchema; _meta?: Record<string, unknown> } & Record<string, unknown>;
-/** A compact schema may drop fields and loosen additionalProperties, but never add or retype a field. */
+/**
+ * A compact schema may drop object fields (and must then allow them via additionalProperties),
+ * but every field it keeps carries the base field's keywords unchanged.
+ */
 export function assertSchemaSubset(compact: unknown, base: unknown, where: string): void {
   assert.ok(compact && typeof compact === "object" && base && typeof base === "object", where + " must be an object schema");
   const c = compact as JsonSchema, b = base as JsonSchema;
+  for (const key of Object.keys(b)) {
+    if (["properties", "required", "additionalProperties"].includes(key)) continue;
+    assert.ok(key in c, `${where} drops base keyword ${key}`);
+  }
+  const dropped = Object.keys((b.properties ?? {}) as JsonSchema).some(name => !(name in ((c.properties ?? {}) as JsonSchema)));
+  if (dropped) assert.notEqual(c.additionalProperties, false, `${where} must allow the dropped base fields`);
   for (const [key, value] of Object.entries(c)) {
     if (key === "properties") {
       const baseProperties = (b.properties ?? {}) as JsonSchema;

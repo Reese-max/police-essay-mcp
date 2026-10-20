@@ -136,18 +136,20 @@ export class CloudStore implements EssayStore {
     const ref = this.answerRef(id);
     const artifacts = this.options.firestore.collection(this.userPath + "/artifacts").where("answerId", "==", safeId(id));
     // Firestore has no 500-write cap per transaction, so the answer, its whole revision
-    // history and its export manifests disappear together or not at all.
+    // history and its export manifests disappear together or not at all. Revisions are
+    // read as bare references (empty field mask) to keep large histories out of memory.
+    // A missing answer is decided by parseAnswer; infrastructure 404/5 stays "unavailable".
     const deleted = await backend(() => this.options.firestore.runTransaction(async transaction => {
       const answer = this.parseAnswer((await transaction.get(ref)).data());
       if (answer.version !== options.expectedVersion) {
         throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + answer.version + ". Read the answer again before deleting.");
       }
-      const revisions = (await transaction.get(ref.collection("revisions"))).docs;
+      const revisions = (await transaction.get(ref.collection("revisions").select())).docs;
       const manifests = (await transaction.get(artifacts)).docs;
       for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
       transaction.delete(ref);
       return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
-    }), true);
+    }));
     // Without manifests the objects are unreachable; remove them now instead of waiting for
     // the bucket lifecycle, which still covers any delete that fails here.
     for (const value of deleted.manifests) {
@@ -240,6 +242,8 @@ export class CloudStore implements EssayStore {
       safeId(value.answerId);
       this.resolveExportPath(value.name, value.format);
       if (exportMimeType(value.name) !== value.mimeType) throw notFound();
+      // A manifest committed after a concurrent delete_answer must not expose deleted content.
+      await this.getAnswer(value.answerId);
       const file = this.bucket.file(value.objectName, { generation: value.generation });
       const [metadata] = await backend(() => file.getMetadata(), true);
       if (String(metadata.generation) !== value.generation || Number(metadata.size) !== value.sizeBytes) throw notFound();
