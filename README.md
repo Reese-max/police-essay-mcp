@@ -47,6 +47,7 @@ npm start
 - `MCP_AUTH_TOKEN`：HTTP owner Bearer token；所有 HTTP 模式預設都必須設定，包含 tunnel 代理的 loopback
 - `MCP_READ_TOKEN`：可選的獨立唯讀 Bearer token，只提供讀取與不寫入的預覽工具
 - `MCP_ALLOW_ANONYMOUS_LOOPBACK`：只有在完全沒有 tunnel／代理的純本機 loopback 用途，才能明確設為 `true`，且不得同時設定 token
+- `MCP_ALLOW_ANONYMOUS_REMOTE`：明確設為 `true` 時，遠端 `/mcp` 不需任何認證即可讀寫、刪除與匯出全部答案；只能搭配 `AUTH_MODE=bearer`，且不得設定非空白的 owner／read token、`CORS_ORIGIN` 或 `MCP_ALLOW_ANONYMOUS_LOOPBACK`；帶瀏覽器 Origin 的請求一律拒絕
 - `MCP_MAX_BODY_BYTES`：HTTP 請求大小上限，預設 2 MB
 - `MCP_REQUEST_TIMEOUT_MS`：HTTP 請求逾時，預設 30 秒
 - `CORS_ORIGIN`：可選的單一可信 HTTPS origin（或本機 HTTP origin）；未設定時不允許跨來源瀏覽器請求
@@ -58,11 +59,11 @@ npm run check
 npm test
 ```
 
-若要接 ChatGPT Developer Mode，先確認連接器能對每次 `/mcp` GET／POST／DELETE 請求提供 owner Bearer credential，或由可信 access gateway 驗證使用者後代送 credential。確認 HTTPS tunnel 本身的存取控制，再使用 tunnel URL 加上 `/mcp` 建立 app。若連接器無法提供這項驗證，請勿公開 tunnel；可改用本機 stdio。工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
+若要接 ChatGPT Developer Mode，先確認連接器能對每次 `/mcp` GET／POST／DELETE 請求提供 owner Bearer credential，或由可信 access gateway 驗證使用者後代送 credential。確認 HTTPS tunnel 本身的存取控制，再使用 tunnel URL 加上 `/mcp` 建立 app。若連接器無法提供這項驗證，請勿公開 tunnel；可改用本機 stdio。唯一例外是擁有者明確接受風險並啟用 `MCP_ALLOW_ANONYMOUS_REMOTE=true`，此時 app 以無認證連線，任何知道網址的人都能讀寫全部答案。工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
 
 ## 安全與部署
 
-HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，因此 HTTP 預設沒有 owner token 就拒絕啟動。使用高熵隨機 token，勿放進 URL 或提交到 Git。可另外設定不同的 `MCP_READ_TOKEN` 給唯讀客戶端；此 token 無法呼叫建立、修改、刪除或匯出工具，也不能讀取匯出 artifact resource。`MCP_ALLOW_ANONYMOUS_LOOPBACK=true` 僅保留給沒有 tunnel／代理的純本機使用，非 loopback `HOST` 會拒絕此模式。`MCP_ALLOW_ANONYMOUS_REMOTE=true` 已停用。缺少或無效 credential 的 `/mcp` 請求會在進入 MCP handler 前回傳 401，並附 `WWW-Authenticate: Bearer` challenge，讓連接器能辨識所需的 credential 類型。CORS 只接受明確設定的可信來源，而且不能代替認證。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
+HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，因此 HTTP 預設沒有 owner token 就拒絕啟動。使用高熵隨機 token，勿放進 URL 或提交到 Git。可另外設定不同的 `MCP_READ_TOKEN` 給唯讀客戶端；此 token 無法呼叫建立、修改、刪除或匯出工具，也不能讀取匯出 artifact resource。`MCP_ALLOW_ANONYMOUS_LOOPBACK=true` 僅保留給沒有 tunnel／代理的純本機使用，非 loopback `HOST` 會拒絕此模式。`MCP_ALLOW_ANONYMOUS_REMOTE=true` 會讓任何能連到服務的人匿名讀寫全部答案，只應在擁有者明確接受此風險時使用，啟動時會記錄警告。除匿名模式外，缺少或無效 credential 的 `/mcp` 請求會在進入 MCP handler 前回傳 401，並附 `WWW-Authenticate: Bearer` challenge，讓連接器能辨識所需的 credential 類型。CORS 只接受明確設定的可信來源，而且不能代替認證。`/health` 是存活檢查，`/readyz` 會額外確認模板可讀取。
 
 匿名 loopback 的 `/mcp` 只接受 `127.0.0.1`、`localhost` 或 `[::1]` 的 Host（可帶目前監聽 port）；公開 Host 或帶有 `Forwarded`、`X-Forwarded-*`、`Via` 的請求會在建立 MCP transport 前回傳 401。這也阻擋以公開網域連到 loopback 的 DNS rebinding 請求。代理若改寫 Host 並移除所有代理標頭，server 無法辨識，所以任何 tunnel／代理仍必須使用 owner token 模式。此限制不影響有 owner／唯讀 token 的代理請求；自動測試使用隔離資料，不能代替實際 HTTPS tunnel／ChatGPT 連接器的 credential／401 收據。
 
@@ -77,6 +78,9 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。
+8. 使用者明確要求永久刪除時，以 `read_answer` / `list_answers` 取得目前版本，再呼叫 `delete_answer`（必須帶 `expectedVersion`）。答案、全部修改紀錄與匯出檔一併刪除，無法復原；唯讀 credential 看不到此工具。
+
+工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 71 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
 
 ## 正式格式
 
@@ -128,7 +132,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 新增模板 `police_information_essay_166`；既有模板及答案不變。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
 
-此模式須取得教育部標準楷書 5.1 完整未修改字型，設定 `ESSAY_MCP_PAPER_FONT` 為檔案絕對路徑，並在開啟 Word 的電腦安裝同一字型。字型不隨 repository 分發。字型來源與使用條件見 [原稿紙工作流](docs/original-paper-workflow.md)。
+此模式須取得教育部標準楷書 5.1 完整未修改字型，設定 `ESSAY_MCP_PAPER_FONT` 為檔案絕對路徑。`export_docx` 與 PDF 一樣只內嵌答案用到的字形（另含 ASCII 與常用全形標點），未安裝此字型的 Word／LibreOffice 也以同一字型、同一換行顯示；在 Word 新增內嵌範圍以外的字時才改用替代字型。字型不隨 repository 分發。字型來源與使用條件見 [原稿紙工作流](docs/original-paper-workflow.md)。
 
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板的 `export_docx`、`export_pdf`、`export_text` 均拒絕超頁及 `allowOverflow: true`。
 

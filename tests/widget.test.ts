@@ -3,14 +3,14 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole, type DOMWindow } from 'jsdom';
 import { POLICE_ESSAY_WIDGET_HTML } from '../src/widget.js';
-import { createAnswerDocument, type AnswerTemplate } from '../src/domain.js';
+import { createAnswerDocument, type AnswerTemplate, type HeadingStyleInput } from '../src/domain.js';
 import { layoutSections } from '../src/layout.js';
 
 const template = JSON.parse(readFileSync(new URL('../templates/police_information_essay.json', import.meta.url), 'utf8')) as AnswerTemplate;
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 type Args = { answerId: string; sectionId?: string; expectedVersion?: number; newText?: string; paragraphs?: Array<{text: string; format?: unknown}> };
-async function host(options: {readOnly?: boolean; legacy?: boolean} = {}) {
-  let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',paragraphs:[{text:'第一段',format:{firstLineIndent:2}},{text:'第二段',format:{leftIndent:2}}]}]});
+async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle?: HeadingStyleInput; italic?: boolean} = {}) {
+  let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',headingStyle:options.headingStyle,paragraphs:[{text:'第一段',format:{firstLineIndent:2,italic:options.italic}},{text:'第二段',format:{leftIndent:2}}]}]});
   const calls: Array<{name: string; args: Args}> = [];
   const protocol: string[] = [];
   let held: (()=>void) | undefined;
@@ -74,12 +74,31 @@ test('widget initializes with the host and preserves paragraph formats when appl
   assert.equal(h.answer.version,2);assert.equal(h.element<HTMLTextAreaElement>('text').value,'新版第一段\n第二段');
  }finally{h.dom.window.close();}
 });
-test('widget rejects a late preview after the draft changes and refuses paragraph-count changes',async()=>{
+test('widget rejects a late preview after the draft changes',async()=>{
  const h=await host();try {
   h.setHold();h.input('預覽版本\n第二段');await h.click('preview-edit');h.input('繼續修改\n第二段');await h.release();
   assert.equal(h.element<HTMLButtonElement>('apply-edit').disabled,true);await h.click('apply-edit');assert.equal(h.calls.filter(x=>x.name==='replace_text').length,0);
-  h.input('增加\n第三\n段');await h.click('preview-edit');assert.match(h.element('preview').textContent!,/段落數已改變/);
  }finally{h.dom.window.close();}
+});
+test('widget keeps paragraph formats when lines are added, rewritten or removed',async()=>{
+ // Each draft line lists which stored paragraph (0: firstLineIndent 2, 1: leftIndent 2) lends its format.
+ for (const [draft,sources] of [
+  ['第一段\n新增的一段\n第二段',[0,0,1]],
+  ['改寫第一段\n第二段\n第三段',[0,1,1]],
+  ['開頭\n第一段\n第二段',[0,0,1]],
+  ['第二段',[1]],
+ ] as const) {
+  const h=await host();try {
+   const stored=h.answer.sections[0].paragraphs!.map(p=>p.format);
+   assert.equal(stored[0]!.firstLineIndent,2);assert.equal(stored[1]!.leftIndent,2);
+   h.input(draft);await h.click('preview-edit');
+   assert.equal(h.element<HTMLButtonElement>('apply-edit').disabled,false,h.element('preview').textContent!);
+   const preview=h.calls.find(x=>x.name==='preview_replace_text')!;
+   assert.deepEqual(JSON.parse(JSON.stringify(preview.args.paragraphs)),
+    JSON.parse(JSON.stringify(draft.split('\n').map((text,i)=>({text,format:stored[sources[i]]})))));
+   assert.equal(preview.args.newText,undefined);
+  }finally{h.dom.window.close();}
+ }
 });
 test('widget layout check refreshes the current version before the next edit',async()=>{
  const h=await host();try {
@@ -94,4 +113,18 @@ test('read-only widget disables editing and legacy host tool calls work without 
  const legacy=await host({legacy:true});try {
   assert.equal(legacy.protocol.length,0);legacy.input('修改第一段\n第二段');await legacy.click('preview-edit');await legacy.click('apply-edit');assert.equal(legacy.answer.version,2);
  }finally{legacy.dom.window.close();}
+});
+test('widget grid shows bold and italic only where the line format sets them',async()=>{
+ const weight=(h: Awaited<ReturnType<typeof host>>,text: string)=>{
+  const cell=[...h.dom.window.document.querySelectorAll('.line-text')].find(x=>x.textContent===text)!;
+  const style=h.dom.window.getComputedStyle(cell);return [style.fontWeight,style.fontStyle];
+ };
+ const plain=await host({headingStyle:{bold:false}});try {
+  // jsdom reports '' when no stylesheet rule sets the property.
+  assert.deepEqual(weight(plain,'（一）'),['','']);assert.deepEqual(weight(plain,'第二段'),['','']);
+ }finally{plain.dom.window.close();}
+ const styled=await host({italic:true});try {
+  assert.deepEqual(weight(styled,'（一）'),['800','']);assert.deepEqual(weight(styled,'第二段'),['','']);
+  assert.deepEqual(weight(styled,'第一段'),['','italic']);
+ }finally{styled.dom.window.close();}
 });

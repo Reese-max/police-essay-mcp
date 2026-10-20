@@ -1,0 +1,180 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "sections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "question",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "title",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "ownerKey",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "createdAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "committedAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "schemaVersion",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "templateId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "id",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "answers",
+      "fieldPath": "version",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "sections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "question",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "title",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "ownerKey",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "createdAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "committedAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "schemaVersion",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "templateId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "id",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "revisions",
+      "fieldPath": "version",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "handle",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "ownerKey",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "answerId",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "answerVersion",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "format",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "name",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "mimeType",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "bucket",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "objectName",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "generation",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "sha256",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "sizeBytes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "createdAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "expiresAt",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "artifacts",
+      "fieldPath": "schemaVersion",
+      "indexes": []
+    }
+  ]
+}

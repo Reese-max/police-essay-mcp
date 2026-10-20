@@ -9,16 +9,65 @@ import {
   type AnswerTemplate,
 } from "./domain.js";
 
-function safeId(id: string): string {
+export function safeId(id: string): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)) {
     throw new Error("Invalid identifier.");
   }
   return id;
 }
 
-export class FileStore {
+export interface ExportDetails {
+  answerId: string;
+  answerVersion: number;
+  format: ExportFormat;
+  temporaryDir?: string;
+}
+
+export interface DeletedAnswer {
+  answer: AnswerDocument;
+  revisions: number;
+  exports: number;
+}
+
+export interface EssayStore {
+  ensureDirectories(): Promise<void>;
+  getTemplate(templateId: string): Promise<AnswerTemplate>;
+  listTemplates(): Promise<AnswerTemplate[]>;
+  getAnswer(answerId: string): Promise<AnswerDocument>;
+  saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
+  /** Permanently removes the answer, its revision history and its export artifacts. */
+  deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer>;
+  /** One committed version of an answer, kept after later edits. */
+  getRevision(answerId: string, version: number): Promise<AnswerDocument>;
+  /** Up to `limit` committed versions counting down from the current one, newest first; missing ones are skipped. */
+  listRevisions(answerId: string, options: { limit: number }): Promise<AnswerDocument[]>;
+  listAnswers(): Promise<AnswerDocument[]>;
+  resolveExportPath(filename: string, extension: ExportFormat): string;
+  createExportHandle(outputPath: string, details: ExportDetails): Promise<{
+    handle: string; name: string; mimeType: string; expiresAt: string;
+  }>;
+  readExport(handle: string): Promise<{
+    name: string; mimeType: string; answerId: string; answerVersion: number;
+    format: ExportFormat; expiresAt: string; data: Buffer;
+  }>;
+  checkReadiness?(): Promise<void>;
+  /** Present on stores that isolate data per authenticated principal (cloud backend). */
+  forPrincipal?(ownerKey: string, readOnly: boolean): EssayStore;
+}
+
+export class StoreNotFoundError extends Error {
+  readonly code = "ESSAY_NOT_FOUND";
+}
+
+export function isStoreNotFound(error: unknown): boolean {
+  return error instanceof StoreNotFoundError
+    || (error instanceof Error && "code" in error && error.code === "ENOENT");
+}
+
+export class FileStore implements EssayStore {
   readonly templateDir: string;
   readonly answerDir: string;
+  readonly revisionDir: string;
   readonly exportDir: string;
   readonly artifactDir: string;
   private readonly answerWriteTails = new Map<string, Promise<void>>();
@@ -28,6 +77,8 @@ export class FileStore {
     const root = process.cwd();
     this.templateDir = options.templateDir ?? path.join(root, "templates");
     this.answerDir = options.answerDir ?? path.join(root, "data", "answers");
+    // A sibling directory, so the answer directory keeps holding only answer files.
+    this.revisionDir = `${this.answerDir}-revisions`;
     this.exportDir = options.exportDir ?? path.join(root, "exports");
     this.artifactDir = path.join(this.exportDir, ".artifacts");
   }
@@ -42,8 +93,13 @@ export class FileStore {
 
   async getTemplate(templateId: string): Promise<AnswerTemplate> {
     const filename = path.join(this.templateDir, `${safeId(templateId)}.json`);
-    const raw = await fs.readFile(filename, "utf8");
-    return templateSchema.parse(JSON.parse(raw));
+    try {
+      const raw = await fs.readFile(filename, "utf8");
+      return templateSchema.parse(JSON.parse(raw));
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到模板。");
+      throw error;
+    }
   }
 
   async listTemplates(): Promise<AnswerTemplate[]> {
@@ -107,13 +163,100 @@ export class FileStore {
         throw new Error(`答案 ${answerId} 已存在；更新既有答案時必須提供 expectedVersion。`);
       }
 
-      const temporary = `${filename}.${process.pid}.${randomUUID()}.tmp`;
-      try {
-        await fs.writeFile(temporary, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
-        await fs.rename(temporary, filename);
-      } finally {
-        await fs.rm(temporary, { force: true }).catch(() => undefined);
+      const revisionDir = path.join(this.revisionDir, answerId);
+      await fs.mkdir(revisionDir, { recursive: true });
+      const write = async (target: string, value: AnswerDocument) => {
+        const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+        try {
+          await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+          await fs.rename(temporary, target);
+        } finally {
+          await fs.rm(temporary, { force: true }).catch(() => undefined);
+        }
+      };
+      // Answers saved before revisions existed get their current version recorded on the first
+      // edit, so that edit can still be restored.
+      if (current) {
+        const currentRevision = path.join(revisionDir, `${current.version}.json`);
+        if (!(await fs.access(currentRevision).then(() => true, () => false))) await write(currentRevision, current);
       }
+      // The revision goes first: a failed answer write leaves a revision the next commit overwrites.
+      await write(path.join(revisionDir, `${normalized.version}.json`), normalized);
+      await write(filename, normalized);
+    });
+  }
+
+  async getRevision(answerId: string, version: number): Promise<AnswerDocument> {
+    const filename = path.join(this.revisionDir, safeId(answerId), `${version}.json`);
+    try {
+      return answerDocumentSchema.parse(JSON.parse(await fs.readFile(filename, "utf8")));
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到版本紀錄。");
+      throw error;
+    }
+  }
+
+  async listRevisions(answerId: string, options: { limit: number }): Promise<AnswerDocument[]> {
+    const current = await this.getAnswer(answerId);
+    const revisions: AnswerDocument[] = [];
+    for (let version = current.version; version >= 1 && version > current.version - options.limit; version--) {
+      try {
+        revisions.push(await this.getRevision(answerId, version));
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+    }
+    return revisions;
+  }
+
+  async deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
+    const id = safeId(answerId);
+    return this.withAnswerWriteLock(id, async () => {
+      const answer = await this.getAnswer(id);
+      if (answer.version !== options.expectedVersion) {
+        throw new Error(
+          `Version conflict: expected ${options.expectedVersion}, current version is ${answer.version}. Read the answer again before deleting.`,
+        );
+      }
+      let names: string[] = [];
+      try {
+        names = await fs.readdir(this.artifactDir);
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+      let exports = 0;
+      for (const name of names.filter((item) => item.endsWith(".json"))) {
+        const handle = name.slice(0, -".json".length);
+        let raw: string;
+        try {
+          raw = await fs.readFile(path.join(this.artifactDir, name), "utf8");
+        } catch (error) {
+          if (isStoreNotFound(error)) continue;
+          throw error;
+        }
+        let value: unknown;
+        try {
+          value = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        if (!isExportArtifactManifest(value, handle) || value.answerId !== id) continue;
+        // Bytes first, manifest second: a failure leaves the manifest for a retry to find.
+        await fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true });
+        await fs.rm(path.join(this.artifactDir, name), { force: true });
+        exports++;
+      }
+      const revisionDir = path.join(this.revisionDir, id);
+      let revisions = 0;
+      try {
+        revisions = (await fs.readdir(revisionDir)).filter((name) => name.endsWith(".json")).length;
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+      await fs.rm(revisionDir, { recursive: true, force: true });
+      // The answer goes last, so a failed cleanup can be retried with the same version.
+      await fs.rm(path.join(this.answerDir, `${id}.json`));
+      return { answer, revisions, exports };
     });
   }
 
@@ -158,15 +301,16 @@ export class FileStore {
 
   async createExportHandle(
     outputPath: string,
-    details: { answerId: string; answerVersion: number; format: ExportFormat },
+    details: ExportDetails,
   ): Promise<{ handle: string; name: string; mimeType: string; expiresAt: string }> {
     await this.ensureDirectories();
     await fs.mkdir(this.artifactDir, { recursive: true });
     const name = path.basename(outputPath);
-    const safeSource = path.resolve(this.resolveExportPath(name, details.format));
+    const sourceRoot = details.temporaryDir ?? this.exportDir;
+    const safeSource = path.resolve(sourceRoot, path.basename(this.resolveExportPath(name, details.format)));
     if (path.resolve(outputPath) !== safeSource) throw new Error("Export artifact not found.");
 
-    const exportRoot = await fs.realpath(this.exportDir);
+    const exportRoot = await fs.realpath(sourceRoot);
     const stats = await fs.lstat(safeSource);
     const source = await fs.realpath(safeSource);
     if (!stats.isFile() || !source.startsWith(exportRoot + path.sep)) {
@@ -235,6 +379,8 @@ export class FileStore {
         ]);
         throw new Error("Export artifact not found.");
       }
+      // Never serve bytes of an answer that has been deleted.
+      await this.getAnswer(value.answerId);
 
       const artifactRoot = path.resolve(this.artifactDir);
       const artifactPath = path.resolve(artifactRoot, value.artifactFilename);
@@ -263,7 +409,7 @@ export class FileStore {
 
 export const EXPORT_ARTIFACT_TTL_MS = 24 * 60 * 60 * 1000;
 
-type ExportFormat = "docx" | "pdf" | "txt";
+export type ExportFormat = "docx" | "pdf" | "txt";
 
 interface ExportArtifactManifest {
   schemaVersion: 1;
@@ -277,7 +423,7 @@ interface ExportArtifactManifest {
   expiresAt: number;
 }
 
-const exportArtifactHandlePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const exportArtifactHandlePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const exportFilenamePattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\.(docx|pdf|txt)$/;
 
 function isExportFormat(value: unknown): value is ExportFormat {

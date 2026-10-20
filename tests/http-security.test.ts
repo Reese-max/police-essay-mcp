@@ -204,7 +204,8 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     reader = await connectClient(runtime.port, readToken);
     const toolNames = (await reader.listTools()).tools.map((tool) => tool.name);
     for (const name of ["list_answers", "read_answer", "check_layout"]) assert.ok(toolNames.includes(name));
-    for (const name of ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "export_docx", "export_text", "export_pdf"]) {
+    for (const name of ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "edit_text", "restore_revision",
+      "export_docx", "export_text", "export_pdf"]) {
       assert.ok(!toolNames.includes(name), `${name} exposed to read credential`);
     }
     const listed = await reader.callTool({ name: "list_answers", arguments: {} });
@@ -367,6 +368,103 @@ test("anonymous loopback rejects public hosts and forwarded requests before stor
       assert.match(response.body, /create_answer/);
     }
   } finally {
+    await stopServer(runtime.child);
+    await rm(runtime.root, { recursive: true, force: true });
+  }
+});
+
+test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and still blocks browser origins", async () => {
+  // Only the exact string "true" opts in; anything else falls back to the token requirement.
+  for (const overrides of <Record<string, string>[]>[
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "TRUE", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true ", CORS_ORIGIN: "" },
+  ]) {
+    const runtime = await spawnServer(overrides);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const exit = await Promise.race([
+        once(runtime.child, "exit"),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Server did not fail closed")), 90_000); }),
+      ]);
+      assert.notEqual(exit[0], 0);
+      assert.match(runtime.logs.join(""), /MCP_AUTH_TOKEN/u);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      await stopServer(runtime.child);
+      await rm(runtime.root, { recursive: true, force: true });
+    }
+  }
+  for (const overrides of <Record<string, string>[]>[
+    { HOST: "0.0.0.0", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", MCP_ALLOW_ANONYMOUS_LOOPBACK: "true" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "https://trusted.example" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", AUTH_MODE: "oauth",
+      OAUTH_RESOURCE_URL: "https://mcp.example/mcp", OAUTH_ISSUERS: "https://issuer.example", OAUTH_JWKS_URI: "https://issuer.example/jwks" },
+    { HOST: "0.0.0.0", MCP_AUTH_TOKEN: "", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "", AUTH_MODE: "both",
+      OAUTH_RESOURCE_URL: "https://mcp.example/mcp", OAUTH_ISSUERS: "https://issuer.example", OAUTH_JWKS_URI: "https://issuer.example/jwks" },
+  ]) {
+    const runtime = await spawnServer(overrides);
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      const exit = await Promise.race([
+        once(runtime.child, "exit"),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Server did not fail closed")), 90_000); }),
+      ]);
+      assert.notEqual(exit[0], 0);
+      assert.match(runtime.logs.join(""), /MCP_ALLOW_ANONYMOUS_REMOTE/u);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      await stopServer(runtime.child);
+      await rm(runtime.root, { recursive: true, force: true });
+    }
+  }
+
+  // Whitespace-only tokens keep the existing "unset" semantics.
+  const runtime = await spawnServer({ HOST: "0.0.0.0", MCP_AUTH_TOKEN: "   ", MCP_READ_TOKEN: "", MCP_ALLOW_ANONYMOUS_REMOTE: "true", CORS_ORIGIN: "" });
+  let client: Client | undefined;
+  try {
+    await waitForReady(runtime);
+    assert.match(runtime.logs.join(""), /MCP_ALLOW_ANONYMOUS_REMOTE=true/u);
+    const preflight = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, { method: "OPTIONS", headers: { origin: "https://outside.example" } });
+    assert.equal(preflight.status, 403);
+    for (const method of ["GET", "POST", "DELETE"]) {
+      const browser = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+        method,
+        headers: { origin: "https://outside.example", "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: method === "POST" ? JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) : undefined,
+      });
+      assert.equal(browser.status, 403, `${method} with browser origin`);
+    }
+    const standaloneStream = await fetch(`http://127.0.0.1:${runtime.port}/mcp`, {
+      headers: { accept: "text/event-stream" }, signal: AbortSignal.timeout(5_000),
+    });
+    assert.equal(standaloneStream.status, 405);
+    assert.equal(standaloneStream.headers.get("allow"), "POST, DELETE");
+    await standaloneStream.text();
+    client = await connectClient(runtime.port);
+    const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    assert.deepEqual(toolNames, [
+      "check_layout", "create_answer", "delete_answer", "delete_text", "edit_text", "export_docx", "export_pdf", "export_text", "format_section",
+      "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "preview_delete_text", "preview_edit_text",
+      "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer", "read_answer", "reflow_answer",
+      "render_answer_sheet", "replace_text", "restore_revision", "write_answer",
+    ]);
+    const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
+    assert.equal(created.isError, undefined);
+    assert.equal((await readdir(path.join(runtime.root, "answers"))).length, 1);
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+    const written = await client.callTool({ name: "write_answer", arguments: { answerId, expectedVersion: 1, sections: [{ id: "intro", text: "Anonymous edit" }] } });
+    assert.equal((written.structuredContent as { answer: { version: number } }).answer.version, 2);
+    const exported = await client.callTool({ name: "export_text", arguments: { answerId } });
+    assert.equal(exported.isError, undefined);
+    const exportUri = (exported.structuredContent as { exportUri: string }).exportUri;
+    const resource = await client.readResource({ uri: exportUri });
+    const content = resource.contents[0] as { text?: string; blob?: string };
+    assert.match(content.text ?? Buffer.from(content.blob ?? "", "base64").toString("utf8"), /Anonymous edit/u);
+  } finally {
+    await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
     await rm(runtime.root, { recursive: true, force: true });
   }

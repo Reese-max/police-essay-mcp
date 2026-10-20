@@ -43,7 +43,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .line-number { display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #94a3b8; font-size: 10px; font-variant-numeric: tabular-nums; user-select: none; }
     .line-cells { --columns: 42; position: relative; min-width: 0; border-bottom: 1px solid #dbe3ef; background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / var(--columns) - 1px), rgba(148, 163, 184, .25) calc(100% / var(--columns) - 1px), rgba(148, 163, 184, .25) calc(100% / var(--columns))); background-size: 100% 100%; }
     .line-text { display: block; overflow: hidden; min-height: 1.65rem; padding: 3px 5px; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; font-size: 12px; line-height: 1.35; text-overflow: clip; }
-    .answer-line.heading .line-text { color: #172554; font-weight: 800; }
+    .answer-line.heading .line-text { color: #172554; }
+    .answer-line.bold .line-text { font-weight: 800; }
+    .answer-line.italic .line-text { font-style: italic; }
     .answer-line.spacer .line-text { min-height: 1.65rem; }
     .editor { margin-top: 16px; border: 1px solid #d7dee9; border-radius: 14px; background: #fff; padding: 14px; }
     .editor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
@@ -283,7 +285,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           const pageLines = linesByPage.get(pageNumber) || new Map();
           for (let lineNumber = 1; lineNumber <= layout.linesPerPage; lineNumber += 1) {
             const line = pageLines.get(lineNumber);
-            const row = makeElement("div", "answer-line" + (line?.isHeading ? " heading" : "") + (line?.isSpacer ? " spacer" : ""));
+            // Emphasis follows the line's own format so the grid matches the exported file.
+            const row = makeElement("div", "answer-line" + (line?.isHeading ? " heading" : "") + (line?.format?.bold ? " bold" : "") + (line?.format?.italic ? " italic" : "") + (line?.isSpacer ? " spacer" : ""));
             row.dataset.sectionId = line?.sectionId || "";
             row.append(makeElement("span", "line-number", String(lineNumber).padStart(2, "0")));
             const cells = makeElement("div", "line-cells");
@@ -337,6 +340,31 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         }
       }
 
+      // Unchanged paragraphs keep their format; a rewritten one keeps the format of the paragraph it
+      // replaces and an added one takes its neighbour's, so adding or removing lines loses no formatting.
+      function carryFormats(paragraphs, texts) {
+        const rows = paragraphs.length, columns = texts.length;
+        // Very long sections are matched by position, keeping the alignment table small.
+        if (rows * columns > 250000) return texts.map((text, i) => {
+          const source = paragraphs[Math.min(i, rows - 1)];
+          return {text, ...(source.format ? {format: source.format} : {})};
+        });
+        const table = Array.from({length: rows + 1}, () => new Array(columns + 1).fill(0));
+        for (let i = rows - 1; i >= 0; i--) for (let j = columns - 1; j >= 0; j--) {
+          table[i][j] = paragraphs[i].text === texts[j] ? table[i + 1][j + 1] + 1 : Math.max(table[i + 1][j], table[i][j + 1]);
+        }
+        const result = [];
+        let i = 0, previous = null, replaced = [];
+        for (let j = 0; j < columns;) {
+          if (i < rows && paragraphs[i].text === texts[j]) { previous = paragraphs[i]; replaced = []; i++; }
+          else if (i < rows && table[i + 1][j] >= table[i][j + 1]) { replaced.push(paragraphs[i]); i++; continue; }
+          else previous = replaced.length ? replaced.shift() : previous ?? paragraphs[Math.min(i, rows - 1)];
+          result.push({text: texts[j], ...(previous.format ? {format: previous.format} : {})});
+          j++;
+        }
+        return result;
+      }
+
       async function previewEdit() {
         if (!state || !selectedSectionId || state.readOnly || applying) return;
         const epoch = editEpoch;
@@ -345,9 +373,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           const section = state.answer.sections.find(s => s.id === selectedSectionId);
           const args = { answerId: state.answer.id, sectionId: selectedSectionId, expectedVersion: state.answer.version, newText: textInput.value, heading: headingInput.value || null };
           if (section?.paragraphs?.length) {
-            const texts = textInput.value.split("\n");
-            if (texts.length !== section.paragraphs.length) throw new Error("段落數已改變，請在對話中修改以保留各段格式。");
-            args.paragraphs = texts.map((text, i) => ({text, ...(section.paragraphs[i].format ? {format: section.paragraphs[i].format} : {})}));
+            args.paragraphs = carryFormats(section.paragraphs, textInput.value.split("\n"));
             delete args.newText;
           }
           const result = await callTool("preview_replace_text", args);

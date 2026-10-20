@@ -6,6 +6,7 @@ import {
   answerParagraphSchema,
   answerSectionInputSchema,
   answerSectionSchema as storedSectionSchema,
+  applyTextEdits,
   createAnswerDocument,
   assertExpectedVersion,
   normalizeSection,
@@ -21,33 +22,47 @@ import {
   headingStyleInputSchema,
   paragraphFormatInputSchema,
   templateSchema,
+  textEditSchema,
 } from "./domain.js";
-import { exportDocx, exportPdf, exportText } from "./exporters.js";
+import { describeChanges } from "./changes.js";
+import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
-import { FileStore } from "./storage.js";
+import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
 import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
+
+import { toolScope } from "./oauth.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay";
 
 const expectedVersionSchema = z.number().int().positive().optional();
 const answerIdSchema = z.string().regex(/^ans_[A-Za-z0-9-]+$/);
 
+// tools/list sends every outputSchema on each connection; inlining the full nested answer/layout
+// schemas made it ~262 KB. Output schemas keep the key fields typed and let nested detail
+// (paragraphs, formats, rendered lines) pass through unchanged in structuredContent.
+const answerSummarySchema = answerDocumentSchema.pick({ id: true, templateId: true, title: true, version: true }).loose();
+const layoutSummarySchema = layoutReportSchema.pick({
+  capacity: true, totalLines: true, pagesUsed: true, overflowLines: true, remainingLines: true, fits: true, status: true,
+}).loose();
+const sectionSummarySchema = storedSectionSchema.pick({ id: true, heading: true, order: true }).loose();
+const templateSummarySchema = templateSchema.pick({ id: true, name: true, pages: true, linesPerPage: true, paperProfile: true }).loose();
+
 const snapshotOutputSchema = z.object({
-  answer: answerDocumentSchema,
-  layout: layoutReportSchema,
+  answer: answerSummarySchema,
+  layout: layoutSummarySchema,
 });
 
 const layoutOutputSchema = z.object({
   answerId: answerIdSchema,
   version: z.number().int().positive(),
-  layout: layoutReportSchema,
+  layout: layoutSummarySchema,
 });
 
 const sectionOutputSchema = z.object({
-  section: storedSectionSchema,
-  answer: answerDocumentSchema,
-  layout: layoutReportSchema,
+  section: sectionSummarySchema,
+  answer: answerSummarySchema,
+  layout: layoutSummarySchema,
 });
 
 const replacementContentSchema = z.object({
@@ -88,6 +103,35 @@ const changePreviewOutputSchema = z.object({
   summary: z.array(z.string()),
 });
 
+// Output schemas of the tools added after the base contract stay minimal to fit the tools/list
+// budget; before/after snapshots and the remaining answer/layout fields pass through untyped.
+const compactSnapshotShape = {
+  answer: z.object({ id: answerIdSchema, version: z.number().int().positive() }).loose(),
+  layout: layoutReportSchema.pick({ totalLines: true, overflowLines: true, fits: true }).loose(),
+};
+
+const textChangePreviewOutputSchema = z.object({
+  operation: z.literal("edit"),
+  answerId: answerIdSchema,
+  baseVersion: z.number().int().positive(),
+  applied: z.literal(false),
+  summary: z.array(z.string()),
+}).loose();
+
+const editOutputSchema = z.object({
+  ...compactSnapshotShape,
+  replacements: z.number().int().positive(),
+  changes: z.array(z.string()),
+});
+
+const revisionListOutputSchema = z.object({
+  answerId: answerIdSchema,
+  currentVersion: z.number().int().positive(),
+  // Each entry also carries updatedAt, totalLines and fits.
+  revisions: z.array(z.object({ version: z.number().int().positive(), changes: z.array(z.string()) }).loose()),
+  olderVersions: z.number().int().nonnegative(),
+});
+
 const exportOutputSchema = z.object({
   answerId: answerIdSchema,
   version: z.number().int().positive(),
@@ -96,7 +140,7 @@ const exportOutputSchema = z.object({
   exportUri: z.string(),
   exportExpiresAt: z.string(),
   pages: z.number().int().positive(),
-  layout: layoutReportSchema,
+  layout: layoutSummarySchema,
   font: z.string().optional(),
   fontWarning: z.string().optional(),
 });
@@ -132,7 +176,7 @@ function snapshot(answer: AnswerDocument, template: AnswerTemplate): AnswerSnaps
   return { answer, layout: layoutSections(template, answer.sections) };
 }
 
-async function loadSnapshot(store: FileStore, answerId: string): Promise<AnswerSnapshot> {
+async function loadSnapshot(store: EssayStore, answerId: string): Promise<AnswerSnapshot> {
   const answer = await store.getAnswer(answerId);
   const template = await store.getTemplate(answer.templateId);
   return snapshot(answer, template);
@@ -151,12 +195,20 @@ function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): 
   });
 }
 
-async function makeChangePreview(
-  store: FileStore,
-  operation: "write" | "replace" | "format" | "insert" | "delete",
+/** The change list appended to a write tool's text result. */
+function changeText(before: AnswerSnapshot, after: AnswerSnapshot): string {
+  return describeChanges(before, after).map((line) => `
+・${line}`).join("");
+}
+
+async function makeChangePreview<Operation extends "write" | "replace" | "format" | "insert" | "delete" | "edit">(
+  store: EssayStore,
+  operation: Operation,
   before: AnswerSnapshot,
   afterAnswer: AnswerDocument,
-): Promise<z.infer<typeof changePreviewOutputSchema>> {
+): Promise<Omit<z.infer<typeof changePreviewOutputSchema>, "operation" | "before" | "after"> & {
+  operation: Operation; before: AnswerSnapshot; after: AnswerSnapshot;
+}> {
   const template = await store.getTemplate(before.answer.templateId);
   const after = snapshot(afterAnswer, template);
   const lineDelta = after.layout.totalLines - before.layout.totalLines;
@@ -164,6 +216,7 @@ async function makeChangePreview(
     `版本 ${before.answer.version} → ${after.answer.version}（尚未套用）`,
     `總行數 ${before.layout.totalLines} → ${after.layout.totalLines}（${lineDelta >= 0 ? "+" : ""}${lineDelta}）`,
     after.layout.fits ? "修改後符合模板容量。" : `修改後超出 ${after.layout.overflowLines} 行。`,
+    ...describeChanges(before, after),
   ];
   return {
     changeId: randomUUID(),
@@ -177,11 +230,19 @@ async function makeChangePreview(
   };
 }
 
+/** Formatting tools state the 166 paper limits up front so the model explains them instead of retrying. */
+export const PAPER_FORMAT_NOTE = " The 166 original-paper template (police_information_essay_166) accepts only left-aligned text without bold or italic; tell the user so instead of attempting that formatting.";
+const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "preview_write_answer", "replace_text", "preview_replace_text",
+  "format_section", "preview_format_section", "insert_text", "preview_insert_text"]);
+const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
+
+const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。修改前可先用 preview_edit_text 把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。";
+
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
 
-export function createEssayMcpServer(store = new FileStore(), options: { readOnly?: boolean } = {}): McpServer {
+export function createEssayMcpServer(store: EssayStore = new FileStore(), options: { readOnly?: boolean; scopes?: string[] } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -189,9 +250,16 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
     {
       instructions:
-        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。",
+        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION,
     },
   );
+
+  const registerTool: typeof server.registerTool = (name, base, callback) => {
+    const config = FORMATTING_TOOLS.has(name) ? { ...base, description: (base.description ?? "") + PAPER_FORMAT_NOTE } : base;
+    return server.registerTool(name, options.scopes ? { ...config, _meta: { ...config._meta,
+      securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }],
+    } } : config, callback);
+  };
 
   server.registerResource(
     "police-information-essay-answer-sheet-widget",
@@ -242,13 +310,16 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         text: [
           "# 申論答題紙工作流程",
           "1. load_exam_paper：讀模板或既有答案。",
-          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。",
+          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。" + PAPER_FORMAT_INSTRUCTION,
           "3. read_answer / check_layout：查看每頁行數、剩餘行數與溢出。",
           "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
-          "5. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
-          "6. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "7. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
-          "8. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "5. edit_text：改字詞或句子時只送原文片段（find）與新文字（replace），一次可改多處、全部成功才存檔；先用 preview_edit_text 確認變更清單。",
+          "6. replace_text / insert_text / delete_text：整段改寫、插入或刪除區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
+          "7. list_revisions / restore_revision：查看每個版本改了什麼，必要時還原舊版本；還原會另存新版本。",
+          "8. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
+          "9. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
+          "10. fits=true 後才呼叫 export_docx 或 export_pdf。",
+          "11. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
         ].join("\n"),
       }],
     }),
@@ -262,7 +333,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       description: "export_docx / export_pdf / export_text 產生的限時檔案；URI 見工具結果的 exportUri。",
     },
     async (uri, variables) => {
-      if (options.readOnly) throw new Error("Export artifact not found.");
+      if (options.readOnly || (options.scopes && !options.scopes.includes("essay.export"))) throw new Error("Export artifact not found.");
       const handle = Array.isArray(variables.handle) ? variables.handle[0] : variables.handle;
       const artifact = await store.readExport(handle ?? "");
       return {
@@ -275,13 +346,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_templates",
     {
       title: "列出答題紙模板",
       description: "Use this when the user wants to inspect available essay answer-sheet templates before creating an answer.",
       inputSchema: {},
-      outputSchema: z.object({ templates: z.array(templateSchema) }),
+      outputSchema: z.object({ templates: z.array(templateSummarySchema) }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
@@ -290,7 +361,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "load_exam_paper",
     {
       title: "載入申論答題紙",
@@ -300,9 +371,9 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         answerId: answerIdSchema.optional(),
       },
       outputSchema: z.object({
-        template: templateSchema,
-        answer: answerDocumentSchema.optional(),
-        layout: layoutReportSchema.optional(),
+        template: templateSummarySchema,
+        answer: answerSummarySchema.optional(),
+        layout: layoutSummarySchema.optional(),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: ANSWER_SHEET_UI_META,
@@ -327,13 +398,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "list_answers",
     {
       title: "列出申論答案",
       description: "Use this when the user wants to find saved essay answers that can be reopened or edited.",
       inputSchema: {},
-      outputSchema: z.object({ answers: z.array(answerDocumentSchema) }),
+      outputSchema: z.object({ answers: z.array(answerSummarySchema) }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
@@ -342,7 +413,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const createAnswerTool = server.registerTool(
+  const createAnswerTool = registerTool(
     "create_answer",
     {
       title: "建立申論答案",
@@ -374,7 +445,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "read_answer",
     {
       title: "讀取申論答案",
@@ -389,13 +460,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
         const current = await loadSnapshot(store, answerId);
         return { structuredContent: current, content: textContent(`已讀取「${current.answer.title}」；${summarizeLayout(current.layout)}`) };
       } catch (error) {
-        if (error instanceof Error && error.message.includes("ENOENT")) throw new Error(noAnswerFoundMessage(answerId));
+        if (isStoreNotFound(error)) throw new Error(noAnswerFoundMessage(answerId));
         throw error;
       }
     },
   );
 
-  const writeAnswerTool = server.registerTool(
+  const writeAnswerTool = registerTool(
     "write_answer",
     {
       title: "寫入完整申論答案",
@@ -413,7 +484,8 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       },
     },
     async ({ answerId, sections, expectedVersion }) => {
-      const answer = await store.getAnswer(answerId);
+      const before = await loadSnapshot(store, answerId);
+      const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       const normalized = sections.map(sectionFromInput);
       ensureUniqueSectionIds(normalized);
@@ -426,11 +498,11 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const validated = answerDocumentSchema.parse(updated);
       await store.saveAnswer(validated, { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已寫入；${summarizeLayout(current.layout)}`) };
+      return { structuredContent: current, content: textContent(`已寫入；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_write_answer",
     {
       title: "預覽完整答案修改",
@@ -453,7 +525,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_replace_text",
     {
       title: "預覽區塊修改",
@@ -486,7 +558,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_format_section",
     {
       title: "預覽格式修改",
@@ -514,7 +586,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const replaceTextTool = server.registerTool(
+  const replaceTextTool = registerTool(
     "replace_text",
     {
       title: "替換申論區塊",
@@ -533,7 +605,8 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       },
     },
     async ({ answerId, sectionId, newText, paragraphs, heading, expectedVersion }) => {
-      const answer = await store.getAnswer(answerId);
+      const before = await loadSnapshot(store, answerId);
+      const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       const target = answer.sections.find((section) => section.id === sectionId);
       if (!target) throw new Error(`找不到 sectionId ${sectionId}。`);
@@ -559,12 +632,12 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       if (!section) throw new Error("替換後找不到 section。");
       return {
         structuredContent: { section, answer: current.answer, layout: current.layout },
-        content: textContent(`已修改「${section.heading ?? section.id}」；${summarizeLayout(current.layout)}`),
+        content: textContent(`已修改「${section.heading ?? section.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`),
       };
     },
   );
 
-  const formatSectionTool = server.registerTool(
+  const formatSectionTool = registerTool(
     "format_section",
     {
       title: "格式化申論區塊",
@@ -585,7 +658,8 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       if (paragraphFormat === undefined && headingStyle === undefined && (paragraphFormats?.length ?? 0) === 0) {
         throw new Error("至少提供 paragraphFormat、headingStyle 或一個 paragraphFormats 項目。");
       }
-      const answer = await store.getAnswer(answerId);
+      const before = await loadSnapshot(store, answerId);
+      const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       const target = answer.sections.find((section) => section.id === sectionId);
       if (!target) throw new Error(`找不到 sectionId ${sectionId}。`);
@@ -606,12 +680,12 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       if (!section) throw new Error("格式化後找不到 section。");
       return {
         structuredContent: { section, answer: current.answer, layout: current.layout },
-        content: textContent(`已更新「${section.heading ?? section.id}」的格式；${summarizeLayout(current.layout)}`),
+        content: textContent(`已更新「${section.heading ?? section.id}」的格式；${summarizeLayout(current.layout)}${changeText(before, current)}`),
       };
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_insert_text",
     {
       title: "預覽插入區塊",
@@ -645,7 +719,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const insertTextTool = server.registerTool(
+  const insertTextTool = registerTool(
     "insert_text",
     {
       title: "插入申論區塊",
@@ -664,7 +738,8 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       },
     },
     async ({ answerId, afterSectionId, section, expectedVersion }) => {
-      const answer = await store.getAnswer(answerId);
+      const before = await loadSnapshot(store, answerId);
+      const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       if (afterSectionId && !answer.sections.some((item) => item.id === afterSectionId)) {
         throw new Error(`找不到 afterSectionId ${afterSectionId}。`);
@@ -687,11 +762,11 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const validated = answerDocumentSchema.parse(updated);
       await store.saveAnswer(validated, { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}`) };
+      return { structuredContent: current, content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
     },
   );
 
-  server.registerTool(
+  registerTool(
     "preview_delete_text",
     {
       title: "預覽刪除區塊",
@@ -716,7 +791,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const deleteTextTool = server.registerTool(
+  const deleteTextTool = registerTool(
     "delete_text",
     {
       title: "刪除申論區塊",
@@ -734,7 +809,8 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       },
     },
     async ({ answerId, sectionId, expectedVersion }) => {
-      const answer = await store.getAnswer(answerId);
+      const before = await loadSnapshot(store, answerId);
+      const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       if (!answer.sections.some((item) => item.id === sectionId)) throw new Error(`找不到 sectionId ${sectionId}。`);
       const sections = answer.sections.filter((item) => item.id !== sectionId).map((item, index) => ({ ...item, order: index }));
@@ -747,11 +823,189 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const validated = answerDocumentSchema.parse(updated);
       await store.saveAnswer(validated, { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}`) };
+      return { structuredContent: current, content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
     },
   );
 
-  server.registerTool(
+  const textEditsInput = {
+    answerId: answerIdSchema,
+    edits: z.array(textEditSchema).min(1).max(50),
+    expectedVersion: expectedVersionSchema,
+  };
+
+  registerTool(
+    "preview_edit_text",
+    {
+      title: "預覽字句修改",
+      description: "Use this before edit_text to show which words or sentences would change, where they sit on the sheet and the line-count effect, without saving.",
+      inputSchema: textEditsInput,
+      outputSchema: textChangePreviewOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ answerId, edits, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const { sections } = applyTextEdits(before.answer.sections, edits);
+      const preview = await makeChangePreview(store, "edit", before, hypotheticalAnswer(before.answer, sections));
+      return { structuredContent: preview, content: textContent(preview.summary.join("；")) };
+    },
+  );
+
+  const editTextTool = registerTool(
+    "edit_text",
+    {
+      title: "修改字句",
+      description: "Use this when the user wants to change, add or delete specific words or sentences without resending whole sections. Each edit replaces the exact text `find` (heading or paragraph) with `replace`: to insert, keep the anchor text in `replace`; empty `replace` deletes (an emptied paragraph is removed); a newline splits the paragraph. A `find` occurring more than once needs `occurrence` (1-based) or `replaceAll`; `sectionId` limits the search. All edits apply as one new version or none do; the result lists each change with its page and line.",
+      inputSchema: textEditsInput,
+      outputSchema: editOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "修改字句並重排…",
+        "openai/toolInvocation/invoked": "字句已修改並重新計算行數。",
+      },
+    },
+    async ({ answerId, edits, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const { sections, replacements } = applyTextEdits(before.answer.sections, edits);
+      await store.saveAnswer(hypotheticalAnswer(before.answer, sections), { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      const changes = describeChanges(before, current);
+      const total = replacements.reduce((sum, count) => sum + count, 0);
+      return {
+        structuredContent: { ...current, replacements: total, changes },
+        content: textContent(`已修改 ${total} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
+          + changes.map((line) => `\n・${line}`).join("")),
+      };
+    },
+  );
+
+  registerTool(
+    "list_revisions",
+    {
+      title: "列出答案版本",
+      description: "Use this when the user wants the saved versions of an answer, what changed in each, or a version to restore.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        limit: z.number().int().min(1).max(30).default(10),
+      },
+      outputSchema: revisionListOutputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async ({ answerId, limit }) => {
+      const current = await store.getAnswer(answerId);
+      const template = await store.getTemplate(current.templateId);
+      // One extra version, so the oldest listed one can still be compared with its predecessor.
+      const stored = await store.listRevisions(answerId, { limit: limit + 1 });
+      const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
+      byVersion.set(current.version, current);
+      const revisions = [...byVersion.values()].sort((a, b) => b.version - a.version)
+        // A version committed after `current` was read stays out, so at most `limit` are listed.
+        .filter((revision) => revision.version <= current.version && revision.version > current.version - limit)
+        .map((revision) => {
+          const after = snapshot(revision, template);
+          const previous = byVersion.get(revision.version - 1);
+          const changes = revision.version === 1 ? ["建立答案。"]
+            : previous ? describeChanges(snapshot(previous, template), after, 8) : ["（前一版紀錄不存在，無法比較。）"];
+          return { version: revision.version, updatedAt: revision.updatedAt, totalLines: after.layout.totalLines, fits: after.layout.fits, changes };
+        });
+      const olderVersions = Math.max(0, current.version - limit);
+      return {
+        structuredContent: { answerId, currentVersion: current.version, revisions, olderVersions },
+        content: textContent(revisions.map((revision) => `第 ${revision.version} 版（${revision.updatedAt}，${revision.totalLines} 行${revision.fits ? "" : "，超出"}）：`
+          + revision.changes.join("；")).join("\n") + (olderVersions ? `\n另有 ${olderVersions} 個更早的版本未列出。` : "")),
+      };
+    },
+  );
+
+  async function restoredAnswer(before: AnswerSnapshot, version: number): Promise<AnswerDocument> {
+    if (version === before.answer.version) throw new Error(`第 ${version} 版就是目前的版本，不需要還原。`);
+    if (version > before.answer.version) throw new Error(`目前最新是第 ${before.answer.version} 版，沒有第 ${version} 版。`);
+    let revision: AnswerDocument;
+    try {
+      revision = await store.getRevision(before.answer.id, version);
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
+      throw error;
+    }
+    return hypotheticalAnswer(before.answer, revision.sections);
+  }
+
+  const restoreRevisionTool = registerTool(
+    "restore_revision",
+    {
+      title: "還原答案版本",
+      description: "Use this when the user wants the answer's sections back as they were in an earlier version (see list_revisions). It saves a new version, so the current content stays in the history and can itself be restored. Pass the current version as expectedVersion.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        version: z.number().int().positive(),
+        expectedVersion: z.number().int().positive(),
+      },
+      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "還原版本並重排…",
+        "openai/toolInvocation/invoked": "已還原版本並重新計算行數。",
+      },
+    },
+    async ({ answerId, version, expectedVersion }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      await store.saveAnswer(await restoredAnswer(before, version), { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      const changes = describeChanges(before, current);
+      return {
+        structuredContent: { ...current, changes },
+        content: textContent(`已還原第 ${version} 版的內容，存為第 ${current.answer.version} 版；${summarizeLayout(current.layout)}`
+          + changes.map((line) => `\n・${line}`).join("")),
+      };
+    },
+  );
+
+  const deleteAnswerTool = registerTool(
+    "delete_answer",
+    {
+      title: "刪除申論答案",
+      description: "Use this only when the user explicitly asks to permanently delete a saved answer. Pass the current version from read_answer or list_answers as expectedVersion. The answer, its revision history and its exports are removed and cannot be restored.",
+      inputSchema: {
+        answerId: answerIdSchema,
+        expectedVersion: z.number().int().positive(),
+      },
+      outputSchema: z.object({
+        answerId: answerIdSchema,
+        title: z.string(),
+        version: z.number().int().positive(),
+        deletedRevisions: z.number().int().nonnegative(),
+        deletedExports: z.number().int().nonnegative(),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
+      _meta: {
+        "openai/toolInvocation/invoking": "刪除答案…",
+        "openai/toolInvocation/invoked": "答案已永久刪除。",
+      },
+    },
+    async ({ answerId, expectedVersion }) => {
+      let deleted;
+      try {
+        deleted = await store.deleteAnswer(answerId, { expectedVersion });
+      } catch (error) {
+        if (isStoreNotFound(error)) throw new Error(`找不到答案 ${answerId}；可能已刪除，或請確認 answerId。`);
+        throw error;
+      }
+      return {
+        structuredContent: {
+          answerId,
+          title: deleted.answer.title,
+          version: deleted.answer.version,
+          deletedRevisions: deleted.revisions,
+          deletedExports: deleted.exports,
+        },
+        content: textContent(`已永久刪除「${deleted.answer.title}」（${answerId}，版本 ${deleted.answer.version}）；一併刪除 ${deleted.revisions} 筆修改紀錄與 ${deleted.exports} 個匯出檔。`),
+      };
+    },
+  );
+
+  registerTool(
     "reflow_answer",
     {
       title: "重新排版申論答案",
@@ -766,7 +1020,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "check_layout",
     {
       title: "檢查申論版面",
@@ -783,7 +1037,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  server.registerTool(
+  registerTool(
     "render_answer_sheet",
     {
       title: "顯示申論答題紙畫板",
@@ -799,12 +1053,12 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       return {
         structuredContent: current,
         content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`),
-        _meta: { readOnly: Boolean(options.readOnly), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
+        _meta: { readOnly: Boolean(options.readOnly || (options.scopes && !options.scopes.includes("essay.write"))), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
       };
     },
   );
 
-  const exportDocxTool = server.registerTool(
+  const exportDocxTool = registerTool(
     "export_docx",
     {
       title: "輸出申論 Word",
@@ -825,12 +1079,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "docx");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportDocx(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "docx",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -851,7 +1106,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const exportTextTool = server.registerTool(
+  const exportTextTool = registerTool(
     "export_text",
     {
       title: "輸出申論純文字",
@@ -872,12 +1127,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "txt");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportText(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "txt",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -898,7 +1154,7 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  const exportPdfTool = server.registerTool(
+  const exportPdfTool = registerTool(
     "export_pdf",
     {
       title: "輸出申論 PDF",
@@ -919,12 +1175,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
       const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, "pdf");
-      return store.withExportWriteLock(outputPath, async () => {
+      return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
         const output = await exportPdf(current.layout, template, outputPath, allowOverflow);
         const artifact = await store.createExportHandle(output.path, {
           answerId,
           answerVersion: current.answer.version,
           format: "pdf",
+          temporaryDir,
         });
         const exportUri = `essay://exports/${artifact.handle}`;
         return {
@@ -945,18 +1202,13 @@ export function createEssayMcpServer(store = new FileStore(), options: { readOnl
     },
   );
 
-  if (options.readOnly) {
-    for (const tool of [
-      createAnswerTool,
-      writeAnswerTool,
-      replaceTextTool,
-      formatSectionTool,
-      insertTextTool,
-      deleteTextTool,
-      exportDocxTool,
-      exportTextTool,
-      exportPdfTool,
-    ]) tool.remove();
+  for (const [name, tool] of [
+    ["create_answer", createAnswerTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
+    ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
+    ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
+    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool],
+  ] as const) {
+    if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }
 
   server.registerPrompt(
