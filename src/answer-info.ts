@@ -15,6 +15,11 @@ export function answerFileName(answer: Pick<AnswerDocument, "title" | "exam" | "
   return `${name.replace(/^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?=\.|$)/iu, "$1_")}.${format}`;
 }
 
+/** encodeURIComponent plus ' ( ) * !, which RFC 5987 values and some link detectors do not accept raw. */
+export function encodeStrict(value: string): string {
+  return encodeURIComponent(value).replace(/['()*!]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
 /** Orders answers by exam, then question number, then title; answers without an exam come last. */
 export function sortAnswers<T extends Pick<AnswerDocument, "title" | "exam" | "questionNo">>(answers: T[]): T[] {
   return [...answers].sort((left, right) => (left.exam === undefined ? 1 : 0) - (right.exam === undefined ? 1 : 0)

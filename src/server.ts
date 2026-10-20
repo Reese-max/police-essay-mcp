@@ -27,7 +27,7 @@ import {
 import { describeChanges } from "./changes.js";
 import { renumberItems } from "./numbering.js";
 import { describeLines, describeTargetChanges, planLines } from "./planning.js";
-import { answerFileName, describeAnswerList, describeInfoChanges, sortAnswers, type ExportFormat } from "./answer-info.js";
+import { answerFileName, describeAnswerList, describeInfoChanges, encodeStrict, sortAnswers, type ExportFormat } from "./answer-info.js";
 import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
@@ -818,6 +818,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       outputSchema: editOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
+        ui: { visibility: ["model", "app"] },
         "openai/toolInvocation/invoking": "修改字句並重排…",
         "openai/toolInvocation/invoked": "字句已修改並重新計算行數。",
       },
@@ -846,6 +847,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.move_section.shape, expectedVersion: expectedVersionSchema },
       outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: { ui: { visibility: ["model", "app"] } },
     },
     async ({ answerId, sectionId, beforeSectionId, afterSectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
@@ -870,6 +872,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
       outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), skipped: z.array(z.string()), changes: z.array(z.string()) }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
+      _meta: { ui: { visibility: ["model", "app"] } },
     },
     async ({ answerId, sectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
@@ -937,6 +940,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       },
       outputSchema: revisionListOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: { ui: { visibility: ["model", "app"] } },
     },
     async ({ answerId, limit }) => {
       const current = await store.getAnswer(answerId);
@@ -993,6 +997,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
+        ui: { visibility: ["model", "app"] },
         "openai/toolInvocation/invoking": "還原版本並重排…",
         "openai/toolInvocation/invoked": "已還原版本並重新計算行數。",
       },
@@ -1124,7 +1129,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const artifact = await store.createExportHandle(output.path, { answerId, answerVersion: current.answer.version, format, temporaryDir });
       const fileName = answerFileName(current.answer, format);
       const downloadUrl = options.downloadBaseUrl
-        ? `${options.downloadBaseUrl}/downloads/${artifact.handle}/${encodeURIComponent(fileName)}` : undefined;
+        ? `${options.downloadBaseUrl}/downloads/${artifact.handle}/${encodeStrict(fileName)}` : undefined;
       return { output, artifact, exportUri: `essay://exports/${artifact.handle}`, fileName, downloadUrl };
     });
   }

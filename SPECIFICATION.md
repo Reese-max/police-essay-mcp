@@ -171,7 +171,7 @@ Resources：
 
 - `essay://templates/police_information_essay`：模板 JSON。
 - `essay://instructions/workflow`：讀取、修改、檢查與匯出的工作流程。
-- `ui://widget/police-essay-answer-sheet.html`：ChatGPT Apps SDK 的互動答題紙畫板資源。
+- `ui://widget/police-essay-answer-sheet-v3.html`：ChatGPT Apps SDK 的互動答題紙畫板資源（URI 帶版本，畫板或其呼叫的工具改變時遞增，讓宿主不沿用快取的舊畫板）。
 
 Prompts：
 
@@ -242,4 +242,4 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 `render_answer_sheet` 回傳最新答案、版本及 LayoutReport。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
 
-畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式，改變段落數需另在對話中處理。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。
+畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式；段落數改變時，未改動的段落保留格式，改寫的段落沿用被取代那段的格式。字句修改走 `preview_change`（`edit_text`）再 `edit_text`；上移／下移呼叫 `move_section`；重新編號先以 `preview_change`（`renumber_items`）預覽，第二次點擊才呼叫 `renumber_items`；版本紀錄讀 `list_revisions`，還原呼叫 `restore_revision`。這些工具都宣告 `_meta.ui.visibility` 含 `app`。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。

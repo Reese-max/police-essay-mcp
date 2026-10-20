@@ -1,5 +1,5 @@
 // Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v2.html";
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v3.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
@@ -63,12 +63,21 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .preview.good { color: #15803d; }
     .preview.bad { color: #b91c1c; }
     .empty { border: 1px dashed #cbd5e1; border-radius: 14px; background: #fff; color: #64748b; padding: 34px 20px; text-align: center; }
+    .phrase-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .phrase-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: #526174; font-size: 12px; }
+    .phrase-options input[type="number"] { width: 4.5em; padding: 5px 6px; }
+    .phrase-options input[type="checkbox"] { width: auto; }
+    .editor-buttons.wrap { flex-wrap: wrap; }
+    .revisions { display: grid; gap: 8px; margin: 10px 0 0; padding: 0; list-style: none; }
+    .revisions li { border-top: 1px solid #e5eaf1; padding-top: 8px; }
+    .revision-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 3px; }
     @media (max-width: 620px) {
       .app { padding: 12px; }
       .topbar { flex-direction: column; }
       .actions { justify-content: flex-start; }
       .editor-grid { grid-template-columns: 1fr; }
       .editor-actions { align-items: flex-start; flex-direction: column; }
+      .phrase-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -125,6 +134,52 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         </div>
       </div>
     </section>
+    <section class="editor" aria-label="字句修改">
+      <div class="editor-head">
+        <div>
+          <div class="editor-title">字句修改</div>
+          <div class="editor-help">只改指定的字句，其他內容不動；同一段字出現多次時，指定第幾處或全部取代。</div>
+        </div>
+        <span class="preview" id="phrase-preview" aria-live="polite"></span>
+      </div>
+      <div class="phrase-grid">
+        <div class="field">
+          <label for="find">找（原文，一字不差）</label>
+          <input id="find" type="text" disabled>
+        </div>
+        <div class="field">
+          <label for="replace">換成（留空＝刪除）</label>
+          <input id="replace" type="text" disabled>
+        </div>
+      </div>
+      <div class="editor-actions">
+        <div class="phrase-options">
+          <label>只改第 <input id="occurrence" type="number" min="1" disabled> 處</label>
+          <label><input id="replace-all" type="checkbox" disabled> 全部取代</label>
+          <button id="use-selection" type="button" disabled>帶入上方選取的文字</button>
+        </div>
+        <div class="editor-buttons">
+          <button id="preview-phrase" type="button" disabled>預覽</button>
+          <button class="primary" id="apply-phrase" type="button" disabled>套用</button>
+        </div>
+      </div>
+    </section>
+    <section class="editor" aria-label="區塊順序、編號與版本">
+      <div class="editor-head">
+        <div>
+          <div class="editor-title">區塊順序、編號與版本</div>
+          <div class="editor-help">搬移目前選取的區塊；重新編號先預覽，再按一次確認；每一版都可以還原，還原會另存新版本。</div>
+        </div>
+        <span class="preview" id="tools-preview" aria-live="polite"></span>
+      </div>
+      <div class="editor-buttons wrap">
+        <button id="move-up" type="button" disabled>上移區塊</button>
+        <button id="move-down" type="button" disabled>下移區塊</button>
+        <button id="renumber" type="button" disabled>重新編號</button>
+        <button id="load-revisions" type="button" disabled>版本紀錄</button>
+      </div>
+      <ol class="revisions" id="revisions" aria-label="版本紀錄"></ol>
+    </section>
   </main>
   <script>
     (() => {
@@ -149,6 +204,29 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       const count = byId("count");
       const previewButton = byId("preview-edit");
       const applyButton = byId("apply-edit");
+      const findInput = byId("find");
+      const replaceInput = byId("replace");
+      const occurrenceInput = byId("occurrence");
+      const replaceAllInput = byId("replace-all");
+      const useSelectionButton = byId("use-selection");
+      const phrasePreviewButton = byId("preview-phrase");
+      const phraseApplyButton = byId("apply-phrase");
+      const phrasePreviewText = byId("phrase-preview");
+      const toolsText = byId("tools-preview");
+      const moveUpButton = byId("move-up");
+      const moveDownButton = byId("move-down");
+      const renumberButton = byId("renumber");
+      const revisionsButton = byId("load-revisions");
+      const revisionList = byId("revisions");
+      let pendingPhrase = null;
+      let phraseEpoch = 0;
+      let renumberArmed = false;
+      let renumberArgs = null;
+      let snapshotEpoch = 0;
+
+      function noticeFor(answerId, message, isError) {
+        if (state?.answer.id === answerId) setNotice(message, isError);
+      }
 
       function setNotice(message, isError) {
         notice.textContent = message || "";
@@ -221,6 +299,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         document.querySelectorAll(".answer-line, .original-paper g[data-section-id]").forEach((row) => {
           if (row.dataset.sectionId === selectedSectionId) row.classList.add("selected");
         });
+        updateTools();
       }
 
       function renderEditor() {
@@ -236,11 +315,249 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         textInput.disabled = !hasSections || state.readOnly || applying;
         if (hasSections) selectSection(selectedSectionId || state.answer.sections[0].id);
         else {
+          // No section of this answer can still be selected.
+          selectedSectionId = "";
+          pendingEdit = null;
+          previewText.textContent = "";
+          previewText.className = "preview";
           headingInput.value = "";
           textInput.value = "";
           previewButton.disabled = true;
           applyButton.disabled = true;
           count.textContent = "尚無可編輯區塊。";
+        }
+        updateTools();
+      }
+
+      function orderedSections() {
+        return [...(state?.answer.sections || [])].sort((a, b) => a.order - b.order);
+      }
+
+      // Enables the phrase, order, numbering and history controls for the current state and selection.
+      function updateTools() {
+        const editable = Boolean(state) && !state.readOnly && !applying;
+        for (const input of [findInput, replaceInput, occurrenceInput, replaceAllInput]) input.disabled = !editable;
+        useSelectionButton.disabled = !editable;
+        phrasePreviewButton.disabled = !editable || !findInput.value;
+        if (!pendingPhrase || !editable) phraseApplyButton.disabled = true;
+        const sections = orderedSections();
+        const index = sections.findIndex((section) => section.id === selectedSectionId);
+        moveUpButton.disabled = !editable || index <= 0;
+        moveDownButton.disabled = !editable || index < 0 || index >= sections.length - 1;
+        renumberButton.disabled = !editable;
+        revisionsButton.disabled = !state || applying;
+      }
+
+      // After any write, both the section editor and the tool panels reflect the current state again.
+      function restoreControls() {
+        const hasSelection = Boolean(state?.answer.sections.some((section) => section.id === selectedSectionId));
+        sectionSelect.disabled = !state?.answer.sections.length;
+        headingInput.disabled = state?.readOnly || !hasSelection;
+        textInput.disabled = state?.readOnly || !hasSelection;
+        previewButton.disabled = state?.readOnly || !hasSelection;
+        updateTools();
+      }
+
+      // A new snapshot makes pending previews, the armed renumbering and the listed history stale;
+      // anything still in flight from before compares its epoch and is dropped.
+      function invalidateTools() {
+        snapshotEpoch += 1;
+        renumberArgs = null;
+        phraseEpoch += 1;
+        pendingPhrase = null;
+        phrasePreviewText.textContent = "";
+        phrasePreviewText.className = "preview";
+        renumberArmed = false;
+        renumberButton.textContent = "重新編號";
+        toolsText.textContent = "";
+        toolsText.className = "preview";
+        revisionList.replaceChildren();
+      }
+
+      function resetPhrase() {
+        phraseEpoch += 1;
+        pendingPhrase = null;
+        phrasePreviewText.textContent = "";
+        phrasePreviewText.className = "preview";
+        updateTools();
+      }
+
+      function summaryOf(result) {
+        return (result?.content?.[0]?.text || "已完成。").split("\n").map((line) => line.replace(/^・/, "")).join("；");
+      }
+
+      /** Runs a write tool, then shows the authoritative snapshot again. */
+      async function runWrite(button, name, args) {
+        if (!state || state.readOnly || applying) return null;
+        applying = true;
+        setBusy(button, true);
+        updateTools();
+        try {
+          const answerId = args.answerId;
+          const result = await callTool(name, args);
+          const rendered = extract(await callTool("render_answer_sheet", { answerId }));
+          // The host may have shown another answer meanwhile; never switch the view back to this one.
+          if (rendered && state?.answer.id === answerId) renderSnapshot(rendered);
+          noticeFor(answerId, summaryOf(result), false);
+          return result;
+        } catch (error) {
+          noticeFor(args.answerId, error instanceof Error ? error.message : "操作失敗，可能需要重新載入最新版本。", true);
+          return null;
+        } finally {
+          applying = false;
+          setBusy(button, false);
+          restoreControls();
+        }
+      }
+
+      function phraseArgs() {
+        const edit = { find: findInput.value, replace: replaceInput.value };
+        const occurrence = occurrenceInput.value.trim();
+        if (replaceAllInput.checked) edit.replaceAll = true;
+        else if (occurrence) {
+          if (!/^[1-9][0-9]*$/.test(occurrence)) throw new Error("「只改第幾處」要填正整數，或留空。");
+          edit.occurrence = Number(occurrence);
+        }
+        return { answerId: state.answer.id, expectedVersion: state.answer.version, edits: [edit] };
+      }
+
+      async function previewPhrase() {
+        if (!state || state.readOnly || applying || !findInput.value) return;
+        const epoch = phraseEpoch;
+        setBusy(phrasePreviewButton, true);
+        try {
+          const args = phraseArgs();
+          const result = await callTool("preview_change", { operation: "edit_text", ...args });
+          const preview = result?.structuredContent || result?.result?.structuredContent;
+          if (epoch !== phraseEpoch) return;
+          if (!preview) throw new Error("工具沒有回傳預覽資料。");
+          pendingPhrase = { args, epoch };
+          phrasePreviewText.textContent = preview.summary?.join("；") || "預覽完成，可套用。";
+          phrasePreviewText.className = preview.after?.layout?.fits ? "preview good" : "preview bad";
+          phraseApplyButton.disabled = false;
+        } catch (error) {
+          if (epoch !== phraseEpoch) return;
+          pendingPhrase = null;
+          phrasePreviewText.textContent = error instanceof Error ? error.message : "預覽失敗。";
+          phrasePreviewText.className = "preview bad";
+        } finally {
+          setBusy(phrasePreviewButton, false);
+          updateTools();
+        }
+      }
+
+      async function applyPhrase() {
+        if (!pendingPhrase || pendingPhrase.epoch !== phraseEpoch) return;
+        const result = await runWrite(phraseApplyButton, "edit_text", pendingPhrase.args);
+        if (!result) return;
+        findInput.value = "";
+        replaceInput.value = "";
+        occurrenceInput.value = "";
+        replaceAllInput.checked = false;
+        resetPhrase();
+      }
+
+      function useSelection() {
+        // The find text must exist in the saved answer, so an unsaved draft cannot be the source.
+        const section = state?.answer.sections.find((item) => item.id === selectedSectionId);
+        if (!section || textInput.value !== section.text || (headingInput.value || "") !== (section.heading || "")) {
+          setNotice("上方區塊有尚未套用的修改；請先套用或重新選取區塊，再帶入選取文字。", true);
+          return;
+        }
+        const selected = textInput.value.slice(textInput.selectionStart, textInput.selectionEnd);
+        if (!selected || selected.includes("\n")) {
+          setNotice("請先在上方文字框選取同一段內的一段字。", true);
+          return;
+        }
+        findInput.value = selected;
+        replaceInput.value = selected;
+        resetPhrase();
+        replaceInput.focus();
+      }
+
+      function moveSelected(direction) {
+        const sections = orderedSections();
+        const index = sections.findIndex((section) => section.id === selectedSectionId);
+        const neighbour = sections[index + direction];
+        if (index < 0 || !neighbour) return;
+        const args = { answerId: state.answer.id, sectionId: selectedSectionId, expectedVersion: state.answer.version };
+        if (direction < 0) args.beforeSectionId = neighbour.id;
+        else args.afterSectionId = neighbour.id;
+        return runWrite(direction < 0 ? moveUpButton : moveDownButton, "move_section", args);
+      }
+
+      // First click previews the renumbering; a second click while armed applies it.
+      async function renumber() {
+        if (!state || state.readOnly || applying) return;
+        if (renumberArmed && renumberArgs) {
+          // Apply exactly the version that was previewed; a newer answer makes the server refuse it.
+          const args = renumberArgs;
+          renumberArmed = false;
+          renumberArgs = null;
+          renumberButton.textContent = "重新編號";
+          toolsText.textContent = "";
+          await runWrite(renumberButton, "renumber_items", args);
+          return;
+        }
+        const epoch = snapshotEpoch;
+        const args = { answerId: state.answer.id, expectedVersion: state.answer.version };
+        setBusy(renumberButton, true);
+        try {
+          const result = await callTool("preview_change", { operation: "renumber_items", ...args });
+          if (epoch !== snapshotEpoch) return;
+          const preview = result?.structuredContent || result?.result?.structuredContent;
+          toolsText.textContent = (preview?.summary || []).slice(3).join("；") || "預覽完成。";
+          toolsText.className = "preview";
+          renumberArgs = args;
+          renumberArmed = true;
+        } catch (error) {
+          if (epoch !== snapshotEpoch) return;
+          toolsText.textContent = error instanceof Error ? error.message : "預覽失敗。";
+          toolsText.className = "preview bad";
+        } finally {
+          setBusy(renumberButton, false);
+          if (renumberArmed) renumberButton.textContent = "確認重新編號";
+          updateTools();
+        }
+      }
+
+      async function loadRevisions() {
+        if (!state) return;
+        const epoch = snapshotEpoch;
+        const answerId = state.answer.id;
+        setBusy(revisionsButton, true);
+        try {
+          const result = await callTool("list_revisions", { answerId, limit: 10 });
+          // A list for an answer or version no longer shown is dropped rather than offering wrong restores.
+          if (epoch !== snapshotEpoch) return;
+          const list = result?.structuredContent || result?.result?.structuredContent;
+          if (!list) throw new Error("工具沒有回傳版本紀錄。");
+          revisionList.replaceChildren();
+          for (const revision of list.revisions || []) {
+            const item = makeElement("li", "");
+            const head = makeElement("div", "revision-head");
+            head.append(makeElement("strong", "", "第 " + revision.version + " 版"));
+            head.append(makeElement("span", "editor-help", (revision.totalLines ?? "?") + " 行" + (revision.fits === false ? "，超出" : "")));
+            if (revision.version === list.currentVersion) head.append(makeElement("span", "chip", "目前"));
+            else if (!state.readOnly) {
+              const restore = makeElement("button", "", "還原成這一版");
+              restore.type = "button";
+              // Bound to the listed answer and version: if either changed, the server refuses the restore.
+              restore.addEventListener("click", () => runWrite(restore, "restore_revision",
+                { answerId, version: revision.version, expectedVersion: list.currentVersion }));
+              head.append(restore);
+            }
+            item.append(head);
+            item.append(makeElement("div", "editor-help", (revision.changes || []).join("；")));
+            revisionList.append(item);
+          }
+          if (list.olderVersions) revisionList.append(makeElement("li", "editor-help", "另有 " + list.olderVersions + " 個更早的版本未列出。"));
+        } catch (error) {
+          if (epoch !== snapshotEpoch) return;
+          setNotice(error instanceof Error ? error.message : "讀取版本紀錄失敗。", true);
+        } finally {
+          setBusy(revisionsButton, false);
+          updateTools();
         }
       }
 
@@ -248,6 +565,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         if (state?.answer.id === snapshot.answer.id && snapshot.answer.version < state.answer.version) return;
         editEpoch += 1;
         state = snapshot;
+        invalidateTools();
         byId("refresh").disabled = false;
         byId("check").disabled = false;
         const layout = snapshot.layout;
@@ -307,16 +625,16 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       async function refresh() {
         if (!state) return;
         const button = byId("refresh");
+        const answerId = state.answer.id;
         setBusy(button, true);
         try {
-          const answerId = state.answer.id;
           const result = await callTool("render_answer_sheet", { answerId });
           if (state?.answer.id !== answerId) return;
           const snapshot = extract(result);
           if (!snapshot) throw new Error("工具沒有回傳可顯示的答題紙資料。");
           renderSnapshot(snapshot);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "重新顯示失敗。", true);
+          noticeFor(answerId, error instanceof Error ? error.message : "重新顯示失敗。", true);
         } finally {
           setBusy(button, false);
         }
@@ -325,9 +643,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       async function checkLayout() {
         if (!state) return;
         const button = byId("check");
+        const answerId = state.answer.id;
         setBusy(button, true);
         try {
-          const answerId = state.answer.id;
           await callTool("check_layout", { answerId });
           const result = await callTool("render_answer_sheet", { answerId });
           if (state?.answer.id !== answerId) return;
@@ -335,7 +653,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           if (!snapshot) throw new Error("工具沒有回傳最新答案與版面資料。");
           renderSnapshot(snapshot);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "版面檢查失敗。", true);
+          noticeFor(answerId, error instanceof Error ? error.message : "版面檢查失敗。", true);
         } finally {
           setBusy(button, false);
         }
@@ -410,17 +728,15 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           pendingEdit = null;
           // Fetch the current snapshot and regenerated SVG after a committed edit.
           const rendered = extract(await callTool("render_answer_sheet", { answerId: snapshot.answer.id }));
-          renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
-          setNotice("修改已套用並重新計算版面。", false);
+          // The host may have shown another answer meanwhile; never switch the view back to this one.
+          if (state?.answer.id === snapshot.answer.id) renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
+          noticeFor(edit.args.answerId, "修改已套用並重新計算版面。", false);
         } catch (error) {
-          setNotice(error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
+          noticeFor(edit.args.answerId, error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
         } finally {
           applying = false;
-          sectionSelect.disabled = !state?.answer.sections.length;
-          headingInput.disabled = state?.readOnly || !selectedSectionId;
-          textInput.disabled = state?.readOnly || !selectedSectionId;
-          previewButton.disabled = state?.readOnly || !selectedSectionId;
           setBusy(applyButton, false);
+          restoreControls();
           applyButton.disabled = true;
         }
       }
@@ -469,8 +785,19 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       byId("fullscreen").addEventListener("click", fullscreen);
       previewButton.addEventListener("click", previewEdit);
       applyButton.addEventListener("click", applyEdit);
+      for (const input of [findInput, replaceInput]) input.addEventListener("input", resetPhrase);
+      occurrenceInput.addEventListener("input", () => { if (occurrenceInput.value) replaceAllInput.checked = false; resetPhrase(); });
+      replaceAllInput.addEventListener("change", () => { if (replaceAllInput.checked) occurrenceInput.value = ""; resetPhrase(); });
+      useSelectionButton.addEventListener("click", useSelection);
+      phrasePreviewButton.addEventListener("click", previewPhrase);
+      phraseApplyButton.addEventListener("click", applyPhrase);
+      moveUpButton.addEventListener("click", () => moveSelected(-1));
+      moveDownButton.addEventListener("click", () => moveSelected(1));
+      renumberButton.addEventListener("click", renumber);
+      revisionsButton.addEventListener("click", loadRevisions);
 
       byId("refresh").disabled = true; byId("check").disabled = true;
+      updateTools();
       window.addEventListener("openai:set_globals", event => {
         const snapshot = extract(event.detail?.globals?.toolOutput);
         if (snapshot) renderSnapshot(snapshot);
