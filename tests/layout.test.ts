@@ -202,6 +202,9 @@ test("FileStore persists versioned answers and exporters create fixed-grid files
     assert.equal(pdf.pages, 2);
     assert.equal(text.pages, 2);
     assert.ok((await fs.stat(docxPath)).size > 1000);
+    // Only the 166 paper embeds its font; the grid template keeps the plain Word font table.
+    const zip = await (await import("jszip")).default.loadAsync(await fs.readFile(docxPath));
+    assert.equal(zip.file(/^word\/fonts\//).length, 0);
     assert.ok((await fs.stat(pdfPath)).size > 1000);
     assert.match(await fs.readFile(textPath, "utf8"), /\f/);
   } finally {

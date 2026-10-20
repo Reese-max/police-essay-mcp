@@ -189,6 +189,12 @@ async function makeChangePreview(
   };
 }
 
+/** Formatting tools state the 166 paper limits up front so the model explains them instead of retrying. */
+export const PAPER_FORMAT_NOTE = " The 166 original-paper template (police_information_essay_166) accepts only left-aligned text without bold or italic; tell the user so instead of attempting that formatting.";
+const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "preview_write_answer", "replace_text", "preview_replace_text",
+  "format_section", "preview_format_section", "insert_text", "preview_insert_text"]);
+const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
+
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
 }
@@ -201,14 +207,16 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
     },
     {
       instructions:
-        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。",
+        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + PAPER_FORMAT_INSTRUCTION,
     },
   );
 
-  const registerTool: typeof server.registerTool = (name, config, callback) => server.registerTool(name,
-    options.scopes ? { ...config, _meta: { ...config._meta,
+  const registerTool: typeof server.registerTool = (name, base, callback) => {
+    const config = FORMATTING_TOOLS.has(name) ? { ...base, description: (base.description ?? "") + PAPER_FORMAT_NOTE } : base;
+    return server.registerTool(name, options.scopes ? { ...config, _meta: { ...config._meta,
       securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }],
     } } : config, callback);
+  };
 
   server.registerResource(
     "police-information-essay-answer-sheet-widget",
@@ -259,7 +267,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(), option
         text: [
           "# 申論答題紙工作流程",
           "1. load_exam_paper：讀模板或既有答案。",
-          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。",
+          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。" + PAPER_FORMAT_INSTRUCTION,
           "3. read_answer / check_layout：查看每頁行數、剩餘行數與溢出。",
           "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
           "5. replace_text / insert_text / delete_text：只改指定區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",

@@ -8,6 +8,7 @@ import {
   VerticalPositionRelativeFrom,
   AlignmentType,
   BorderStyle,
+  CharacterSet,
   Document,
   HeightRule,
   LineRuleType,
@@ -36,6 +37,30 @@ function pageLines(report: LayoutReport, page: number): LayoutLine[] {
 }
 
 import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath } from "./original-paper.js";
+import { subsetFont } from "./font-subset.js";
+
+/** Printable ASCII and common full-width marks stay editable in Word beyond the answer's own characters. */
+const EDITABLE_PAPER_CHARACTERS = String.fromCharCode(...Array.from({ length: 95 }, (_, index) => 32 + index)) + "，。、；：？！「」『』（）《》〈〉【】—…・％";
+/** Word otherwise widens each Han/Latin boundary by a quarter em, moving mixed lines off the PDF positions. */
+export const PAPER_STYLES = '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:autoSpaceDE w:val="0"/><w:autoSpaceDN w:val="0"/></w:pPr></w:style></w:styles>';
+
+/** Document options that embed one TrueType face; split out so CI can check them with any system font. */
+export function embeddedFontOptions(fontFamily: string, data: Buffer) {
+  return { fonts: [{ name: fontFamily, data, characterSet: CharacterSet.CHINESEBIG5 }], externalStyles: PAPER_STYLES };
+}
+
+/**
+ * docx writes a lowercase w:fontKey, which LibreOffice cannot deobfuscate; ST_Guid is uppercase.
+ * The same hex digits keep the key bytes, so docx's obfuscated font1.odttf (rId1) stays valid.
+ */
+export function embeddedFontTable(document: Document, fontFamily: string, altName: string): Array<{ path: string; data: string }> {
+  const xml = (value: string) => value.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+  const fontKey = document.FontTable.fontOptionsWithKey[0].fontKey.toUpperCase();
+  return [{ path: "word/fontTable.xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<w:fonts xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+    + `<w:font w:name="${xml(fontFamily)}"><w:altName w:val="${xml(altName)}"/><w:charset w:val="88"/><w:family w:val="auto"/><w:pitch w:val="variable"/>`
+    + `<w:embedRegular r:id="rId1" w:fontKey="{${fontKey}}" w:subsetted="1"/></w:font></w:fonts>` }];
+}
 
 function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
   if (template.paperProfile) {
@@ -123,7 +148,7 @@ function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: 
   const rows = Array.from({ length: template.linesPerPage }, (_, index) => {
     const line = lines[index];
     const cell = new TableCell({
-      verticalAlign: VerticalAlign.CENTER,
+      verticalAlign: template.paperProfile ? VerticalAlign.BOTTOM : VerticalAlign.CENTER,
       margins: { top: 0, bottom: 0, left: template.paperProfile ? 0 : 80, right: template.paperProfile ? 0 : 80 },
       children: [makeLineParagraph(template, line)],
     });
@@ -165,7 +190,12 @@ export async function exportDocx(
     children.push(makeDocxPageTable(template, pageLines(report, page), page));
   }
 
+  // Word substitutes another face for a font that is not installed, which moves and clips the
+  // measured 166 rows; embed the used glyphs so the file renders identically without the font.
+  const embedded = template.paperProfile ? embeddedFontOptions(template.fontFamily,
+    await subsetFont(originalPaperFontPath(), [EDITABLE_PAPER_CHARACTERS, ...report.lines.filter(line => line.page <= pages).map(line => line.text)])) : undefined;
   const document = new Document({
+    ...embedded,
     creator: "police-essay-mcp",
     title: "國考申論答題紙",
     description: "由警察資訊申論答題紙 MCP 產生的固定版面文件",
@@ -191,8 +221,9 @@ export async function exportDocx(
     ],
   });
 
+  const overrides = embedded ? embeddedFontTable(document, template.fontFamily, "教育部標準楷書") : [];
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
-  await fs.writeFile(outputPath, await Packer.toBuffer(document));
+  await fs.writeFile(outputPath, await Packer.toBuffer(document, false, overrides));
   return { path: outputPath, pages, format: "docx" };
 }
 

@@ -71,27 +71,58 @@ export function wrapOriginalPaper(text: string, format: ParagraphFormat, templat
   return lines;
 }
 
+type PathCommand = { command: string; args: number[] };
+const PATH_LETTERS: Record<string, string> = { moveTo: "m", lineTo: "l", quadraticCurveTo: "q", bezierCurveTo: "c" };
+/**
+ * Lossless compact SVG path: relative coordinates in hundredths, implicit repeated commands and no
+ * separator before a minus sign. Absolute font-unit outlines are about a third longer.
+ */
+export function compactGlyphPath(commands: PathCommand[]): string {
+  let out = "", last = "", x = 0, y = 0, startX = 0, startY = 0;
+  for (const { command, args } of commands) {
+    if (command === "closePath") { out += "z"; last = "z"; x = startX; y = startY; continue; }
+    const letter = PATH_LETTERS[command];
+    if (!letter) throw new Error(`Unsupported glyph path command ${command}.`);
+    const points = args.map(value => Math.round(value * 100));
+    let numbers = "";
+    points.forEach((point, index) => {
+      const text = String((point - (index % 2 ? y : x)) / 100);
+      numbers += numbers && !text.startsWith("-") ? " " + text : text;
+    });
+    out += letter === last && letter !== "m" ? (numbers.startsWith("-") ? numbers : " " + numbers) : letter + numbers;
+    last = letter;
+    [x, y] = points.slice(-2);
+    if (letter === "m") [startX, startY] = [x, y];
+  }
+  return out;
+}
+
 /** Glyph outlines give the browser the same paper/font geometry without downloading a font. */
 export function originalPaperPreview(template: AnswerTemplate, report: import('./domain.js').LayoutReport): string[] {
   validateOriginalPaper(template);
   const face = font();
   const scale = template.fontSizePt / face.unitsPerEm;
   const escape = (value: string) => value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));
+  const round = (value: number) => Math.round(value * 100) / 100;
   return Array.from({length: template.pages}, (_, index) => {
     const [x,y,right,bottom] = originalPaper.imageRect;
+    // Each outline is defined once per page and placed with <use>; ids carry the page so both
+    // pages can share one document. Repeated characters no longer repeat their outlines.
+    const defined = new Map<number, string>();
     const groups = report.lines.filter(l => l.page === index+1 && l.text && !l.isSpacer).map(line => {
       const row = originalPaper.rows[line.lineOnPage-1];
       let pen = 130.32 + (line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : 0)) * template.fontSizePt / 2;
       const run = face.layout(line.text);
-      const paths = run.glyphs.map((glyph: {path: {toSVG(): string}}, i: number) => {
+      const uses = run.glyphs.map((glyph: {id: number; path: {commands: PathCommand[]}}, i: number) => {
         const position = run.positions[i];
-        const d = glyph.path.toSVG();
-        const path = `<path d="${escape(d)}" transform="translate(${pen+position.xOffset*scale} ${row[1]-3.5-position.yOffset*scale}) scale(${scale} ${-scale})"/>`;
+        const id = `p${index+1}g${glyph.id}`;
+        if (!defined.has(glyph.id)) defined.set(glyph.id, `<path id="${id}" d="${compactGlyphPath(glyph.path.commands)}" transform="scale(${scale} ${-scale})"/>`);
+        const use = `<use href="#${id}" x="${round(pen+position.xOffset*scale)}" y="${round(row[1]-3.5-position.yOffset*scale)}"/>`;
         pen += position.xAdvance * scale;
-        return path;
+        return use;
       }).join('');
-      return `<g data-section-id="${escape(line.sectionId)}" role="button" tabindex="0" aria-label="${escape(line.text)}"><rect x="130.32" y="${row[0]}" width="365.68" height="${row[1]-row[0]}" fill="none" pointer-events="all"/>${paths}</g>`;
+      return `<g data-section-id="${escape(line.sectionId)}" role="button" tabindex="0" aria-label="${escape(line.text)}"><rect x="130.32" y="${row[0]}" width="365.68" height="${row[1]-row[0]}" fill="none" pointer-events="all"/>${uses}</g>`;
     }).join('');
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595.3 841.9" role="img" aria-label="第${index+1}頁原稿紙"><rect width="595.3" height="841.9" fill="white"/><image href="data:image/jpeg;base64,${originalPaper.imageBase64}" x="${x}" y="${y}" width="${right-x}" height="${bottom-y}"/><g fill="#111111">${groups}</g></svg>`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595.3 841.9" role="img" aria-label="第${index+1}頁原稿紙"><defs>${[...defined.values()].join('')}</defs><rect width="595.3" height="841.9" fill="white"/><image href="data:image/jpeg;base64,${originalPaper.imageBase64}" x="${x}" y="${y}" width="${right-x}" height="${bottom-y}"/><g fill="#111111">${groups}</g></svg>`;
   });
 }

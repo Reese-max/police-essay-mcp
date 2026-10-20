@@ -3,14 +3,14 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole, type DOMWindow } from 'jsdom';
 import { POLICE_ESSAY_WIDGET_HTML } from '../src/widget.js';
-import { createAnswerDocument, type AnswerTemplate } from '../src/domain.js';
+import { createAnswerDocument, type AnswerTemplate, type HeadingStyleInput } from '../src/domain.js';
 import { layoutSections } from '../src/layout.js';
 
 const template = JSON.parse(readFileSync(new URL('../templates/police_information_essay.json', import.meta.url), 'utf8')) as AnswerTemplate;
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 type Args = { answerId: string; sectionId?: string; expectedVersion?: number; newText?: string; paragraphs?: Array<{text: string; format?: unknown}> };
-async function host(options: {readOnly?: boolean; legacy?: boolean} = {}) {
-  let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',paragraphs:[{text:'第一段',format:{firstLineIndent:2}},{text:'第二段',format:{leftIndent:2}}]}]});
+async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle?: HeadingStyleInput; italic?: boolean} = {}) {
+  let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',headingStyle:options.headingStyle,paragraphs:[{text:'第一段',format:{firstLineIndent:2,italic:options.italic}},{text:'第二段',format:{leftIndent:2}}]}]});
   const calls: Array<{name: string; args: Args}> = [];
   const protocol: string[] = [];
   let held: (()=>void) | undefined;
@@ -94,4 +94,18 @@ test('read-only widget disables editing and legacy host tool calls work without 
  const legacy=await host({legacy:true});try {
   assert.equal(legacy.protocol.length,0);legacy.input('修改第一段\n第二段');await legacy.click('preview-edit');await legacy.click('apply-edit');assert.equal(legacy.answer.version,2);
  }finally{legacy.dom.window.close();}
+});
+test('widget grid shows bold and italic only where the line format sets them',async()=>{
+ const weight=(h: Awaited<ReturnType<typeof host>>,text: string)=>{
+  const cell=[...h.dom.window.document.querySelectorAll('.line-text')].find(x=>x.textContent===text)!;
+  const style=h.dom.window.getComputedStyle(cell);return [style.fontWeight,style.fontStyle];
+ };
+ const plain=await host({headingStyle:{bold:false}});try {
+  // jsdom reports '' when no stylesheet rule sets the property.
+  assert.deepEqual(weight(plain,'（一）'),['','']);assert.deepEqual(weight(plain,'第二段'),['','']);
+ }finally{plain.dom.window.close();}
+ const styled=await host({italic:true});try {
+  assert.deepEqual(weight(styled,'（一）'),['800','']);assert.deepEqual(weight(styled,'第二段'),['','']);
+  assert.deepEqual(weight(styled,'第一段'),['','italic']);
+ }finally{styled.dom.window.close();}
 });

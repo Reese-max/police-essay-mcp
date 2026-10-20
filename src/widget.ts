@@ -43,7 +43,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .line-number { display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; color: #94a3b8; font-size: 10px; font-variant-numeric: tabular-nums; user-select: none; }
     .line-cells { --columns: 42; position: relative; min-width: 0; border-bottom: 1px solid #dbe3ef; background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(100% / var(--columns) - 1px), rgba(148, 163, 184, .25) calc(100% / var(--columns) - 1px), rgba(148, 163, 184, .25) calc(100% / var(--columns))); background-size: 100% 100%; }
     .line-text { display: block; overflow: hidden; min-height: 1.65rem; padding: 3px 5px; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; font-size: 12px; line-height: 1.35; text-overflow: clip; }
-    .answer-line.heading .line-text { color: #172554; font-weight: 800; }
+    .answer-line.heading .line-text { color: #172554; }
+    .answer-line.bold .line-text { font-weight: 800; }
+    .answer-line.italic .line-text { font-style: italic; }
     .answer-line.spacer .line-text { min-height: 1.65rem; }
     .editor { margin-top: 16px; border: 1px solid #d7dee9; border-radius: 14px; background: #fff; padding: 14px; }
     .editor-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
@@ -283,7 +285,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           const pageLines = linesByPage.get(pageNumber) || new Map();
           for (let lineNumber = 1; lineNumber <= layout.linesPerPage; lineNumber += 1) {
             const line = pageLines.get(lineNumber);
-            const row = makeElement("div", "answer-line" + (line?.isHeading ? " heading" : "") + (line?.isSpacer ? " spacer" : ""));
+            // Emphasis follows the line's own format so the grid matches the exported file.
+            const row = makeElement("div", "answer-line" + (line?.isHeading ? " heading" : "") + (line?.format?.bold ? " bold" : "") + (line?.format?.italic ? " italic" : "") + (line?.isSpacer ? " spacer" : ""));
             row.dataset.sectionId = line?.sectionId || "";
             row.append(makeElement("span", "line-number", String(lineNumber).padStart(2, "0")));
             const cells = makeElement("div", "line-cells");
