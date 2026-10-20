@@ -23,12 +23,20 @@ export interface ExportDetails {
   temporaryDir?: string;
 }
 
+export interface DeletedAnswer {
+  answer: AnswerDocument;
+  revisions: number;
+  exports: number;
+}
+
 export interface EssayStore {
   ensureDirectories(): Promise<void>;
   getTemplate(templateId: string): Promise<AnswerTemplate>;
   listTemplates(): Promise<AnswerTemplate[]>;
   getAnswer(answerId: string): Promise<AnswerDocument>;
   saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
+  /** Permanently removes the answer, its revision history and its export artifacts. */
+  deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer>;
   listAnswers(): Promise<AnswerDocument[]>;
   resolveExportPath(filename: string, extension: ExportFormat): string;
   createExportHandle(outputPath: string, details: ExportDetails): Promise<{
@@ -158,6 +166,49 @@ export class FileStore implements EssayStore {
     });
   }
 
+  async deleteAnswer(answerId: string, options: { expectedVersion: number }): Promise<DeletedAnswer> {
+    const id = safeId(answerId);
+    return this.withAnswerWriteLock(id, async () => {
+      const answer = await this.getAnswer(id);
+      if (answer.version !== options.expectedVersion) {
+        throw new Error(
+          `Version conflict: expected ${options.expectedVersion}, current version is ${answer.version}. Read the answer again before deleting.`,
+        );
+      }
+      let names: string[] = [];
+      try {
+        names = await fs.readdir(this.artifactDir);
+      } catch (error) {
+        if (!isStoreNotFound(error)) throw error;
+      }
+      let exports = 0;
+      for (const name of names.filter((item) => item.endsWith(".json"))) {
+        const handle = name.slice(0, -".json".length);
+        let raw: string;
+        try {
+          raw = await fs.readFile(path.join(this.artifactDir, name), "utf8");
+        } catch (error) {
+          if (isStoreNotFound(error)) continue;
+          throw error;
+        }
+        let value: unknown;
+        try {
+          value = JSON.parse(raw);
+        } catch {
+          continue;
+        }
+        if (!isExportArtifactManifest(value, handle) || value.answerId !== id) continue;
+        // Bytes first, manifest second: a failure leaves the manifest for a retry to find.
+        await fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true });
+        await fs.rm(path.join(this.artifactDir, name), { force: true });
+        exports++;
+      }
+      // The answer goes last, so a failed cleanup can be retried with the same version.
+      await fs.rm(path.join(this.answerDir, `${id}.json`));
+      return { answer, revisions: 0, exports };
+    });
+  }
+
   async listAnswers(): Promise<AnswerDocument[]> {
     await this.ensureDirectories();
     const filenames = (await fs.readdir(this.answerDir)).filter((name) => name.endsWith(".json"));
@@ -277,6 +328,8 @@ export class FileStore implements EssayStore {
         ]);
         throw new Error("Export artifact not found.");
       }
+      // Never serve bytes of an answer that has been deleted.
+      await this.getAnswer(value.answerId);
 
       const artifactRoot = path.resolve(this.artifactDir);
       const artifactPath = path.resolve(artifactRoot, value.artifactFilename);

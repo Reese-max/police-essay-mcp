@@ -76,6 +76,9 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。
+8. 使用者明確要求永久刪除時，以 `read_answer` / `list_answers` 取得目前版本，再呼叫 `delete_answer`（必須帶 `expectedVersion`）。答案、全部修改紀錄與匯出檔一併刪除，無法復原；唯讀 credential 看不到此工具。
+
+工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 71 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
 
 ## 正式格式
 

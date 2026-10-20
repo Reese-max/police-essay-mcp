@@ -3,7 +3,9 @@ import type { FirestoreClient, StorageClient } from "../../src/cloud-storage.js"
 
 type Data = Record<string, unknown>;
 export type Read = { path: string; revision: number; value?: Data };
-export type Write = { path: string; value: Data; create: boolean };
+export type Write = { path: string; value: Data; create: boolean; delete?: boolean };
+/** A transactional query read: commit fails if the matching paths changed (phantoms). */
+export type QueryRead = { expected: string[]; current: () => string[] };
 function clone<T>(value: T): T {
   if (value instanceof Timestamp) return Timestamp.fromMillis(value.toMillis()) as T;
   if (Buffer.isBuffer(value)) return Buffer.from(value) as T;
@@ -18,6 +20,8 @@ function clone<T>(value: T): T {
 /** Optimistic, atomic commit: no shared promise lock and no lock across answers. */
 export class MemoryFirestore {
   readonly documents = new Map<string, { revision: number; value: Data }>();
+  /** Revision of a deleted path, so delete-then-recreate never reuses a revision a stale read saw. */
+  private readonly tombstones = new Map<string, number>();
   retries = 0;
   failManifest = false;
   failRead = false;
@@ -26,15 +30,24 @@ export class MemoryFirestore {
   async read(path: string): Promise<Read> {
     if (this.failRead) throw new Error("synthetic dependency failure");
     const item = this.documents.get(path);
-    return { path, revision: item?.revision ?? 0, value: item && clone(item.value) };
+    return { path, revision: this.revision(path), value: item && clone(item.value) };
   }
-  async commit(reads: Read[], writes: Write[]): Promise<boolean> {
+  private revision(path: string): number {
+    return this.documents.get(path)?.revision ?? this.tombstones.get(path) ?? 0;
+  }
+  async commit(reads: Read[], writes: Write[], queries: QueryRead[] = []): Promise<boolean> {
     // No await between validation and application: all writes commit together.
-    if (reads.some(read => (this.documents.get(read.path)?.revision ?? 0) !== read.revision)) return false;
+    if (reads.some(read => this.revision(read.path) !== read.revision)) return false;
+    if (queries.some(query => JSON.stringify(query.current()) !== JSON.stringify(query.expected))) return false;
     if (writes.some(write => write.create && this.documents.has(write.path))) throw new Error("Already exists.");
     if (this.failManifest && writes.some(write => write.path.includes("/artifacts/"))) throw new Error("synthetic manifest failure");
     for (const write of writes) {
-      const revision = (this.documents.get(write.path)?.revision ?? 0) + 1;
+      const revision = this.revision(write.path) + 1;
+      if (write.delete) {
+        if (this.documents.delete(write.path)) this.tombstones.set(write.path, revision);
+        continue;
+      }
+      this.tombstones.delete(write.path);
       this.documents.set(write.path, { revision, value: clone(write.value) });
     }
     return true;
@@ -52,30 +65,56 @@ export class MemoryFirestore {
   collection(path: string) {
     let order: string | undefined;
     let maximum = Infinity;
+    const filters: Array<[string, unknown]> = [];
     const query = {
       doc: (id: string) => this.doc(path + "/" + id),
       orderBy: (field: string, _direction: string) => { order = field; return query; },
       limit: (limit: number) => { maximum = limit; return query; },
-      get: async () => {
-        if (this.failRead) throw new Error("synthetic dependency failure");
-        const entries = [...this.documents.entries()].filter(([key]) =>
-          key.startsWith(path + "/") && key.slice(path.length + 1).indexOf("/") === -1);
-        if (order) entries.sort((a, b) => String(b[1].value[order!]).localeCompare(String(a[1].value[order!])));
-        return { docs: entries.slice(0, maximum).map(([, item]) => ({ data: () => clone(item.value) })) };
+      where: (field: string, operator: "==", value: unknown) => {
+        if (operator !== "==") throw new Error("Only == filters are faked.");
+        filters.push([field, value]);
+        return query;
       },
+      select: () => query,
+      paths: () => matching().map(([key]) => key),
+      get: async () => ({ docs: matching().map(([key, item]) => ({ ref: this.doc(key), data: () => clone(item.value) })) }),
+    };
+    const matching = () => {
+      if (this.failRead) throw new Error("synthetic dependency failure");
+      const entries = [...this.documents.entries()].filter(([key, item]) =>
+        key.startsWith(path + "/") && key.slice(path.length + 1).indexOf("/") === -1
+        && filters.every(([field, value]) => item.value[field] === value));
+      if (order) entries.sort((a, b) => String(b[1].value[order!]).localeCompare(String(a[1].value[order!])));
+      return entries.slice(0, maximum);
     };
     return query;
   }
   async runTransaction<T>(callback: (transaction: {
-    get: (ref: { path: string }) => Promise<{ data: () => Data | undefined }>;
+    get: (ref: { path: string } | { paths: () => string[] }) => Promise<unknown>;
     set: (ref: { path: string }, value: Data) => void;
     create: (ref: { path: string }, value: Data) => void;
+    delete: (ref: { path: string }) => void;
   }) => Promise<T>): Promise<T> {
     for (let attempt = 0; attempt < 5; attempt++) {
       const reads: Read[] = [];
       const writes: Write[] = [];
+      const queries: QueryRead[] = [];
       const result = await callback({
         get: async ref => {
+          if (!("path" in ref)) {
+            // Query read: the result set and every returned document join the optimistic
+            // read set, and each document's data comes from the same read as its revision.
+            const expected = ref.paths();
+            queries.push({ expected, current: ref.paths });
+            const docs = [];
+            for (const path of expected) {
+              const read = await this.read(path);
+              reads.push(read);
+              docs.push({ ref: this.doc(path), data: () => clone(read.value) });
+              await this.onTransactionRead?.(read);
+            }
+            return { docs };
+          }
           const read = await this.read(ref.path);
           reads.push(read);
           await this.onTransactionRead?.(read);
@@ -83,8 +122,9 @@ export class MemoryFirestore {
         },
         set: (ref, value) => { writes.push({ path: ref.path, value, create: false }); },
         create: (ref, value) => { writes.push({ path: ref.path, value, create: true }); },
+        delete: ref => { writes.push({ path: ref.path, value: {}, create: false, delete: true }); },
       });
-      if (await this.commit(reads, writes)) return result;
+      if (await this.commit(reads, writes, queries)) return result;
       this.retries++;
     }
     throw new Error("Transaction retries exhausted.");
