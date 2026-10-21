@@ -1,5 +1,5 @@
 // Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v3.html";
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v4.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
@@ -13,7 +13,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     button, input, textarea, select { font: inherit; }
     button { cursor: pointer; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #1f2937; padding: 7px 11px; }
     button:hover { border-color: #64748b; background: #f8fafc; }
-    button:disabled { cursor: wait; opacity: .55; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button[aria-busy="true"] { cursor: wait; }
     .app { --accent: #2563eb; max-width: 1120px; margin: 0 auto; padding: 18px; }
     .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
     .eyebrow { color: #64748b; font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
@@ -56,6 +57,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .field { display: flex; flex-direction: column; gap: 5px; }
     .field label { color: #526174; font-size: 11px; font-weight: 700; }
     select, input, textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #172033; padding: 8px 9px; }
+    select:disabled, input:disabled, textarea:disabled { border-color: #e2e8f0; background: #f1f5f9; color: #64748b; cursor: not-allowed; }
     textarea { min-height: 120px; resize: vertical; line-height: 1.55; }
     .editor-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
     .editor-buttons { display: flex; gap: 7px; }
@@ -235,6 +237,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       function setBusy(button, busy) {
         button.disabled = busy;
+        if (busy) button.setAttribute("aria-busy", "true");
+        else button.removeAttribute("aria-busy");
         if (busy) button.dataset.previousText = button.textContent || "";
         if (busy) button.textContent = "處理中…";
         else if (button.dataset.previousText) button.textContent = button.dataset.previousText;
@@ -386,6 +390,29 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         return (result?.content?.[0]?.text || "已完成。").split("\n").map((line) => line.replace(/^・/, "")).join("；");
       }
 
+      // Shows the answer a write saved. When the host cannot render it, the write's own snapshot goes
+      // on the grid instead, so the view never stays on the version the write replaced.
+      // Returns why the render failed, or "" when it did not.
+      async function showSaved(answerId, saved) {
+        let rendered = null, reason = "";
+        try {
+          rendered = extract(await callTool("render_answer_sheet", { answerId }));
+          if (!rendered) reason = "工具沒有回傳可顯示的答題紙資料";
+        } catch (error) {
+          reason = error instanceof Error ? error.message : "重新顯示失敗";
+        }
+        // The host may have shown another answer meanwhile; never switch the view back to this one.
+        if (state?.answer.id !== answerId) return reason;
+        const fallback = saved?.answer && saved?.layout ? { ...saved, readOnly: state.readOnly } : null;
+        if (rendered || fallback) renderSnapshot(rendered || fallback);
+        return reason;
+      }
+
+      function savedNotice(answerId, summary, reason) {
+        if (!reason) noticeFor(answerId, summary, false);
+        else noticeFor(answerId, summary + "；但畫板沒能更新（" + reason + "），請按「重新顯示」取回最新答題紙。", true);
+      }
+
       /** Runs a write tool, then shows the authoritative snapshot again. */
       async function runWrite(button, name, args) {
         if (!state || state.readOnly || applying) return null;
@@ -395,10 +422,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         try {
           const answerId = args.answerId;
           const result = await callTool(name, args);
-          const rendered = extract(await callTool("render_answer_sheet", { answerId }));
-          // The host may have shown another answer meanwhile; never switch the view back to this one.
-          if (rendered && state?.answer.id === answerId) renderSnapshot(rendered);
-          noticeFor(answerId, summaryOf(result), false);
+          const reason = await showSaved(answerId, result?.structuredContent || result?.result?.structuredContent);
+          savedNotice(answerId, summaryOf(result), reason);
           return result;
         } catch (error) {
           noticeFor(args.answerId, error instanceof Error ? error.message : "操作失敗，可能需要重新載入最新版本。", true);
@@ -727,10 +752,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           if (!snapshot?.answer || !snapshot?.layout) throw new Error("工具沒有回傳更新後的答題紙資料。");
           pendingEdit = null;
           // Fetch the current snapshot and regenerated SVG after a committed edit.
-          const rendered = extract(await callTool("render_answer_sheet", { answerId: snapshot.answer.id }));
-          // The host may have shown another answer meanwhile; never switch the view back to this one.
-          if (state?.answer.id === snapshot.answer.id) renderSnapshot(rendered || { ...snapshot, readOnly: state.readOnly });
-          noticeFor(edit.args.answerId, "修改已套用並重新計算版面。", false);
+          const reason = await showSaved(snapshot.answer.id, snapshot);
+          savedNotice(edit.args.answerId, reason ? "修改已套用" : "修改已套用並重新計算版面。", reason);
         } catch (error) {
           noticeFor(edit.args.answerId, error instanceof Error ? error.message : "套用修改失敗，可能需要重新載入最新版本。", true);
         } finally {
