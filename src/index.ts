@@ -81,7 +81,15 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   }
 
   function requestScope(request: IncomingMessage): "owner" | "read" | undefined {
-    if (allowAnonymousLoopback || allowAnonymousRemote) return "owner";
+    if (allowAnonymousLoopback) {
+      const authority = request.headers.host?.toLowerCase();
+      // The Host must name loopback and the port this request actually reached, which is not PORT when the handler is mounted elsewhere.
+      const localHost = ["127.0.0.1", "localhost", "[::1]"].some(value => authority === value || authority === `${value}:${request.socket.localPort}`);
+      // Only visible proxy metadata is detectable; tunnels must use owner-token mode.
+      const forwarded = Object.keys(request.headers).some(name => name === "forwarded" || name === "via" || name.startsWith("x-forwarded-"));
+      return localHost && !forwarded ? "owner" : undefined;
+    }
+    if (allowAnonymousRemote) return "owner";
     const supplied = /^Bearer ([^\s]+)$/iu.exec(request.headers.authorization ?? "")?.[1];
     if (!supplied) return undefined;
     if (oauth.mode === "oauth") return undefined;
