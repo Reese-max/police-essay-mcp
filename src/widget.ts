@@ -90,8 +90,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .line-number { display: flex; align-items: center; justify-content: flex-end; padding-right: 7px; color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; user-select: none; }
     /* One full-width character spans two layout columns, so each drawn cell holds one character. */
     .line-cells { --columns: 42; position: relative; width: calc(var(--columns) * .5em); border-bottom: 1px solid var(--line); background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(200% / var(--columns) - 1px), rgba(148, 163, 184, .28) calc(200% / var(--columns) - 1px), rgba(148, 163, 184, .28) calc(200% / var(--columns))); font-size: 13px; }
-    /* Half-width letters are not exactly half a character wide in every fallback font, so a long line may run past its cells; never hide it. */
-    .line-text { display: block; overflow: visible; min-height: 26px; padding: 0; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; line-height: 26px; }
+    /* Half-width letters are not exactly half a character wide in every fallback font; fitGridLines condenses such a line to its cells. */
+    .line-text { display: block; overflow: visible; min-height: 26px; padding: 0; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; line-height: 26px; transform-origin: left center; }
     .answer-line.heading .line-text { color: #172554; }
     .answer-line.bold .line-text { font-weight: 800; }
     .answer-line.italic .line-text { font-style: italic; }
@@ -713,8 +713,18 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           paper.append(body);
           pages.append(paper);
         }
+        fitGridLines();
         renderEditor();
         setNotice("已載入畫板；點選任一行可定位到對應區塊。", false);
+      }
+
+      // A line whose letters draw wider than their cells is condensed to fit, so no character is cut off at the paper edge.
+      function fitGridLines() {
+        for (const text of pages.querySelectorAll(".line-text")) {
+          text.style.transform = "";
+          const room = text.clientWidth;
+          if (room > 0 && text.scrollWidth > room + 0.5) text.style.transform = "scaleX(" + (room / text.scrollWidth) + ")";
+        }
       }
 
       async function refresh() {
