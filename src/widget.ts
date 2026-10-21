@@ -64,7 +64,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .meter > span { position: absolute; inset: 0; background: var(--accent); transform: scaleX(0); transform-origin: left center; transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
     .meter.full > span { background: var(--bad); }
     .chip { white-space: nowrap; }
-    .chip.id { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 11.5px; }
+    .chip.id { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--faint); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
     .notice { min-height: 20px; margin: 0 0 12px; color: var(--muted); font-size: 13px; }
     .notice.error { padding: 9px 12px; border-radius: var(--radius-sm); background: var(--bad-soft); color: var(--bad); }
     .sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 385px), 1fr)); gap: 16px; align-items: start; }
@@ -143,7 +143,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       .editor { padding: 14px; }
       .editor-grid, .phrase-grid { grid-template-columns: 1fr; }
       .editor-actions { align-items: stretch; flex-direction: column; }
-      .editor-buttons { justify-content: flex-end; }
+      .editor-actions .editor-buttons { justify-content: flex-end; }
     }
   </style>
 </head>
@@ -900,6 +900,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       revisionsButton.addEventListener("click", loadRevisions);
 
       byId("refresh").disabled = true; byId("check").disabled = true;
+      // A canvas rendered while hidden has nothing to measure; fit the grid lines again once it gets its size or changes width.
+      if (typeof ResizeObserver === "function") new ResizeObserver(() => fitGridLines()).observe(pages);
       updateTools();
       window.addEventListener("openai:set_globals", event => {
         const snapshot = extract(event.detail?.globals?.toolOutput);
