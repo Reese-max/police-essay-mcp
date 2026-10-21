@@ -11,11 +11,13 @@ const amount = (value) => typeof value === "number" ? value
   : typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
 
 // A budget period lasts one calendar month from its start, so a notification is stale once the next one began.
+// Periods start at Pacific midnight; the hour of slack covers daylight saving moving that start by an hour.
+const PERIOD_SLACK_MS = 60 * 60 * 1000;
 function periodEnded(start, now) {
   const begin = new Date(start);
   if (Number.isNaN(begin.getTime())) return false;
   const next = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth() + 1, begin.getUTCDate(), begin.getUTCHours(), begin.getUTCMinutes(), begin.getUTCSeconds());
-  return now >= next;
+  return now >= next + PERIOD_SLACK_MS;
 }
 
 /** Reads a Pub/Sub push body and decides what to do for the configured budget. */
@@ -32,7 +34,8 @@ export function decide(push, budgetId, now = Date.now()) {
   if (!Number.isFinite(cost) || !Number.isFinite(budget) || budget <= 0) return { action: "ignore", reason: "notification without amounts" };
   // A late or resent notice from an earlier month must not revoke access that was restored since.
   if (data.costIntervalStart && periodEnded(data.costIntervalStart, now)) return { action: "ignore", reason: "notification for an earlier budget period" };
-  return { action: cost >= budget ? "revoke" : "none", cost, budget, currency: data.currencyCode ?? "", interval: data.costIntervalStart ?? "" };
+  // The budget name tells real Billing notifications apart from hand-sent tests in the log.
+  return { action: cost >= budget ? "revoke" : "none", name: String(data.budgetDisplayName ?? ""), cost, budget, currency: data.currencyCode ?? "", interval: data.costIntervalStart ?? "" };
 }
 
 /** The same policy without public invokers, or null when it had none. */

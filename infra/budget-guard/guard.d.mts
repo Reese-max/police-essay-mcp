@@ -3,6 +3,7 @@ import type { RequestListener } from "node:http";
 export interface Decision {
   action: "ignore" | "none" | "revoke";
   reason?: string;
+  name?: string;
   cost?: number;
   budget?: number;
   currency?: string;

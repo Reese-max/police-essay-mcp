@@ -20,7 +20,7 @@ const spend = (costAmount: number, budgetAmount = 30, costIntervalStart = PERIOD
 test("only the configured budget's real spend at or above its amount asks for a revoke", () => {
   assert.equal(decide(push(spend(29.99)), BUDGET).action, "none");
   assert.equal(decide(push(spend(30)), BUDGET).action, "revoke");
-  assert.deepEqual(decide(push(spend(45.5)), BUDGET), { action: "revoke", cost: 45.5, budget: 30, currency: "TWD", interval: PERIOD });
+  assert.deepEqual(decide(push(spend(45.5)), BUDGET), { action: "revoke", name: "net", cost: 45.5, budget: 30, currency: "TWD", interval: PERIOD });
   assert.equal(decide(push(spend(99), "another-budget"), BUDGET).action, "ignore");
   assert.equal(decide(push(spend(99)), undefined).action, "ignore");
   assert.equal(decide(push("not json"), BUDGET).action, "ignore");
@@ -36,7 +36,9 @@ test("only the configured budget's real spend at or above its amount asks for a 
 test("a late notification for an earlier budget period does not revoke again", () => {
   const october = spend(45, 30, "2026-10-01T07:00:00Z");
   assert.equal(decide(push(october), BUDGET, Date.parse("2026-10-31T23:00:00Z")).action, "revoke");
-  assert.equal(decide(push(october), BUDGET, Date.parse("2026-11-01T07:00:00Z")).action, "ignore");
+  // An hour of slack covers the daylight-saving shift between Pacific month starts.
+  assert.equal(decide(push(october), BUDGET, Date.parse("2026-11-01T07:30:00Z")).action, "revoke");
+  assert.equal(decide(push(october), BUDGET, Date.parse("2026-11-01T08:00:00Z")).action, "ignore");
   assert.equal(decide(push(october), BUDGET, Date.parse("2026-11-20T00:00:00Z")).reason, "notification for an earlier budget period");
   // Without a period the amounts still decide.
   assert.equal(decide(push({ ...october, costIntervalStart: undefined }), BUDGET, Date.parse("2027-01-01T00:00:00Z")).action, "revoke");
