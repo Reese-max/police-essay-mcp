@@ -11,7 +11,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 // Arguments come from the widget's window, so compare them as plain JSON.
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 
-async function host(options: { readOnly?: boolean } = {}) {
+async function host(options: { readOnly?: boolean; svgPages?: string[] } = {}) {
   let version = 1;
   let answerId = "ans_widget";
   const held = new Map<string, () => void>();
@@ -30,7 +30,7 @@ async function host(options: { readOnly?: boolean } = {}) {
     ]);
     return { answer: { id: answerId, title: "測試", version, sections }, layout: { pagesConfigured: 2, linesPerPage: 22, columns: 38, totalLines: lines.length, capacity: 44, remainingLines: 44 - lines.length, overflowLines: 0, fits: true, lines } };
   };
-  const result = () => ({ structuredContent: snapshot(), _meta: { readOnly: Boolean(options.readOnly) } });
+  const result = () => ({ structuredContent: snapshot(), _meta: { readOnly: Boolean(options.readOnly), paperSvgPages: options.svgPages } });
   const write = (text: string) => { version += 1; return { structuredContent: snapshot(), content: [{ type: "text", text }] }; };
   const tools = async (name: string, args: Args) => {
     calls.push({ name, args });
@@ -364,5 +364,18 @@ test("a write whose redisplay fails still shows the saved version and says how t
     h.fail("render_answer_sheet", null);
     await h.click("refresh");
     assert.match(h.element("notice").textContent!, /已載入畫板/);
+  } finally { h.dom.window.close(); }
+});
+
+test("the original paper is shown cropped to its printed area; a page without the paper image keeps its own view box", async () => {
+  const page = (image: string) => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 595.3 841.9">${image}<g data-section-id="a"><rect x="130" y="100" width="300" height="20" fill="none"/></g></svg>`;
+  const h = await host({ svgPages: [page('<image href="data:," x="60" y="50" width="480" height="700"/>'), page("")] });
+  try {
+    const boxes = [...h.dom.window.document.querySelectorAll(".original-paper svg")].map((svg) => svg.getAttribute("viewBox"));
+    assert.deepEqual(boxes, ["52 42 496 716", "0 0 595.3 841.9"]);
+    // The cropped page still selects its section.
+    h.dom.window.document.querySelector(".original-paper g[data-section-id='a']")!.dispatchEvent(new h.dom.window.MouseEvent("click", { bubbles: true }));
+    await tick();
+    assert.equal(h.element<HTMLSelectElement>("section").value, "a");
   } finally { h.dom.window.close(); }
 });
