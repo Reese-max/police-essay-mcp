@@ -16,6 +16,7 @@ async function host(options: { readOnly?: boolean } = {}) {
   let answerId = "ans_widget";
   const held = new Map<string, () => void>();
   const holding = new Set<string>();
+  const failing = new Map<string, "error" | "empty">();
   let sections: Section[] = [
     { id: "a", heading: "一、前言", text: "政府建置資訊系統應以業務需求為本。", order: 0 },
     { id: "b", heading: "三、本文", text: "（一）技術可行性。", order: 1 },
@@ -34,6 +35,8 @@ async function host(options: { readOnly?: boolean } = {}) {
   const tools = async (name: string, args: Args) => {
     calls.push({ name, args });
     if (holding.has(name)) await new Promise<void>((resolve) => held.set(name, resolve));
+    if (failing.get(name) === "error") return { isError: true, content: [{ type: "text", text: "模擬：畫板讀取失敗" }] };
+    if (failing.get(name) === "empty") return { content: [{ type: "text", text: "沒有資料" }] };
     if (name === "preview_change") return { structuredContent: { summary: ["版本", "行數", "容量", `預覽 ${args.operation}`], after: snapshot() } };
     if (name === "edit_text") {
       const { find, replace } = (args.edits as Array<{ find: string; replace: string }>)[0];
@@ -99,7 +102,9 @@ async function host(options: { readOnly?: boolean } = {}) {
   };
   const hold = (name: string) => holding.add(name);
   const release = async (name: string) => { holding.delete(name); held.get(name)?.(); held.delete(name); await settle(); };
-  return { dom, calls, element, click, type, select, show, hold, release, get version() { return version; }, get sections() { return sections; } };
+  // The tool answers with an error, or with nothing the widget can show, until passed null.
+  const fail = (name: string, mode: "error" | "empty" | null = "error") => { if (mode) failing.set(name, mode); else failing.delete(name); };
+  return { dom, calls, element, click, type, select, show, hold, release, fail, get version() { return version; }, get sections() { return sections; } };
 }
 
 test("the phrase panel previews and applies edit_text, and can take the selection from the section text", async () => {
@@ -301,5 +306,63 @@ test("the section editor does not switch back either, and an answer without sect
     }
     assert.doesNotMatch(h.element("notice").textContent!, /已修改/);
     assert.equal(h.element("preview").textContent, "");
+  } finally { h.dom.window.close(); }
+});
+
+test("disabled fields look disabled, and only a busy button shows the wait cursor", async () => {
+  const h = await host({ readOnly: true });
+  try {
+    const style = (id: string) => h.dom.window.getComputedStyle(h.element(id));
+    // A read-only view still lets the section menu choose; the fields that would change the answer do not.
+    assert.equal(h.element<HTMLSelectElement>("section").disabled, false);
+    for (const id of ["heading", "text", "find", "replace", "occurrence"]) {
+      assert.equal(h.element<HTMLInputElement>(id).disabled, true, id);
+      assert.notEqual(style(id).backgroundColor, style("section").backgroundColor, id);
+      assert.equal(style(id).cursor, "not-allowed", id);
+    }
+    assert.equal(style("move-up").cursor, "not-allowed");
+    h.hold("list_revisions");
+    await h.click("load-revisions");
+    assert.equal(style("load-revisions").cursor, "wait");
+    await h.release("list_revisions");
+    assert.equal(style("load-revisions").cursor, "pointer");
+  } finally { h.dom.window.close(); }
+});
+
+test("a write whose redisplay fails still shows the saved version and says how to get the paper back", async () => {
+  const h = await host();
+  try {
+    h.type("find", "前言");
+    await h.click("preview-phrase");
+    h.fail("render_answer_sheet");
+    await h.click("apply-phrase");
+    assert.equal(h.version, 2);
+    // The view moves on to the saved version, so the next change is not refused as outdated.
+    assert.equal(h.element("version").textContent, "版本：2");
+    assert.equal(h.element<HTMLInputElement>("find").value, "");
+    assert.match(h.element("notice").textContent!, /已修改 1 處.*模擬：畫板讀取失敗.*重新顯示/);
+    assert.equal(h.element("notice").className, "notice error");
+    assert.equal(h.element<HTMLButtonElement>("renumber").disabled, false);
+
+    // The section editor's apply does the same, also when the render returns nothing to show.
+    h.fail("render_answer_sheet", "empty");
+    h.element<HTMLTextAreaElement>("text").value = "改寫的段落。";
+    h.element("text").dispatchEvent(new h.dom.window.Event("input"));
+    await h.click("preview-edit");
+    await h.click("apply-edit");
+    assert.deepEqual(plain(h.calls.find((call) => call.name === "replace_text")!.args.expectedVersion), 2);
+    assert.equal(h.element("version").textContent, "版本：3");
+    assert.match(h.element("notice").textContent!, /修改已套用.*重新顯示/);
+
+    // A panel write whose render returns nothing is not reported as a plain success either.
+    await h.click("renumber");
+    await h.click("renumber");
+    assert.equal(h.element("version").textContent, "版本：4");
+    assert.match(h.element("notice").textContent!, /已重新編號 2 處.*重新顯示/);
+
+    // Once the host renders again, the refresh brings the paper back.
+    h.fail("render_answer_sheet", null);
+    await h.click("refresh");
+    assert.match(h.element("notice").textContent!, /已載入畫板/);
   } finally { h.dom.window.close(); }
 });
