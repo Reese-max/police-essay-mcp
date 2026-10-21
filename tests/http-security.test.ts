@@ -338,6 +338,10 @@ test("anonymous loopback rejects public hosts and forwarded requests before stor
       { host: "public.example" },
       { host: `127.0.0.1.public.example:${runtime.port}` },
       { host: "localhost:0" },
+      // Unusual spellings of loopback fail closed rather than being normalised.
+      { host: "localhost." },
+      { host: `[0:0:0:0:0:0:0:1]:${runtime.port}` },
+      { host: `localhost:${runtime.port}.public.example` },
       { forwarded: "for=203.0.113.1;host=public.example;proto=https" },
       { "x-forwarded-host": "public.example" },
       { "x-forwarded-for": "203.0.113.1" },
@@ -359,6 +363,18 @@ test("anonymous loopback rejects public hosts and forwarded requests before stor
         assert.deepEqual(await readdir(path.join(runtime.root, "exports")), []);
       }
     }
+    // A request without any Host header (HTTP/1.0 style) cannot prove it is local either.
+    const noHost = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const req = http.request(endpoint, { method: "POST", setHost: false, timeout: 5_000,
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" } }, resolve);
+      req.on("error", reject);
+      req.on("timeout", () => req.destroy(new Error("Security probe timed out")));
+      req.end(body);
+    });
+    noHost.resume();
+    // Node itself answers 400 to an HTTP/1.1 request without Host; either way it never reaches MCP.
+    assert.ok([400, 401].includes(noHost.statusCode ?? 0), `a request without Host must fail before MCP (${noHost.statusCode})`);
+    assert.deepEqual(await readdir(path.join(runtime.root, "answers")), []);
     for (const host of ["127.0.0.1", "localhost", "[::1]", `127.0.0.1:${runtime.port}`, `LOCALHOST:${runtime.port}`, `[::1]:${runtime.port}`]) {
       const response = await send("POST",
         { host, "content-type": "application/json", accept: "application/json, text/event-stream" },
