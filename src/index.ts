@@ -84,7 +84,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     if (allowAnonymousLoopback) {
       const authority = request.headers.host?.toLowerCase();
       const localHost = ["127.0.0.1", "localhost", "[::1]"].some(value => authority === value || authority === `${value}:${port}`);
-      // ponytail: only visible proxy metadata is detectable; tunnels must use owner-token mode.
+      // Only visible proxy metadata is detectable; tunnels must use owner-token mode.
       const forwarded = Object.keys(request.headers).some(name => name === "forwarded" || name === "via" || name.startsWith("x-forwarded-"));
       return localHost && !forwarded ? "owner" : undefined;
     }
