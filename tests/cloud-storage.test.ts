@@ -172,7 +172,7 @@ test("owner isolation and reader artifact denial happen before any GCS download"
   assert.equal(s.storage.downloads, 0);
   const reader = await connect(s.store(), true);
   try {
-    assert.equal((await reader.listTools()).tools.length, 14);
+    assert.equal((await reader.listTools()).tools.length, 9);
     await assert.rejects(reader.readResource({ uri: "essay://exports/" + exported.handle }));
     assert.equal((await reader.callTool({ name: "export_text", arguments: { answerId: doc.id } })).isError, true);
     assert.equal(s.storage.downloads, 0);
@@ -257,13 +257,13 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   try {
     const before = JSON.stringify([...s.firestore.documents]);
     for (const [name, extra] of [
-      ["preview_write_answer", { sections: [{ id: "body", text: "proposed" }] }],
-      ["preview_replace_text", { sectionId: "body", newText: "proposed" }],
-      ["preview_format_section", { sectionId: "body", paragraphFormat: { firstLineIndent: 2 } }],
-      ["preview_insert_text", { section: { id: "new", text: "proposed" } }],
-      ["preview_delete_text", { sectionId: "body" }],
+      ["write_answer", { sections: [{ id: "body", text: "proposed" }] }],
+      ["replace_text", { sectionId: "body", newText: "proposed" }],
+      ["format_section", { sectionId: "body", paragraphFormat: { firstLineIndent: 2 } }],
+      ["insert_text", { section: { id: "new", text: "proposed" } }],
+      ["delete_text", { sectionId: "body" }],
     ] as const) {
-      const result = await client.callTool({ name, arguments: { answerId: doc.id, expectedVersion: 1, ...extra } });
+      const result = await client.callTool({ name: "preview_change", arguments: { answerId: doc.id, expectedVersion: 1, operation: name, ...extra } });
       assert.equal(result.isError, undefined, JSON.stringify(result));
       assert.equal((result.structuredContent as { applied: boolean }).applied, false);
     }
@@ -275,14 +275,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 26, reader 14", async () => {
+test("cloud and file expose the same tool contracts: owner 27, reader 9", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 14 : 26);
+      assert.equal(baseline.tools.length, readOnly ? 9 : 27);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());

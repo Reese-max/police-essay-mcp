@@ -142,16 +142,18 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `list_answers` | 列出已儲存答案 | 否 |
 | `create_answer` | 建立答案文件，可附初始 sections | 是 |
 | `read_answer` | 讀完整 sections、版本、逐行結果與版面報告 | 否 |
-| `preview_write_answer` | 預覽完整答案修改、差異與版面結果，不寫入 | 否 |
+| `preview_change` | 預覽任一修改工具（`operation` 填工具名稱，其餘參數與該工具相同）的差異與版面結果，不寫入 | 否 |
 | `write_answer` | 以完整 sections 覆寫答案後重新計算 | 是 |
-| `preview_replace_text` | 預覽指定 section 的文字修改與版面結果，不寫入 | 否 |
 | `replace_text` | 替換指定 `sectionId`，保留其他段落 | 是 |
-| `preview_format_section` | 預覽格式修改與版面結果，不寫入 | 否 |
 | `format_section` | 不改文字，只更新 section 或指定 paragraphs 的格式 | 是 |
-| `preview_insert_text` | 預覽插入 section 與版面結果，不寫入 | 否 |
 | `insert_text` | 在指定段落後插入新 section | 是 |
-| `preview_delete_text` | 預覽刪除 section 與版面結果，不寫入 | 否 |
 | `delete_text` | 刪除指定 section | 是，具破壞性標記 |
+| `move_section` | 把指定 section 移到另一個 section 之前或之後 | 是 |
+| `renumber_items` | 依層級重新編號標題與段首的手寫編號 | 是 |
+| `set_line_targets` | 設定各節目標行數，供 `check_layout` 回報差距 | 是 |
+| `update_answer_info` | 修改標題、題目、考試名稱與題號 | 是 |
+| `duplicate_answer` | 複製答案為新的一份（版本與紀錄重新開始） | 是 |
+| `export_answer` | 一次輸出多種格式，檔名用考試、題號與標題 | 是，建立檔案 |
 | `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
 | `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |
@@ -161,7 +163,7 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 
 所有修改工具接受可選 `expectedVersion`。寫入成功後 `version + 1`，並回傳更新後的 authoritative snapshot。
 
-所有 preview 工具都回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
+`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
 
 ## 6. Resources 與 Prompts
 
@@ -169,7 +171,7 @@ Resources：
 
 - `essay://templates/police_information_essay`：模板 JSON。
 - `essay://instructions/workflow`：讀取、修改、檢查與匯出的工作流程。
-- `ui://widget/police-essay-answer-sheet.html`：ChatGPT Apps SDK 的互動答題紙畫板資源。
+- `ui://widget/police-essay-answer-sheet-v5.html`：ChatGPT Apps SDK 的互動答題紙畫板資源（URI 帶版本，畫板或其呼叫的工具改變時遞增，讓宿主不沿用快取的舊畫板）。
 
 Prompts：
 
@@ -240,4 +242,4 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 `render_answer_sheet` 回傳最新答案、版本及 LayoutReport。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
 
-畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式，改變段落數需另在對話中處理。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。
+畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式；段落數改變時，未改動的段落保留格式，改寫的段落沿用被取代那段的格式。字句修改走 `preview_change`（`edit_text`）再 `edit_text`；上移／下移呼叫 `move_section`；重新編號先以 `preview_change`（`renumber_items`）預覽，第二次點擊才呼叫 `renumber_items`；版本紀錄讀 `list_revisions`，還原呼叫 `restore_revision`。這些工具都宣告 `_meta.ui.visibility` 含 `app`。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。

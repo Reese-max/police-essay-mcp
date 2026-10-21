@@ -133,7 +133,8 @@ test("edit_text core: a newline splits a paragraph keeping its format and an emp
   assert.deepEqual(body.paragraphs!.map((p) => p.text), [
     "（一）技術可行性：評估既有設備與人力。", "（二）經濟可行性：比較成本與效益。", "另應判斷預算是否合理。", "（三）作業可行性：確認使用者接受度與教育訓練需求。",
   ]);
-  assert.deepEqual(body.paragraphs!.map((p) => p.format?.leftIndent), [0, 2, 2, undefined]);
+  // The first paragraph never set leftIndent, so it still inherits it.
+  assert.deepEqual(body.paragraphs!.map((p) => p.format?.leftIndent), [undefined, 2, 2, undefined]);
   const removed = applyTextEdits(answer.sections, [{ find: "（三）作業可行性：確認使用者接受度與教育訓練需求。", replace: "" }]).sections;
   assert.deepEqual(texts({ ...answer, sections: removed }, "body").length, 2);
 });
@@ -187,7 +188,7 @@ async function exerciseStore(store: EssayStore) {
       { find: "既有設備與人力。", replace: "既有設備與人力。另須預留資安測試時間。" },
       { find: "降低浪費及失敗風險。", replace: "降低浪費及失敗風險，兼顧依法行政與公共服務品質。" },
     ];
-    const preview = await client.callTool({ name: "preview_edit_text", arguments: { answerId: answer.id, edits, expectedVersion: 1 } });
+    const preview = await client.callTool({ name: "preview_change", arguments: { answerId: answer.id, operation: "edit_text", edits, expectedVersion: 1 } });
     assert.equal(preview.isError, undefined, JSON.stringify(preview));
     assert.equal(structured(preview).applied, false);
     assert.equal(structured(preview).summary[0], "版本 1 → 2（尚未套用）");
@@ -245,7 +246,7 @@ async function exerciseStore(store: EssayStore) {
   const reader = await connect(store, true);
   try {
     const names = (await reader.listTools()).tools.map((tool) => tool.name);
-    assert.ok(names.includes("preview_edit_text") && names.includes("list_revisions"));
+    assert.ok(names.includes("preview_change") && names.includes("list_revisions"));
     assert.ok(!names.includes("edit_text") && !names.includes("restore_revision"));
   } finally { await reader.close(); }
 }

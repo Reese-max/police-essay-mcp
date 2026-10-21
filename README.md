@@ -51,6 +51,7 @@ npm start
 - `MCP_MAX_BODY_BYTES`：HTTP 請求大小上限，預設 2 MB
 - `MCP_REQUEST_TIMEOUT_MS`：HTTP 請求逾時，預設 30 秒
 - `CORS_ORIGIN`：可選的單一可信 HTTPS origin（或本機 HTTP origin）；未設定時不允許跨來源瀏覽器請求
+- `ESSAY_PUBLIC_BASE_URL`：可選，服務對外的 HTTPS origin。設定後，匯出結果會附上直接下載連結 `/downloads/<代號>/<檔名>`：代號隨機、隨匯出檔 24 小時後失效，下載檔名用考試、題號與標題。純 OAuth 模式不提供這個路由。
 
 ## 驗證
 
@@ -74,13 +75,18 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 建立文件，或 `write_answer` 寫入 sections。
 3. `read_answer` / `check_layout` 讀取真實行數。
-4. 修改前先用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 查看差異。
+4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text`、`edit_text`、`move_section` 或 `renumber_items`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
+   - `move_section` 把區塊移到另一個區塊之前或之後。
+   - 插入、刪除或搬移後，手寫編號（壹、一、（一）、1.、（1））若不再連續，`renumber_items` 會依層級重新編號：標題自成一串，各區塊的段落各自一串，下層遇到上層項目時從 1 重新起算。
+   - `set_line_targets` 設定各節目標行數（含標題與空行）；`check_layout` 會回報各節行數、與目標的差距，以及補滿或壓縮時該從哪一節增減。
+   - `update_answer_info` 修改標題、題目，或記錄這份答案屬於哪場考試、第幾題；`list_answers` 會依考試分組、依題號排序。`duplicate_answer` 複製目前內容成一份新答案，用來試寫另一個版本。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。
+   - `export_answer` 一次輸出同一版本的 Word 與 PDF（`formats` 可選 `docx`、`pdf`、`txt`），檔名例如 `114年警察特考_第1題_資訊系統可行性評估.docx`；設定 `ESSAY_PUBLIC_BASE_URL` 時另附直接下載連結。
 8. 使用者明確要求永久刪除時，以 `read_answer` / `list_answers` 取得目前版本，再呼叫 `delete_answer`（必須帶 `expectedVersion`）。答案、全部修改紀錄與匯出檔一併刪除，無法復原；唯讀 credential 看不到此工具。
 
-工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 71 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
+工具的 `outputSchema` 只列出關鍵欄位（例如 `answer.id`／`version`、`layout.fits`／`totalLines`），巢狀的段落格式與逐行排版仍完整出現在 `structuredContent`。這讓 `tools/list` 從約 262 KB 降到約 64 KB；`npm test` 的契約檢查會確認精簡 schema 只刪減、不新增或改型別任何基準欄位。
 
 ## 正式格式
 
@@ -128,7 +134,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 視覺樣板對應 MCP 的固定格線、段落格式化、標題樣式與 `check_layout` 狀態。細節與節點對照請看 [docs/figma-template.md](docs/figma-template.md)。
 
 
-## 166 原稿紙模式
+## 165 原稿紙模式
 
 新增模板 `police_information_essay_166`；既有模板及答案不變。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
 
@@ -140,6 +146,6 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 ## 互動畫板
 
-呼叫 `render_answer_sheet` 開啟已儲存答案。166 模式的畫板使用原稿紙及字型輪廓，閱讀端不必下載字型；一般模式顯示行數與區塊編輯預覽。可點選一行定位區塊、預覽修改、再套用；`expectedVersion` 保護既有答案。唯讀連線停用編輯。Word 定稿仍須依原稿紙工作流實際渲染驗收。
+呼叫 `render_answer_sheet` 開啟已儲存答案。166 模式的畫板使用原稿紙及字型輪廓，閱讀端不必下載字型；一般模式顯示行數與區塊編輯預覽。可點選一行定位區塊、預覽修改、再套用；`expectedVersion` 保護既有答案。畫板另有：字句修改（找／換成，可指定第幾處或全部取代，可把文字框選取的字帶入）、上移／下移目前區塊、重新編號（先預覽，再按一次確認）、版本紀錄與「還原成這一版」。唯讀連線停用所有修改，只能查看版本紀錄。Word 定稿仍須依原稿紙工作流實際渲染驗收。
 
 畫板支援 MCP Apps 初始化與宿主工具呼叫，也支援宿主提供的 `window.openai.callTool`。未收到宿主回應時顯示逾時，不會自動重送修改。

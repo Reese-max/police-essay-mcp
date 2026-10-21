@@ -53,4 +53,4 @@ Figma 內的文字、容量數字與連線狀態是展示用內容，不是 MCP 
 
 ## 迭代後的安全編修流程
 
-修改內容或格式前，先使用 `preview_write_answer`、`preview_replace_text`、`preview_format_section`、`preview_insert_text` 或 `preview_delete_text` 取得 before/after snapshot、行數差異與 `fits` 結果；確認後再以相同的 `expectedVersion` 套用正式修改。Figma 畫面中的容量狀態應以 MCP 回傳的 `check_layout` 為準。
+修改內容或格式前，先使用 `preview_change`（`operation` 填要預覽的修改工具，其餘參數與該工具相同）取得 before/after snapshot、行數差異與 `fits` 結果；確認後再以相同的 `expectedVersion` 套用正式修改。Figma 畫面中的容量狀態應以 MCP 回傳的 `check_layout` 為準。

@@ -446,10 +446,10 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     client = await connectClient(runtime.port);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(toolNames, [
-      "check_layout", "create_answer", "delete_answer", "delete_text", "edit_text", "export_docx", "export_pdf", "export_text", "format_section",
-      "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "preview_delete_text", "preview_edit_text",
-      "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer", "read_answer", "reflow_answer",
-      "render_answer_sheet", "replace_text", "restore_revision", "write_answer",
+      "check_layout", "create_answer", "delete_answer", "delete_text", "duplicate_answer", "edit_text", "export_answer", "export_docx", "export_pdf",
+      "export_text", "format_section",
+      "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "move_section", "preview_change", "read_answer",
+      "reflow_answer", "render_answer_sheet", "renumber_items", "replace_text", "restore_revision", "set_line_targets", "update_answer_info", "write_answer",
     ]);
     const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);
