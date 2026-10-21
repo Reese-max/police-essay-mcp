@@ -11,7 +11,7 @@ export interface Decision {
 export interface IamBinding { role: string; members?: string[]; condition?: unknown }
 export interface IamPolicy { bindings?: IamBinding[]; etag?: string; version?: number }
 
-export function decide(push: unknown, budgetId: string | undefined): Decision;
+export function decide(push: unknown, budgetId: string | undefined, now?: number): Decision;
 export function withoutPublicAccess(policy: IamPolicy): IamPolicy | null;
 export function revokePublicAccess(service: string, fetchImpl?: typeof fetch): Promise<"revoked" | "already-private">;
 export function createGuard(options: {

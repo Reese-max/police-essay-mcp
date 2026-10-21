@@ -6,8 +6,20 @@ import { pathToFileURL } from "node:url";
 const PUBLIC_MEMBERS = new Set(["allUsers", "allAuthenticatedUsers"]);
 const MAX_BODY = 64 * 1024;
 
+// Billing sends numbers; a numeric string is accepted, anything looser is not an amount.
+const amount = (value) => typeof value === "number" ? value
+  : typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value.trim()) ? Number(value) : Number.NaN;
+
+// A budget period lasts one calendar month from its start, so a notification is stale once the next one began.
+function periodEnded(start, now) {
+  const begin = new Date(start);
+  if (Number.isNaN(begin.getTime())) return false;
+  const next = Date.UTC(begin.getUTCFullYear(), begin.getUTCMonth() + 1, begin.getUTCDate(), begin.getUTCHours(), begin.getUTCMinutes(), begin.getUTCSeconds());
+  return now >= next;
+}
+
 /** Reads a Pub/Sub push body and decides what to do for the configured budget. */
-export function decide(push, budgetId) {
+export function decide(push, budgetId, now = Date.now()) {
   const message = push?.message ?? {};
   if (!budgetId || message.attributes?.budgetId !== budgetId) return { action: "ignore", reason: "not the configured budget" };
   let data;
@@ -16,8 +28,10 @@ export function decide(push, budgetId) {
   } catch {
     return { action: "ignore", reason: "unreadable notification" };
   }
-  const cost = Number(data?.costAmount), budget = Number(data?.budgetAmount);
+  const cost = amount(data?.costAmount), budget = amount(data?.budgetAmount);
   if (!Number.isFinite(cost) || !Number.isFinite(budget) || budget <= 0) return { action: "ignore", reason: "notification without amounts" };
+  // A late or resent notice from an earlier month must not revoke access that was restored since.
+  if (data.costIntervalStart && periodEnded(data.costIntervalStart, now)) return { action: "ignore", reason: "notification for an earlier budget period" };
   return { action: cost >= budget ? "revoke" : "none", cost, budget, currency: data.currencyCode ?? "", interval: data.costIntervalStart ?? "" };
 }
 
@@ -44,7 +58,12 @@ async function accessToken(fetchImpl) {
 export async function revokePublicAccess(service, fetchImpl = fetch) {
   const headers = { authorization: `Bearer ${await accessToken(fetchImpl)}`, "content-type": "application/json" };
   const base = `https://run.googleapis.com/v2/${service}`;
-  const current = await fetchImpl(`${base}:getIamPolicy`, { headers });
+  // Without the invoker check the service is public with or without allUsers, so revoking would change nothing.
+  const target = await fetchImpl(base, { headers });
+  if (!target.ok) throw new Error(`service ${target.status}: ${await target.text()}`);
+  if ((await target.json()).invokerIamDisabled) throw new Error("invoker IAM check is disabled on the service; removing public members would not block access");
+  // Version 3 returns conditional bindings intact, so they can be written back unchanged.
+  const current = await fetchImpl(`${base}:getIamPolicy?options.requestedPolicyVersion=3`, { headers });
   if (!current.ok) throw new Error(`getIamPolicy ${current.status}: ${await current.text()}`);
   const next = withoutPublicAccess(await current.json());
   if (!next) return "already-private";
@@ -61,14 +80,25 @@ export function createGuard({ service, budgetId, revoke = revokePublicAccess, lo
       response.writeHead(405).end();
       return;
     }
-    let body = "";
-    for await (const chunk of request) {
-      body += chunk;
-      if (body.length > MAX_BODY) {
-        response.writeHead(413).end();
-        return;
+    // Read the whole body even when it is too large, so the reply is not lost in a reset connection.
+    const chunks = [];
+    let size = 0;
+    try {
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size <= MAX_BODY) chunks.push(chunk);
       }
+    } catch {
+      // The sender went away mid-body; there is nobody left to answer.
+      return;
     }
+    if (size > MAX_BODY) {
+      // Not a budget notification; acknowledged so Pub/Sub does not resend it.
+      log({ severity: "WARNING", message: "oversized push body", size });
+      response.writeHead(204).end();
+      return;
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
     let push;
     try {
       push = JSON.parse(body);
