@@ -15,7 +15,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       --ink: #111a2e;
       --ink-2: #2f3b50;
       --muted: #4f5b6e;
-      --faint: #697386;
+      --faint: #626c7f;
       --line: #e1e6ee;
       --line-strong: #c7cfdb;
       --accent: #2557d6;
@@ -90,7 +90,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .line-number { display: flex; align-items: center; justify-content: flex-end; padding-right: 7px; color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; user-select: none; }
     /* One full-width character spans two layout columns, so each drawn cell holds one character. */
     .line-cells { --columns: 42; position: relative; width: calc(var(--columns) * .5em); border-bottom: 1px solid var(--line); background-image: repeating-linear-gradient(to right, transparent 0, transparent calc(200% / var(--columns) - 1px), rgba(148, 163, 184, .28) calc(200% / var(--columns) - 1px), rgba(148, 163, 184, .28) calc(200% / var(--columns))); font-size: 13px; }
-    .line-text { display: block; overflow: hidden; min-height: 26px; padding: 0; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; line-height: 26px; text-overflow: clip; }
+    /* Half-width letters are not exactly half a character wide in every fallback font, so a long line may run past its cells; never hide it. */
+    .line-text { display: block; overflow: visible; min-height: 26px; padding: 0; white-space: pre; font-family: "Noto Sans Mono CJK TC", "Microsoft JhengHei", ui-monospace, monospace; line-height: 26px; }
     .answer-line.heading .line-text { color: #172554; }
     .answer-line.bold .line-text { font-weight: 800; }
     .answer-line.italic .line-text { font-style: italic; }
@@ -116,7 +117,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .preview.bad:not(:empty) { background: var(--bad-soft); color: var(--bad); }
     .editor-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; margin-top: 12px; }
     .editor-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-    .editor-buttons.wrap { margin-top: 2px; }
+    .editor-head + .preview:not(:empty) { margin: 0 0 12px; }
     .empty { grid-column: 1 / -1; border: 1px dashed var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--muted); padding: 40px 20px; text-align: center; }
     .phrase-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
     .phrase-options { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--ink-2); font-size: 13px; }
@@ -130,6 +131,10 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .revision-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 2px; }
     .revision-head .chip { padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 12px; font-weight: 600; }
     .revision-head button { min-height: 30px; margin-left: auto; padding: 0 10px; font-size: 12.5px; }
+    @media (max-width: 360px) {
+      .answer-line { grid-template-columns: 24px auto; }
+      .line-cells { font-size: 11.5px; }
+    }
     @media (max-width: 620px) {
       .app { padding: 14px 12px 20px; }
       h1 { font-size: 18px; }
@@ -229,13 +234,13 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           <div class="editor-title">區塊順序、編號與版本</div>
           <div class="editor-help">搬移目前選取的區塊；重新編號先預覽，再按一次確認；每一版都可以還原，還原會另存新版本。</div>
         </div>
+        <p class="preview" id="tools-preview" aria-live="polite"></p>
         <div class="editor-buttons wrap">
           <button id="move-up" type="button" disabled>上移區塊</button>
           <button id="move-down" type="button" disabled>下移區塊</button>
           <button id="renumber" type="button" disabled>重新編號</button>
           <button id="load-revisions" type="button" disabled>版本紀錄</button>
         </div>
-        <p class="preview" id="tools-preview" aria-live="polite"></p>
         <ol class="revisions" id="revisions" aria-label="版本紀錄"></ol>
       </section>
     </div>
