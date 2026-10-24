@@ -981,7 +981,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
       throw error;
     }
-    return hypotheticalAnswer(before.answer, inLayoutOrder(revision.sections));
+    return hypotheticalAnswer({ ...before.answer, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
   }
 
   const restoreRevisionTool = registerTool(
