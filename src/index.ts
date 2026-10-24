@@ -30,7 +30,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
   const checkReadiness = createReadinessCheck(store, { requirePaperFont: env.REQUIRE_PAPER_FONT === "true", fontPath: () => env.ESSAY_MCP_PAPER_FONT });
 
   function isLoopbackHost(value: string): boolean {
-    return value === "127.0.0.1" || value === "localhost" || value === "::1";
+    return value === "127.0.0.1" || value === "localhost" || value === "::1" || value === "[::1]";
   }
 
   function validateRuntimeConfig(): void {

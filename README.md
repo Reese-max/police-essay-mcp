@@ -41,8 +41,8 @@ npm start
 - `ESSAY_MCP_TEMPLATE_DIR`：模板目錄
 - `ESSAY_MCP_ANSWER_DIR`：答案 JSON 目錄
 - `ESSAY_MCP_EXPORT_DIR`：DOCX/PDF 輸出目錄
-- `ESSAY_MCP_PDF_FONT`：PDF 使用的中文字型檔路徑
-- `ESSAY_MCP_PDF_BOLD_FONT`：PDF 粗體段落使用的中文字型檔路徑
+- `ESSAY_MCP_PDF_FONT`：PDF 使用的中文字型檔路徑。若指向 Noto Sans CJK 的 TTC（例如 Docker 預設的 `NotoSansCJK-Regular.ttc`），PDF 會依 postscriptName 選取正體中文（CJKtc）字面，而不是固定取集合中的第 0 個（日文 JP）字面；找不到正體字面才退回單一字型。
+- `ESSAY_MCP_PDF_BOLD_FONT`：PDF 粗體段落使用的中文字型檔路徑。TTC 同樣選取 CJKtc 粗體字面，而非 JP 粗體。
 - `ESSAY_MCP_PDF_ITALIC_FONT`：PDF 斜體段落使用的中文字型檔路徑
 - `MCP_AUTH_TOKEN`：HTTP owner Bearer token；所有 HTTP 模式預設都必須設定，包含 tunnel 代理的 loopback
 - `MCP_READ_TOKEN`：可選的獨立唯讀 Bearer token，只提供讀取與不寫入的預覽工具
