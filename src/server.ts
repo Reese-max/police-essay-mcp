@@ -207,9 +207,12 @@ function sectionFromInput(input: AnswerSectionInput, order: number): AnswerSecti
 
 function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): AnswerDocument {
   const ids = new Set(sections.map((section) => section.id));
+  const lineTargets = answer.lineTargets
+    ? Object.fromEntries(Object.entries(answer.lineTargets).filter(([id]) => ids.has(id)))
+    : undefined;
   return answerDocumentSchema.parse({
     ...answer,
-    lineTargets: answer.lineTargets ? Object.fromEntries(Object.entries(answer.lineTargets).filter(([id]) => ids.has(id))) : undefined,
+    lineTargets,
     sections: sections.map((section, index) => ({ ...section, order: index })),
     version: answer.version + 1,
     updatedAt: new Date().toISOString(),
