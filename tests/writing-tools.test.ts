@@ -201,3 +201,42 @@ test("renumbering notes reach the preview, and an impossible renumbering is stil
     assert.match(text(inserted), /無法自動重新編號：.*第 100 項/);
   });
 });
+
+test("deleting a section removes its line target, and reinserting with the same id does not inherit the old target", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([
+      { id: "intro", heading: "一、前言", text: "前言。" },
+      { id: "body", heading: "二、本文", text: "本文。" },
+    ]);
+    await store.saveAnswer(answer);
+
+    // Set line target for body
+    let result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 1,
+      targets: [{ sectionId: "body", lines: 2 }] } });
+    assert.equal(result.isError, undefined, text(result));
+    assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, { body: 2 });
+
+    // Delete the body section
+    result = await client.callTool({ name: "delete_text", arguments: { answerId: answer.id, expectedVersion: 2, sectionId: "body" } });
+    assert.equal(result.isError, undefined, text(result));
+
+    // After deletion, lineTargets should not contain the deleted section's target
+    const afterDelete = await store.getAnswer(answer.id);
+    assert.deepEqual(afterDelete.lineTargets, {});
+    assert.deepEqual(afterDelete.sections.map((s) => s.id), ["intro"]);
+
+    // Insert a new section with the same id "body"
+    result = await client.callTool({ name: "insert_text", arguments: { answerId: answer.id, expectedVersion: 3,
+      section: { id: "body", heading: "二、新本文", text: "全新內容。" } } });
+    assert.equal(result.isError, undefined, text(result));
+
+    // check_layout should not show a target for the new body section
+    result = await client.callTool({ name: "check_layout", arguments: { answerId: answer.id } });
+    assert.equal(result.isError, undefined, text(result));
+    const report = result.structuredContent as { sections: Array<{ sectionId: string; lines: number; targetLines?: number; overTarget?: number }>; notes: string[] };
+    const bodySection = report.sections.find((s) => s.sectionId === "body");
+    assert.ok(bodySection, "body section should exist after reinsertion");
+    assert.equal(bodySection.targetLines, undefined, "reinserted section should not inherit old line target");
+    assert.ok(!text(result).includes("目標"), "check_layout text should not mention target for reinserted section");
+  });
+});
