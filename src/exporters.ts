@@ -25,7 +25,7 @@ import {
 import PDFDocument from "pdfkit";
 import * as fontkit from "fontkit";
 import type { AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
-import { expandTabs, lineIndentColumns, renderTextLine } from "./layout.js";
+import { characterDisplayWidth, expandTabs, lineIndentColumns, renderTextLine, splitGraphemes } from "./layout.js";
 import {
   gridMetrics,
   mmToTwips,
@@ -296,17 +296,15 @@ function drawPdfPage(
     else if (regularFont) document.font(regularFont as never);
     else document.font("Helvetica");
     document.fontSize(template.fontSizePt).fillColor("#111111");
-    const indent = lineIndentColumns(line);
-    const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
-    const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
-    const alignment = line.format.alignment === "distributed" ? "justify" : line.format.alignment;
-    const text = expandTabs(line.text, line.format.tabSize, indent);
-    document.text(text, x, template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2, {
-      width,
-      height: rowHeight,
-      lineBreak: false,
-      align: alignment === "justify" ? "justify" : alignment,
-    });
+    const y = template.paperProfile
+      ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm)
+      : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    let x = left;
+    const rendered = renderTextLine(line, template);
+    for (const grapheme of splitGraphemes(rendered)) {
+      document.text(grapheme, x, y, { lineBreak: false });
+      x += characterDisplayWidth(grapheme, line.format.tabSize, 0) * gridWidth;
+    }
   }
 }
 

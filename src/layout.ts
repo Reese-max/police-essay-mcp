@@ -75,7 +75,7 @@ function isWideCodePoint(codePoint: number): boolean {
   );
 }
 
-function splitGraphemes(text: string): string[] {
+export function splitGraphemes(text: string): string[] {
   if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
   return Array.from(text);
 }

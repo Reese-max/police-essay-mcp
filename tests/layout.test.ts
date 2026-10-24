@@ -376,3 +376,61 @@ test("FileStore does not block a different answer while one write is paused", as
     }
   }
 });
+
+test("PDF export does not drop trailing wide ASCII characters at line end", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-pdf-tail-"));
+  try {
+    const text = "m".repeat(42);
+    const answer = createAnswerDocument({
+      templateId: template.id,
+      title: "PDF 尾字測試",
+      sections: [{ id: "a", text }],
+    });
+    const report = layoutSections(template, answer.sections);
+    assert.equal(report.fits, true);
+    assert.equal(report.lines[0].displayWidth, 42);
+    assert.equal(report.lines[0].text.length, 42);
+
+    const pdfPath = path.join(root, "tail-test.pdf");
+    await exportPdf(report, template, pdfPath);
+
+    const { stdout } = await execFileAsync("pdftotext", [pdfPath, "-"], { encoding: "utf8" });
+    const extracted = stdout.trim();
+    assert.equal(extracted.length, 42, `PDF 尾字被截斷：期望 42 字，實際 ${extracted.length} 字`);
+    assert.equal(extracted, text);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("PDF export handles wide ASCII W and @ characters at line end", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-pdf-wide-"));
+  try {
+    for (const char of ["W", "@"]) {
+      const text = char.repeat(42);
+      const answer = createAnswerDocument({
+        templateId: template.id,
+        title: `PDF 寬字測試 ${char}`,
+        sections: [{ id: "a", text }],
+      });
+      const report = layoutSections(template, answer.sections);
+      assert.equal(report.fits, true);
+
+      const pdfPath = path.join(root, `wide-${char}.pdf`);
+      await exportPdf(report, template, pdfPath);
+
+      const { stdout } = await execFileAsync("pdftotext", [pdfPath, "-"], { encoding: "utf8" });
+      const extracted = stdout.trim();
+      assert.equal(extracted.length, 42, `${char} 字元被截斷：期望 42 字，實際 ${extracted.length} 字`);
+      assert.equal(extracted, text);
+    }
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
