@@ -255,9 +255,29 @@ function findPdfItalicFont(): string | undefined {
   return configured && existsSync(configured) ? configured : undefined;
 }
 
-function openPdfFont(fontPath: string): unknown {
+/**
+ * Noto Sans CJK is shipped as a TrueType Collection (TTC) whose face 0 is Japanese.
+ * The configured ESSAY_MCP_PDF_FONT points at the collection, so openPdfFont must
+ * select the Traditional Chinese face by postscriptName instead of always taking
+ * fonts[0]. The TC postscript name is derived from the configured path's basename
+ * (NotoSansCJK-Regular.ttc -> NotoSansCJKtc-Regular); single-face fonts and TTCs
+ * without a derivable TC name keep their existing behaviour.
+ */
+function preferredCjkTcFace(fontPath: string): string | undefined {
+  const match = path.basename(fontPath).match(/^(NotoSansCJK)-(Regular|Bold)\.ttc$/i);
+  return match ? `${match[1]}tc-${match[2]}` : undefined;
+}
+
+function openPdfFont(fontPath: string, preferredFace?: string): unknown {
   const opened = fontkit.openSync(fontPath);
-  if ("fonts" in opened && Array.isArray(opened.fonts)) return opened.fonts[0];
+  if (opened && typeof opened === "object" && "fonts" in opened && Array.isArray(opened.fonts)) {
+    if (preferredFace) {
+      const match = opened.fonts.find((face: { postscriptName?: string; familyName?: string }) =>
+        face.postscriptName === preferredFace || face.familyName === preferredFace);
+      if (match) return match;
+    }
+    return opened.fonts[0];
+  }
   return opened;
 }
 
@@ -335,7 +355,7 @@ export async function exportPdf(
 
   if (fontPath) {
     try {
-      regularFont = openPdfFont(fontPath);
+      regularFont = openPdfFont(fontPath, preferredCjkTcFace(fontPath));
       document.font(regularFont as never);
     } catch {
       if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
@@ -348,7 +368,7 @@ export async function exportPdf(
 
   if (boldFontPath) {
     try {
-      boldFont = openPdfFont(boldFontPath);
+      boldFont = openPdfFont(boldFontPath, preferredCjkTcFace(boldFontPath));
     } catch {
       boldFontPath = undefined;
     }
