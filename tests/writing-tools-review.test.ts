@@ -40,6 +40,61 @@ test("line targets only read a section's own target, also for ids like construct
   assert.deepEqual(describeTargetChanges({ ...doc, lineTargets: {} }, doc), ["「toString」目標行數：未設定→3 行"]);
 });
 
+test("when a protected over-target section cannot explain the overflow, the notes name the real long section first", () => {
+  const huge = Array.from({ length: 50 }, () => "論述一句。").join("\n");
+  const doc = { ...answer([
+    { id: "intro", heading: "一、核心", text: "核心論點。", required: true, priority: 5, compressible: 0 },
+    { id: "body", heading: "二、背景", text: huge, required: false, priority: 1, compressible: 5 },
+  ]), lineTargets: { intro: 1 } };
+  const layout = layoutSections(grid, doc.sections);
+  const plan = planLines(doc, layout);
+  assert.equal(layout.overflowLines, 9);
+  const suggestion = plan.notes.find((note) => note.includes("建議先壓縮"));
+  assert.ok(suggestion, plan.notes.join("|"));
+  assert.match(suggestion, /建議先壓縮：「二、背景」（51 行）/);
+  assert.doesNotMatch(suggestion, /「一、核心」超出目標/);
+});
+
+test("when the sheet still has room, an over-target section is never answered with expansion advice", () => {
+  const many = Array.from({ length: 20 }, () => "這是一段用來佔行的論述。").join("\n");
+  const doc = { ...answer([
+    { id: "intro", heading: "一、前言", text: "短。" },
+    { id: "body", heading: "二、本文", text: many },
+  ]), lineTargets: { body: 4 } };
+  const layout = layoutSections(grid, doc.sections);
+  assert.equal(layout.remainingLines > 0, true);
+  const plan = planLines(doc, layout);
+  assert.ok(plan.notes.some((note) => /超過目標：「二、本文」多 17 行/.test(note)), plan.notes.join("|"));
+  assert.doesNotMatch(plan.notes.join("\n"), /可擴充/);
+});
+
+test("a protected over-target section is skipped even when its targets cover the whole overflow", () => {
+  const doc = { ...answer([
+    { id: "intro", heading: "一、核心", text: Array.from({ length: 9 }, () => "核心論述。").join("\n"), required: true, priority: 5, compressible: 0 },
+    { id: "body", heading: "二、背景", text: Array.from({ length: 40 }, () => "背景描述。").join("\n"), priority: 3, compressible: 2 },
+  ]), lineTargets: { intro: 2 } };
+  const plan = planLines(doc, layoutSections(grid, doc.sections));
+  // intro is 8 lines over target and the overflow is 7 lines, so target edits would cover it —
+  // yet intro is protected, so the note still names the compressible body first.
+  const suggestion = plan.notes.find((note) => note.includes("建議先壓縮"));
+  assert.ok(suggestion, plan.notes.join("|"));
+  assert.match(suggestion, /建議先壓縮：「二、背景」（41 行）/);
+  assert.doesNotMatch(suggestion, /「一、核心」超出目標/);
+});
+
+test("an unprotected over-target section that falls short of the overflow is not the suggested fix", () => {
+  const doc = { ...answer([
+    { id: "intro", heading: "一、核心", text: "核心論點。", priority: 1, compressible: 0 },
+    { id: "body", heading: "二、背景", text: Array.from({ length: 50 }, () => "論述一句。").join("\n"), priority: 1, compressible: 5 },
+  ]), lineTargets: { intro: 1 } };
+  const plan = planLines(doc, layoutSections(grid, doc.sections));
+  // intro is unprotected but only 1 line over target against 9 lines of overflow.
+  const suggestion = plan.notes.find((note) => note.includes("建議先壓縮"));
+  assert.ok(suggestion, plan.notes.join("|"));
+  assert.match(suggestion, /建議先壓縮：「二、背景」（51 行）/);
+  assert.doesNotMatch(suggestion, /「一、核心」超出目標/);
+});
+
 test("a target that alone exceeds the sheet is reported even when other sections have none", () => {
   const doc = { ...answer([{ id: "a", heading: "一、前言", text: "內容。" }, { id: "b", text: "內容。" }]), lineTargets: { a: 45 } };
   const plan = planLines(doc, layoutSections(grid, doc.sections));

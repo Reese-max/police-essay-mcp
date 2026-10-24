@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-function normalizeNewlines(text: string): string {
-  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+export function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n|[\r\u0085\u2028\u2029\u000b\u000c]/gu, "\n");
 }
 
 type WithoutDefaults<Shape extends z.ZodRawShape> = {
@@ -273,11 +273,9 @@ export function normalizeSection(
   const sourceText = input.text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
   const sourceParagraphs = input.paragraphs?.length
     ? input.paragraphs
-    : sourceText.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraphInput => ({ text }));
+    : normalizeNewlines(sourceText).split("\n").map((text): AnswerParagraphInput => ({ text }));
   const paragraphs = sourceParagraphs.flatMap((paragraph) =>
-    paragraph.text
-      .replaceAll("\r\n", "\n")
-      .replaceAll("\r", "\n")
+    normalizeNewlines(paragraph.text)
       .split("\n")
       .map((text) => ({ text, format: paragraph.format })),
   );
@@ -329,7 +327,7 @@ export function updateSectionFormatting(
 ): AnswerSection {
   const sourceParagraphs = section.paragraphs?.length
     ? section.paragraphs
-    : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text }));
+    : normalizeNewlines(section.text).split("\n").map((text): AnswerParagraph => ({ text }));
   const overrides = new Map<number, ParagraphFormatInput>();
   for (const patch of input.paragraphFormats ?? []) {
     if (patch.index >= sourceParagraphs.length) {
@@ -406,7 +404,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     heading: section.heading,
     paragraphs: (section.paragraphs?.length
       ? section.paragraphs
-      : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text })))
+      : normalizeNewlines(section.text).split("\n").map((text): AnswerParagraph => ({ text })))
       .map((paragraph) => ({ ...paragraph, edited: false })),
     changed: false,
   }));
@@ -476,7 +474,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     // Blank paragraphs that no edit touched stay as they are.
     for (const item of new Set(selected.map((match) => match.item))) {
       item.paragraphs = item.paragraphs.flatMap((paragraph) => !paragraph.edited ? [paragraph]
-        : paragraph.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").filter((text) => text !== "")
+        : normalizeNewlines(paragraph.text).split("\n").filter((text) => text !== "")
           .map((text) => ({ text, format: paragraph.format, edited: false })));
       if (item.paragraphs.length === 0) {
         throw new Error(`${label}：會清空區塊「${item.heading || item.section.heading || item.section.id}」的全部內容；要刪除整個區塊請用 delete_text。`);

@@ -25,7 +25,7 @@ import {
 import PDFDocument from "pdfkit";
 import * as fontkit from "fontkit";
 import type { AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
-import { expandTabs, lineIndentColumns, renderTextLine } from "./layout.js";
+import { characterDisplayWidth, splitGraphemes, lineIndentColumns, renderTextLine } from "./layout.js";
 import {
   gridMetrics,
   mmToTwips,
@@ -184,6 +184,18 @@ export async function exportDocx(
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "docx" }> {
   const pages = outputPageCount(report, template, allowOverflow);
+  // Reject before creating a file or export handle: DOCX cannot contain XML 1.0
+  // controls, isolated surrogates or Unicode noncharacters.
+  for (const line of report.lines) {
+    for (const character of line.text) {
+      const code = character.codePointAt(0)!;
+      if ((code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)
+        || (code >= 0xd800 && code <= 0xdfff) || (code >= 0xfdd0 && code <= 0xfdef)
+        || (code & 0xffff) === 0xfffe || (code & 0xffff) === 0xffff) {
+        throw new Error(`Word 不支援的字元 U+${code.toString(16).toUpperCase().padStart(4, "0")}；請移除或替換後重新輸出。`);
+      }
+    }
+  }
   const children: Array<Table | Paragraph> = [];
   for (let page = 1; page <= pages; page += 1) {
     // Keep the break paragraph near zero height so every page's table starts at the top margin.
@@ -255,10 +267,67 @@ function findPdfItalicFont(): string | undefined {
   return configured && existsSync(configured) ? configured : undefined;
 }
 
-function openPdfFont(fontPath: string): unknown {
+/**
+ * Noto Sans CJK is shipped as a TrueType Collection (TTC) whose face 0 is Japanese.
+ * The configured ESSAY_MCP_PDF_FONT points at the collection, so openPdfFont must
+ * select the Traditional Chinese face by postscriptName instead of always taking
+ * fonts[0]. The TC postscript name is derived from the configured path's basename
+ * (NotoSansCJK-Regular.ttc -> NotoSansCJKtc-Regular). A renamed Noto collection
+ * still selects TC from its face metadata; other collections retain their fallback.
+ */
+function preferredCjkTcFace(fontPath: string): string | undefined {
+  const match = path.basename(fontPath).match(/^(NotoSansCJK)-(Regular|Bold)\.ttc$/i);
+  return match ? `${match[1]}tc-${match[2]}` : undefined;
+}
+
+function openPdfFont(fontPath: string, preferredFace?: string): unknown {
   const opened = fontkit.openSync(fontPath);
-  if ("fonts" in opened && Array.isArray(opened.fonts)) return opened.fonts[0];
+  if (opened && typeof opened === "object" && "fonts" in opened && Array.isArray(opened.fonts)) {
+    if (preferredFace) {
+      const match = opened.fonts.find((face: { postscriptName?: string; familyName?: string }) =>
+        face.postscriptName === preferredFace || face.familyName === preferredFace);
+      if (match) return match;
+    }
+    const traditionalChinese = opened.fonts.find((face: { postscriptName?: string; familyName?: string }) =>
+      /^Noto(?:Sans|Serif)CJKtc-/i.test(face.postscriptName ?? "") || /^Noto (?:Sans|Serif) CJK TC$/i.test(face.familyName ?? ""));
+    if (traditionalChinese) return traditionalChinese;
+    return opened.fonts[0];
+  }
   return opened;
+}
+
+/** Draw the layout's actual columns without a PDFKit width/height wrapper that can discard a tail. */
+function drawGridLine(
+  document: PDFKit.PDFDocument,
+  line: LayoutLine,
+  startColumn: number,
+  baseX: number,
+  y: number,
+  columnWidthPt: number,
+  availableWidthPt: number,
+): void {
+  const characters = splitGraphemes(line.text);
+  const positions: Array<{ text: string; x: number }> = [];
+  let currentColumn = startColumn;
+  for (const character of characters) {
+    if (character !== "\t") positions.push({ text: character, x: columnWidthPt * (currentColumn - startColumn) });
+    currentColumn += characterDisplayWidth(character, line.format.tabSize, currentColumn);
+  }
+  const last = positions.at(-1);
+  if (!last) return;
+  const inkWidth = last.x + document.widthOfString(last.text);
+  const extra = Math.max(0, availableWidthPt - inkWidth);
+  const alignment = line.format.alignment;
+  const distributed = alignment === "distributed";
+  const justify = alignment === "justify" && !line.isLastLineOfParagraph;
+  const gapCount = distributed ? positions.length - 1 : justify ? positions.slice(0, -1).filter(part => part.text === " ").length : 0;
+  let gaps = 0;
+  positions.forEach((part, index) => {
+    const offset = alignment === "right" ? extra : gapCount > 0 ? extra * gaps / gapCount : 0;
+    // No width or height: lineBreak:false must reach PDFKit's non-wrapping path.
+    document.text(part.text, baseX + part.x + offset, y, { lineBreak: false });
+    if (index < positions.length - 1 && (distributed || (justify && part.text === " "))) gaps += 1;
+  });
 }
 
 function drawPdfPage(
@@ -299,14 +368,13 @@ function drawPdfPage(
     const indent = lineIndentColumns(line);
     const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
     const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
-    const alignment = line.format.alignment === "distributed" ? "justify" : line.format.alignment;
-    const text = expandTabs(line.text, line.format.tabSize, indent);
-    document.text(text, x, template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2, {
-      width,
-      height: rowHeight,
-      lineBreak: false,
-      align: alignment === "justify" ? "justify" : alignment,
-    });
+    const y = template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    if (template.paperProfile) {
+      // This profile is measured with the actual font and forbids tabs/alignment changes.
+      document.text(line.text, x, y, { lineBreak: false });
+    } else {
+      drawGridLine(document, line, indent, x, y, gridWidth, width);
+    }
   }
 }
 
@@ -335,7 +403,7 @@ export async function exportPdf(
 
   if (fontPath) {
     try {
-      regularFont = openPdfFont(fontPath);
+      regularFont = openPdfFont(fontPath, preferredCjkTcFace(fontPath));
       document.font(regularFont as never);
     } catch {
       if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
@@ -348,7 +416,7 @@ export async function exportPdf(
 
   if (boldFontPath) {
     try {
-      boldFont = openPdfFont(boldFontPath);
+      boldFont = openPdfFont(boldFontPath, preferredCjkTcFace(boldFontPath));
     } catch {
       boldFontPath = undefined;
     }

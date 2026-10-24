@@ -2,6 +2,7 @@ import {
   answerParagraphSchema,
   headingStyleSchema,
   paragraphFormatSchema,
+  normalizeNewlines,
   type AnswerParagraph,
   type AnswerSection,
   type AnswerTemplate,
@@ -75,7 +76,7 @@ function isWideCodePoint(codePoint: number): boolean {
   );
 }
 
-function splitGraphemes(text: string): string[] {
+export function splitGraphemes(text: string): string[] {
   if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
   return Array.from(text);
 }
@@ -123,16 +124,13 @@ export function expandTabs(text: string, tabSize = 4, startColumn = 0): string {
   return expanded;
 }
 
-function normalizeNewlines(text: string): string {
-  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-}
-
 function splitParagraphText(text: string): string[] {
   return normalizeNewlines(text).split("\n");
 }
 
 function sectionParagraphs(section: AnswerSection): AnswerParagraph[] {
-  if (section.paragraphs?.length) return section.paragraphs;
+  if (section.paragraphs?.length) return section.paragraphs.flatMap(paragraph =>
+    splitParagraphText(paragraph.text).map(text => ({ ...paragraph, text })));
   return splitParagraphText(section.text).map((text) => ({ text }));
 }
 
@@ -271,9 +269,9 @@ function addParagraph(
     makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
   }
 
-  const wrapped = template.paperProfile
-    ? wrapOriginalPaper(text, format, template)
-    : wrapParagraph(text, format, template.columns);
+  const wrapped = splitParagraphText(text).flatMap(part => template.paperProfile
+    ? wrapOriginalPaper(part, format, template)
+    : wrapParagraph(part, format, template.columns));
   wrapped.forEach((line, index) => {
     makeLine(lines, sectionId, paragraphIndex, line, format, {
       isHeading: options.isHeading,
@@ -427,7 +425,7 @@ export function renderTextLine(line: LayoutLine, template: AnswerTemplate): stri
   const extra = Math.max(0, available - contentWidth);
   let content = expanded;
 
-  if ((line.format.alignment === "justify" || line.format.alignment === "distributed") && !line.isLastLineOfParagraph) {
+  if (line.format.alignment === "distributed" || (line.format.alignment === "justify" && !line.isLastLineOfParagraph)) {
     content = addJustificationSpaces(content, extra, line.format.alignment === "distributed");
   } else if (line.format.alignment === "right") {
     content = `${" ".repeat(extra)}${content}`;

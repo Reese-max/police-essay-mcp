@@ -206,8 +206,10 @@ function sectionFromInput(input: AnswerSectionInput, order: number): AnswerSecti
 }
 
 function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): AnswerDocument {
+  const ids = new Set(sections.map((section) => section.id));
   return answerDocumentSchema.parse({
     ...answer,
+    lineTargets: answer.lineTargets ? Object.fromEntries(Object.entries(answer.lineTargets).filter(([id]) => ids.has(id))) : undefined,
     sections: sections.map((section, index) => ({ ...section, order: index })),
     version: answer.version + 1,
     updatedAt: new Date().toISOString(),
@@ -981,7 +983,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
       throw error;
     }
-    return hypotheticalAnswer(before.answer, inLayoutOrder(revision.sections));
+    return hypotheticalAnswer({ ...before.answer, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
   }
 
   const restoreRevisionTool = registerTool(
@@ -1007,7 +1009,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       assertExpectedVersion(before.answer, expectedVersion);
       await store.saveAnswer(await restoredAnswer(before, version), { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
-      const changes = describeChanges(before, current);
+      const contentChanges = describeChanges(before, current);
+      const targetChanges = describeTargetChanges(before.answer, current.answer);
+      const changes = targetChanges.length && contentChanges.join() === "版面沒有改變。"
+        ? targetChanges : [...contentChanges, ...targetChanges];
       return {
         structuredContent: { ...current, changes },
         content: textContent(`已還原第 ${version} 版的內容，存為第 ${current.answer.version} 版；${summarizeLayout(current.layout)}`

@@ -35,14 +35,30 @@ export function planLines(answer: AnswerDocument, layout: LayoutReport): { secti
   const label = (section: SectionLines) => name({ id: section.sectionId, heading: section.heading });
   const over = targeted.filter((section) => section.overTarget! > 0).sort((a, b) => b.overTarget! - a.overTarget!);
   const under = targeted.filter((section) => section.overTarget! < 0).sort((a, b) => a.overTarget! - b.overTarget!);
+  // Sections that layout keeps as core: a suggestion to compress them first is wrong.
+  // Same rule as compressionHints in layout.ts: required or priority >= 4.
+  const protectedIds = new Set(answer.sections.filter((section) => section.required || section.priority >= 4).map((section) => section.id));
+  const overSum = over.reduce((sum, section) => sum + section.overTarget!, 0);
+  // Trust the over-target list only when amending those targets could actually clear
+  // the overflow (their amounts reach overflowLines) and none of them is protected;
+  // otherwise the page truly exceeds its capacity elsewhere, so fall back to
+  // compressionHints, which ranks the most compressible sections first.
+  const targetsExplainOverflow = over.length > 0 && overSum >= layout.overflowLines
+    && over.every((section) => !protectedIds.has(section.sectionId));
   if (layout.overflowLines > 0) {
-    const first = over.length ? over.map((section) => `${label(section)}超出目標 ${section.overTarget} 行`).join("、")
-      : layout.compressionHints.slice(0, 3).map((hint) => `${name({ id: hint.sectionId, heading: hint.heading })}（${hint.currentLines} 行）`).join("、");
+    const unprotected = layout.compressionHints.filter(hint => !hint.protected);
+    const fallback = unprotected.length ? unprotected : layout.compressionHints;
+    const first = targetsExplainOverflow
+      ? over.map((section) => `${label(section)}超出目標 ${section.overTarget} 行`).join("、")
+      : fallback.slice(0, 3).map((hint) => `${name({ id: hint.sectionId, heading: hint.heading })}（${hint.currentLines} 行）`).join("、");
     notes.push(`超出答案紙 ${layout.overflowLines} 行；建議先壓縮：${first}。`);
   } else if (layout.remainingLines > 0) {
     notes.push(under.length
       ? `還可再寫 ${layout.remainingLines} 行；低於目標的區塊：${under.map((section) => `${label(section)}少 ${-section.overTarget!} 行`).join("、")}。`
-      : `還可再寫 ${layout.remainingLines} 行${layout.remainingLines >= 2 ? "；若要寫滿兩頁，可擴充論述最核心的區塊" : ""}。`);
+      : over.length
+        // Room still exists, but a target is already exceeded: expansion would be misleading.
+        ? `還可再寫 ${layout.remainingLines} 行。`
+        : `還可再寫 ${layout.remainingLines} 行${layout.remainingLines >= 2 ? "；若要寫滿兩頁，可擴充論述最核心的區塊" : ""}。`);
   } else {
     notes.push("剛好寫滿答案紙。");
   }
