@@ -25,7 +25,7 @@ import {
 import PDFDocument from "pdfkit";
 import * as fontkit from "fontkit";
 import type { AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
-import { expandTabs, lineIndentColumns, renderTextLine } from "./layout.js";
+import { expandTabs, displayWidth, lineIndentColumns, renderTextLine } from "./layout.js";
 import {
   gridMetrics,
   mmToTwips,
@@ -261,6 +261,34 @@ function openPdfFont(fontPath: string): unknown {
   return opened;
 }
 
+/** PDF tab stops push each segment to column * columnWidth, matching the DOCX tab-stop grid. */
+function drawTabbedSegments(
+  document: PDFKit.PDFDocument,
+  text: string,
+  tabSize: number,
+  startColumn: number,
+  baseX: number,
+  y: number,
+  columnWidthPt: number,
+  height: number,
+): void {
+  const segments = text.split("\t");
+  let currentColumn = startColumn;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment.length > 0) {
+      document.text(segment, baseX + columnWidthPt * (currentColumn - startColumn), y, {
+        height,
+        lineBreak: false,
+      });
+    }
+    if (index < segments.length - 1) {
+      currentColumn += displayWidth(segment, tabSize, currentColumn);
+      currentColumn += tabSize - (currentColumn % tabSize);
+    }
+  }
+}
+
 function drawPdfPage(
   document: PDFKit.PDFDocument,
   template: AnswerTemplate,
@@ -301,12 +329,17 @@ function drawPdfPage(
     const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
     const alignment = line.format.alignment === "distributed" ? "justify" : line.format.alignment;
     const text = expandTabs(line.text, line.format.tabSize, indent);
-    document.text(text, x, template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2, {
-      width,
-      height: rowHeight,
-      lineBreak: false,
-      align: alignment === "justify" ? "justify" : alignment,
-    });
+    const y = template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    if (line.text.includes("\t")) {
+      drawTabbedSegments(document, line.text, line.format.tabSize, indent, x, y, gridWidth, rowHeight);
+    } else {
+      document.text(text, x, y, {
+        width,
+        height: rowHeight,
+        lineBreak: false,
+        align: alignment === "justify" ? "justify" : alignment,
+      });
+    }
   }
 }
 
