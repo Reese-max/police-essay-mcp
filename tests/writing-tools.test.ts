@@ -141,6 +141,36 @@ test("line targets drive check_layout's per-section report and survive later edi
   });
 });
 
+test("deleting a section drops its line target, and reinserting the same id does not inherit it", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([
+      { id: "intro", heading: "一、前言", text: "前言。" },
+      { id: "body", heading: "二、本文", text: "第一段。\n第二段。" },
+    ]);
+    await store.saveAnswer(answer);
+
+    let result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 1,
+      targets: [{ sectionId: "body", lines: 2 }] } });
+    assert.equal(result.isError, undefined, text(result));
+    assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, { body: 2 });
+
+    result = await client.callTool({ name: "delete_text", arguments: { answerId: answer.id, sectionId: "body", expectedVersion: 2 } });
+    assert.equal(result.isError, undefined, text(result));
+    assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, {});
+
+    result = await client.callTool({ name: "insert_text", arguments: { answerId: answer.id, expectedVersion: 3,
+      section: { id: "body", heading: "二、新本文", text: "全新內容。" } } });
+    assert.equal(result.isError, undefined, text(result));
+    assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, {});
+
+    result = await client.callTool({ name: "check_layout", arguments: { answerId: answer.id } });
+    const report = result.structuredContent as { sections: Array<{ sectionId: string; lines: number; targetLines?: number; overTarget?: number }>; notes: string[] };
+    const bodySection = report.sections.find((section) => section.sectionId === "body");
+    assert.ok(bodySection, "reinserted body section should appear in the layout report");
+    assert.equal(bodySection.targetLines, undefined);
+  });
+});
+
 test("the read-only server lists none of the new writing tools", async () => {
   const server = createEssayMcpServer(new FileStore({ templateDir }), { readOnly: true });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
