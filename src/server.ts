@@ -1007,7 +1007,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       assertExpectedVersion(before.answer, expectedVersion);
       await store.saveAnswer(await restoredAnswer(before, version), { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
-      const changes = describeChanges(before, current);
+      const changes = [...describeChanges(before, current), ...describeTargetChanges(before.answer, current.answer)];
       return {
         structuredContent: { ...current, changes },
         content: textContent(`已還原第 ${version} 版的內容，存為第 ${current.answer.version} 版；${summarizeLayout(current.layout)}`

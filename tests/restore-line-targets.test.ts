@@ -13,12 +13,22 @@ import { FileStore } from "../src/storage.js";
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templateDir = path.join(projectRoot, "templates");
 
-test("restore_revision restores lineTargets from the revision", async () => {
+function assertTargetChanges(result: Awaited<ReturnType<Client["callTool"]>>, expected: string[]) {
+  const changes = (result.structuredContent as { changes: string[] }).changes;
+  const text = (result.content as Array<{ text: string }>)[0].text;
+  for (const change of expected) {
+    assert.ok(changes.includes(change), JSON.stringify(changes));
+    assert.ok(text.includes(change), text);
+  }
+}
+
+test("restore_revision restores lineTargets from the revision and reports their changes", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "police-essay-restore-line-targets-"));
   const store = new FileStore({ templateDir, answerDir: path.join(root, "a"), exportDir: path.join(root, "e") });
   const server = createEssayMcpServer(store);
   const [c, s] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "repro", version: "1" });
+  t.after(async () => { await client.close(); await fs.rm(root, { recursive: true, force: true }); });
   await server.connect(s); await client.connect(c);
 
   const answer = createAnswerDocument({ templateId: "police_information_essay", title: "t", sections: [
@@ -40,6 +50,7 @@ test("restore_revision restores lineTargets from the revision", async () => {
   console.log("After restore_revision to v1 (v3):", JSON.stringify(current.lineTargets), "version:", current.version);
   assert.ok(current.lineTargets === undefined || (current.lineTargets && Object.keys(current.lineTargets).length === 0));
   assert.equal(current.version, 3);
+  assertTargetChanges(result, ["「一、前言」目標行數：3 行→未設定", "「二、本文」目標行數：8 行→未設定"]);
 
   // Set different line targets at version 4
   result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 3, targets: [{ sectionId: "intro", lines: 5 }, { sectionId: "body", lines: 10 }] } });
@@ -69,6 +80,7 @@ test("restore_revision restores lineTargets from the revision", async () => {
   console.log("After restore_revision to v2 (v6):", JSON.stringify(current.lineTargets), "version:", current.version);
   assert.deepEqual(current.lineTargets, { intro: 3, body: 8 }, "lineTargets should be restored when restoring to a version with targets");
   assert.equal(current.version, 6);
+  assertTargetChanges(result, ["「一、前言」目標行數：未設定→3 行", "「二、本文」目標行數：未設定→8 行"]);
 
   // Restore to version 4 (has different line targets) - should restore those lineTargets
   result = await client.callTool({ name: "restore_revision", arguments: { answerId: answer.id, version: 4, expectedVersion: 6 } });
@@ -77,7 +89,5 @@ test("restore_revision restores lineTargets from the revision", async () => {
   console.log("After restore_revision to v4 (v7):", JSON.stringify(current.lineTargets), "version:", current.version);
   assert.deepEqual(current.lineTargets, { intro: 5, body: 10 }, "lineTargets should be restored when restoring to a version with different targets");
   assert.equal(current.version, 7);
-
-  await client.close();
-  await fs.rm(root, { recursive: true, force: true });
+  assertTargetChanges(result, ["「一、前言」目標行數：3 行→5 行", "「二、本文」目標行數：8 行→10 行"]);
 });

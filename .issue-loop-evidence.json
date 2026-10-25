@@ -1,0 +1,12 @@
+{
+  "repo": "Reese-max/police-essay-mcp",
+  "issue": 47,
+  "base_sha": "2fee53c01b38c3a576a83fcb59d58904a614e807",
+  "red_proof": "Before the production fix, ran node --import tsx --test tests/restore-line-targets.test.ts under Git Bash: exit 1, tests 1, pass 0, fail 1. The restore saved version 3 with lineTargets undefined, but assertTargetChanges failed with AssertionError [ERR_ASSERTION]: [\"版面沒有改變。\"] at tests/restore-line-targets.test.ts:20:12; the expected '「一、前言」目標行數：3 行→未設定' was missing from structuredContent.changes. After the fix, the same regression passed (1 passed, 0 failed), including checks of both structured and text responses for cleared, restored, and changed targets.",
+  "test_command": "npm run check && npm test && npm run build",
+  "test_exit": 0,
+  "tests_passed": 139,
+  "tests_failed": 0,
+  "summary": "Reviewed PR #47 against linked issue #36 and found one acceptance gap: historical line targets were persisted but their changes were absent from the restore response. Reused describeTargetChanges in restore_revision, added regression assertions for removal/restoration/changed values in both response forms, and documented the restoration behavior. The focused regression went red to green; typecheck, full tests, and build passed under Git Bash on Node v26.7.0.",
+  "not_done": "No push, PR/issue mutation, or deployment. Nine existing optional tests were skipped because the Firestore emulator (1), pinned contract-base worktree (1), and paper font (7) were unavailable. CI Node 20/22/24, render regression, and live ChatGPT acceptance were not run."
+}
