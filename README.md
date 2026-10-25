@@ -55,6 +55,8 @@ npm start
 
 ## 驗證
 
+PDF 文字完整性測試需要 `pdftotext`，請先安裝並加入 `PATH`；Ubuntu 可執行 `sudo apt-get install -y poppler-utils fonts-noto-cjk`。
+
 ```powershell
 npm run check
 npm test

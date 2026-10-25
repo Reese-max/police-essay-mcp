@@ -1,0 +1,20 @@
+{
+  "pr": 48,
+  "head": "bcd4b067bfee90bfd8bc8f705501f5a123e10710",
+  "findings": [
+    {
+      "severity": "high",
+      "file": "src/exporters.ts",
+      "line": 306,
+      "issue": "Fixed column advances were also applied to original_166, whose wrapping and preview use measured font advances. With the validated paper font, 39 i characters fit a single line, but the PDF extends to x=500.47pt beyond the 496pt writing boundary. Preserve measured whole-line drawing without width/height for this profile."
+    },
+    {
+      "severity": "med",
+      "file": "tests/layout.test.ts",
+      "line": 400,
+      "issue": "The new mandatory pdftotext calls require an external executable, but CI installs poppler-utils after npm test and only for Node 20. A clean environment without pdftotext fails with ENOENT. Install PDF test prerequisites before testing every matrix entry and document the local requirement."
+    }
+  ],
+  "fixed": true,
+  "summary": "Fixed two defects: original_166 PDF output now preserves measured glyph advances, and every CI matrix job installs pdftotext before the test suite, with local prerequisites documented. Both regression tests failed before the fixes and now pass; the full suite passed 149 tests with 0 failures and 2 skips, and typecheck, build, PDF rendering, and a real two-page original-paper geometry check passed. No needs-human findings remain; DOCX rendering and hosted CI were not verified."
+}

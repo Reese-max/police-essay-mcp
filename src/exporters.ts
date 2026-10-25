@@ -299,6 +299,10 @@ function drawPdfPage(
     const y = template.paperProfile
       ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm)
       : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    if (template.paperProfile) {
+      document.text(line.text, left + gridWidth * lineIndentColumns(line), y, { lineBreak: false });
+      continue;
+    }
     let x = left;
     const rendered = renderTextLine(line, template);
     for (const grapheme of splitGraphemes(rendered)) {
