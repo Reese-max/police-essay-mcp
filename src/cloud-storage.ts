@@ -123,9 +123,9 @@ export class CloudStore implements EssayStore {
     const ids = normalized.sections.map(section => section.id);
     if (new Set(ids).size !== ids.length) throw new Error("Duplicate section id.");
     if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_ANSWER_BYTES) throw new Error("Answer exceeds 700 KiB document limit.");
-    if (normalized.templateId === "police_information_essay_166") {
-      layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
-    }
+    // An unrenderable candidate must not enter the transaction or revision history.
+    // A calculable layout that exceeds the page limit remains editable and may be saved.
+    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
     await backend(() => this.options.firestore.runTransaction(async transaction => {
       const existing = (await transaction.get(ref)).data();
       const current = existing ? this.parseAnswer(existing) : undefined;
