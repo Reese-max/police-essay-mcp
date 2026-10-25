@@ -140,7 +140,7 @@ const editOutputSchema = z.object({
 const revisionListOutputSchema = z.object({
   answerId: answerIdSchema,
   currentVersion: z.number().int().positive(),
-  // Each entry also carries updatedAt, totalLines and fits.
+  // Entries carry layout metrics when calculable, or layoutError for a legacy invalid revision.
   revisions: z.array(z.object({ version: z.number().int().positive(), changes: z.array(z.string()) }).loose()),
   olderVersions: z.number().int().nonnegative(),
 });
@@ -951,13 +951,25 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const stored = await store.listRevisions(answerId, { limit: limit + 1 });
       const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
       byVersion.set(current.version, current);
-      const revisions = [...byVersion.values()].sort((a, b) => b.version - a.version)
+      const revisions: Array<{ version: number; updatedAt: string; totalLines?: number; fits?: boolean;
+        layoutError?: string; changes: string[] }> = [...byVersion.values()].sort((a, b) => b.version - a.version)
         // A version committed after `current` was read stays out, so at most `limit` are listed.
         .filter((revision) => revision.version <= current.version && revision.version > current.version - limit)
         .map((revision) => {
-          const after = snapshot(revision, template);
+          let after: AnswerSnapshot;
+          try {
+            after = snapshot(revision, template);
+          } catch (error) {
+            const layoutError = error instanceof Error ? error.message : "未知版面錯誤";
+            return { version: revision.version, updatedAt: revision.updatedAt, layoutError,
+              changes: [`此版本版面無法計算：${layoutError}；可選擇其他可用版本還原。`] };
+          }
           const previous = byVersion.get(revision.version - 1);
-          const content = previous && describeChanges(snapshot(previous, template), after, 8);
+          let content: string[] | undefined;
+          if (previous) {
+            try { content = describeChanges(snapshot(previous, template), after, 8); }
+            catch { content = ["前一版版面無法計算，無法比較內容版面差異。"]; }
+          }
           const targets = previous ? [...describeInfoChanges(previous, revision), ...describeTargetChanges(previous, revision)] : [];
           // A version that only changed line targets lists just those, without "版面沒有改變。".
           const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
@@ -967,23 +979,23 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const olderVersions = Math.max(0, current.version - limit);
       return {
         structuredContent: { answerId, currentVersion: current.version, revisions, olderVersions },
-        content: textContent(revisions.map((revision) => `第 ${revision.version} 版（${revision.updatedAt}，${revision.totalLines} 行${revision.fits ? "" : "，超出"}）：`
+        content: textContent(revisions.map((revision) => `第 ${revision.version} 版（${revision.updatedAt}，${revision.layoutError ? "版面無法計算" : `${revision.totalLines} 行${revision.fits ? "" : "，超出"}`}）：`
           + revision.changes.join("；")).join("\n") + (olderVersions ? `\n另有 ${olderVersions} 個更早的版本未列出。` : "")),
       };
     },
   );
 
-  async function restoredAnswer(before: AnswerSnapshot, version: number): Promise<AnswerDocument> {
-    if (version === before.answer.version) throw new Error(`第 ${version} 版就是目前的版本，不需要還原。`);
-    if (version > before.answer.version) throw new Error(`目前最新是第 ${before.answer.version} 版，沒有第 ${version} 版。`);
+  async function restoredAnswer(before: AnswerDocument, version: number): Promise<AnswerDocument> {
+    if (version === before.version) throw new Error(`第 ${version} 版就是目前的版本，不需要還原。`);
+    if (version > before.version) throw new Error(`目前最新是第 ${before.version} 版，沒有第 ${version} 版。`);
     let revision: AnswerDocument;
     try {
-      revision = await store.getRevision(before.answer.id, version);
+      revision = await store.getRevision(before.id, version);
     } catch (error) {
       if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
       throw error;
     }
-    return hypotheticalAnswer({ ...before.answer, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
+    return hypotheticalAnswer({ ...before, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
   }
 
   const restoreRevisionTool = registerTool(
@@ -1005,12 +1017,23 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       },
     },
     async ({ answerId, version, expectedVersion }) => {
-      const before = await loadSnapshot(store, answerId);
-      assertExpectedVersion(before.answer, expectedVersion);
-      await store.saveAnswer(await restoredAnswer(before, version), { expectedVersion: before.answer.version });
+      // Read the current document without rendering it: an older invalid layout must not
+      // block restoring valid history. Validate the chosen target before committing it.
+      const stored = await store.getAnswer(answerId);
+      const beforeAnswer = { ...stored, sections: inLayoutOrder(stored.sections) };
+      assertExpectedVersion(beforeAnswer, expectedVersion);
+      const restored = await restoredAnswer(beforeAnswer, version);
+      const template = await store.getTemplate(restored.templateId);
+      snapshot(restored, template);
+      let before: AnswerSnapshot | undefined;
+      let previousLayoutError: string | undefined;
+      try { before = snapshot(beforeAnswer, template); }
+      catch (error) { previousLayoutError = error instanceof Error ? error.message : "未知版面錯誤"; }
+      await store.saveAnswer(restored, { expectedVersion: beforeAnswer.version });
       const current = await loadSnapshot(store, answerId);
-      const contentChanges = describeChanges(before, current);
-      const targetChanges = describeTargetChanges(before.answer, current.answer);
+      const contentChanges = before ? describeChanges(before, current)
+        : [`先前版面無法計算：${previousLayoutError}；已從可用歷史版本還原，原紀錄仍保留。`];
+      const targetChanges = describeTargetChanges(beforeAnswer, current.answer);
       const changes = targetChanges.length && contentChanges.join() === "版面沒有改變。"
         ? targetChanges : [...contentChanges, ...targetChanges];
       return {

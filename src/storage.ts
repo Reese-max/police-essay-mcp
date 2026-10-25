@@ -157,11 +157,9 @@ export class FileStore implements EssayStore {
     await this.ensureDirectories();
     const normalized = answerDocumentSchema.parse(answer);
     const answerId = safeId(normalized.id);
-    // Keep invalid 166 formatting/font settings from being persisted before reflow.
+    // Reject formatting that cannot be laid out before writing the answer or its history.
     // Overflow is still saved so the caller can preview and revise the answer.
-    if (normalized.templateId === "police_information_essay_166") {
-      layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
-    }
+    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
     await this.withAnswerWriteLock(answerId, async () => {
       const filename = path.join(this.answerDir, `${answerId}.json`);
       let current: AnswerDocument | undefined;
