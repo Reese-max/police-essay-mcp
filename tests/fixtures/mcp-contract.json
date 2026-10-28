@@ -29303,6 +29303,10 @@
   },
   "intentionalDifferences": [
     {
+      "path": "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+      "reason": "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget."
+    },
+    {
       "path": "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
       "reason": "Optional version binding for legacy exports; strip only expectedVersion before base comparison."
     },
@@ -29320,7 +29324,7 @@
     },
     {
       "path": "owner.tools[export_exam_bundle]",
-      "reason": "New essay.export tool combines ordered, version-pinned answers into one PDF or TXT, with page ranges and layout warnings."
+      "reason": "New essay.export tool combines ordered, version-pinned answers into PDF and Word, with page ranges and layout warnings."
     },
     {
       "path": "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",

@@ -3,6 +3,8 @@ import path from "node:path";
 import os from "node:os";
 import {
   Header,
+  Bookmark,
+  SectionType,
   ImageRun,
   HorizontalPositionRelativeFrom,
   VerticalPositionRelativeFrom,
@@ -101,7 +103,7 @@ function makeTabStops(template: AnswerTemplate, tabSize: number): Array<{ type: 
   return stops;
 }
 
-function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragraph {
+function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine, bookmark?: string): Paragraph {
   const format = line?.format ?? {
     firstLineIndent: 0,
     leftIndent: 0,
@@ -129,6 +131,7 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragra
       lineRule: LineRuleType.EXACT,
     },
     children: [
+      ...(bookmark ? [new Bookmark({ id: bookmark, children: [] })] : []),
       new TextRun({
         text: line?.text ?? "",
         size: Math.round(template.fontSizePt * 2),
@@ -144,13 +147,13 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragra
   });
 }
 
-function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: number): Table {
+function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: number, bookmark?: string): Table {
   const rows = Array.from({ length: template.linesPerPage }, (_, index) => {
     const line = lines[index];
     const cell = new TableCell({
       verticalAlign: template.paperProfile ? VerticalAlign.BOTTOM : VerticalAlign.CENTER,
       margins: { top: 0, bottom: 0, left: template.paperProfile ? 0 : 80, right: template.paperProfile ? 0 : 80 },
-      children: [makeLineParagraph(template, line)],
+      children: [makeLineParagraph(template, line, index === 0 ? bookmark : undefined)],
     });
     return new TableRow({
       cantSplit: true,
@@ -183,7 +186,11 @@ export async function exportDocx(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "docx" }> {
-  const pages = outputPageCount(report, template, allowOverflow);
+  return exportDocxBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+/** The single-answer builder also supplies every bundle section, including 166 paper geometry. */
+function docxSection({ report, template, bookmark }: ExportPages, pages: number, index: number) {
   // Reject before creating a file or export handle: DOCX cannot contain XML 1.0
   // controls, isolated surrogates or Unicode noncharacters.
   for (const line of report.lines) {
@@ -200,44 +207,45 @@ export async function exportDocx(
   for (let page = 1; page <= pages; page += 1) {
     // Keep the break paragraph near zero height so every page's table starts at the top margin.
     if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [], spacing: { before: 0, after: 0, line: 1, lineRule: LineRuleType.EXACT }, run: { size: 2 } }));
-    children.push(makeDocxPageTable(template, pageLines(report, page), page));
+    children.push(makeDocxPageTable(template, pageLines(report, page), page, page === 1 && bookmark ? `Q${index + 1}_${bookmark.replace(/[^\p{L}\p{N}_]/gu, "_").slice(0, 32)}` : undefined));
   }
 
-  // Word substitutes another face for a font that is not installed, which moves and clips the
-  // measured 166 rows; embed the used glyphs so the file renders identically without the font.
-  const embedded = template.paperProfile ? embeddedFontOptions(template.fontFamily,
-    await subsetFont(originalPaperFontPath(), [EDITABLE_PAPER_CHARACTERS, ...report.lines.filter(line => line.page <= pages).map(line => line.text)])) : undefined;
-  const document = new Document({
-    ...embedded,
-    creator: "police-essay-mcp",
-    title: "國考申論答題紙",
-    description: "由警察資訊申論答題紙 MCP 產生的固定版面文件",
-    sections: [
-      {
-        properties: {
-          page: {
-            size: {
-              width: mmToTwips(210),
-              height: mmToTwips(297),
-            },
-            margin: {
-              top: mmToTwips(template.marginsMm.top),
-              right: mmToTwips(template.marginsMm.right),
-              bottom: mmToTwips(template.paperProfile ? 190 * 25.4 / 72 : template.marginsMm.bottom),
-              left: mmToTwips(template.marginsMm.left),
-            },
-          },
+  return {
+    properties: {
+      type: SectionType.NEXT_PAGE,
+      page: {
+        size: {
+          width: mmToTwips(210),
+          height: mmToTwips(297),
         },
-        ...(template.paperProfile ? { headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ type: "jpg", data: originalPaperImage(), transformation: { width: (originalPaper.imageRect[2] - originalPaper.imageRect[0]) * 4 / 3, height: (originalPaper.imageRect[3] - originalPaper.imageRect[1]) * 4 / 3 }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[0] * 12700) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[1] * 12700) }, behindDocument: true, allowOverlap: true } })] })] }) } } : {}),
-        children,
+        margin: {
+          top: mmToTwips(template.marginsMm.top),
+          right: mmToTwips(template.marginsMm.right),
+          bottom: mmToTwips(template.paperProfile ? 190 * 25.4 / 72 : template.marginsMm.bottom),
+          left: mmToTwips(template.marginsMm.left),
+        },
       },
-    ],
-  });
+    },
+    ...(template.paperProfile ? { headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ type: "jpg", data: originalPaperImage(), transformation: { width: (originalPaper.imageRect[2] - originalPaper.imageRect[0]) * 4 / 3, height: (originalPaper.imageRect[3] - originalPaper.imageRect[1]) * 4 / 3 }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[0] * 12700) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[1] * 12700) }, behindDocument: true, allowOverlap: true } })] })] }) } } : { headers: { default: new Header({ children: [] }) } }),
+    children,
+  };
+}
 
-  const overrides = embedded ? embeddedFontTable(document, template.fontFamily, "教育部標準楷書") : [];
+export async function exportDocxBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
+  : Promise<{ path: string; pages: number; format: "docx" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const sections = entries.map((entry, index) => docxSection(entry, counts[index], index));
+  const paper = entries.find(entry => entry.template.paperProfile);
+  // Embed one shared original-paper face with every member's used glyphs, as single-answer export does.
+  const embedded = paper ? embeddedFontOptions(paper.template.fontFamily, await subsetFont(originalPaperFontPath(),
+    [EDITABLE_PAPER_CHARACTERS, ...entries.flatMap(({ report }, index) => report.lines.filter(line => line.page <= counts[index]).map(line => line.text))])) : undefined;
+  const document = new Document({ ...embedded, creator: "police-essay-mcp", title: "國考申論答題紙",
+    description: "由警察資訊申論答題紙 MCP 產生的固定版面文件", sections });
+  const overrides = paper ? embeddedFontTable(document, paper.template.fontFamily, "教育部標準楷書") : [];
+  for (const index of entries.keys()) await onMember?.(index);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, await Packer.toBuffer(document, false, overrides));
-  return { path: outputPath, pages, format: "docx" };
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "docx" };
 }
 
 function findPdfFont(bold = false): string | undefined {
@@ -395,7 +403,7 @@ export interface ExportPages {
 }
 
 /** Single answers and bundles use the same fonts and page drawing. */
-export async function exportPdfBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+export async function exportPdfBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
   : Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
   const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
   const document = new PDFDocument({ autoFirstPage: false, size: "A4", margin: 0 });
@@ -471,6 +479,7 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
       }
       warnings.forEach((warning) => allWarnings.add(warning));
       fonts.add(fontPath ?? "Helvetica");
+      await onMember?.(index);
     }
     document.end();
     await result;
@@ -494,23 +503,28 @@ export async function exportText(
   return exportTextBundle([{ report, template }], outputPath, allowOverflow);
 }
 
-export async function exportTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+export async function exportTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
   : Promise<{ path: string; pages: number; format: "txt" }> {
   const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
-  const pageTexts = entries.flatMap(({ report, template }, index) => Array.from({ length: counts[index] }, (_, pageIndex) => {
+  const pageTexts: string[] = [];
+  for (const [index, { report, template }] of entries.entries()) {
+    pageTexts.push(...Array.from({ length: counts[index] }, (_, pageIndex) => {
     const lines = pageLines(report, pageIndex + 1).map((line) => renderTextLine(line, template));
     while (lines.length < template.linesPerPage) lines.push("");
     return lines.join("\n");
-  }));
+    }));
+    await onMember?.(index);
+  }
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, `${pageTexts.join("\n\f\n")}\n`, "utf8");
   return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "txt" };
 }
 
-export async function exportParagraphTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+export async function exportParagraphTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
   : Promise<{ path: string; pages: number; format: "txt" }> {
   const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
-  const texts = entries.map(({ report, bookmark }) => {
+  const texts: string[] = [];
+  for (const [index, { report, bookmark }] of entries.entries()) {
     const sections: string[][] = [];
     let sectionId: string | undefined, paragraphIndex = -1, isHeading = false;
     for (const line of report.lines) {
@@ -524,8 +538,9 @@ export async function exportParagraphTextBundle(entries: ExportPages[], outputPa
       paragraphIndex = line.paragraphIndex; isHeading = line.isHeading;
     }
     const text = sections.map(section => section.join("\n")).join("\n\n");
-    return (bookmark ? `${bookmark}\n\n` : "") + text;
-  });
+    texts.push((bookmark ? `${bookmark}\n\n` : "") + text);
+    await onMember?.(index);
+  }
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, texts.join("\n\n") + "\n", "utf8");
   // pages remains the paper page count of the content, including in paragraphs mode.

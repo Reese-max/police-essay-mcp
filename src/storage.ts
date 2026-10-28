@@ -3,7 +3,7 @@ import { layoutSections } from "./layout.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
-  answerDocumentSchema,
+  answerDocumentSchema, validateExamPlan, type ExamPlan,
   templateSchema,
   type AnswerDocument,
   type AnswerTemplate,
@@ -52,6 +52,10 @@ export interface EssayStore {
   ensureDirectories(): Promise<void>;
   getTemplate(templateId: string): Promise<AnswerTemplate>;
   listTemplates(): Promise<AnswerTemplate[]>;
+  getExam(id: string): Promise<ExamPlan>;
+  listExams(): Promise<ExamPlan[]>;
+  saveExam(plan: ExamPlan, options?: { expectedVersion?: number }): Promise<void>;
+  deleteExam(id: string, options: { expectedVersion: number }): Promise<void>;
   getAnswer(answerId: string): Promise<AnswerDocument>;
   saveAnswer(answer: AnswerDocument, options?: { expectedVersion?: number }): Promise<void>;
   /** Permanently removes the answer, its revision history and its export artifacts. */
@@ -79,9 +83,36 @@ export class StoreNotFoundError extends Error {
   readonly code = "ESSAY_NOT_FOUND";
 }
 
+export class StoreConflictError extends Error {
+  constructor(message: string, readonly code = "ESSAY_VERSION_CONFLICT") { super(message); }
+}
+export function isStoreConflict(error: unknown): boolean {
+  return error instanceof StoreConflictError && error.code === "ESSAY_VERSION_CONFLICT";
+}
+export const conflictBackoff = (attempt: number) => new Promise<void>(resolve => setTimeout(resolve, 10 * 2 ** attempt));
+
 export function isStoreNotFound(error: unknown): boolean {
   return error instanceof StoreNotFoundError
     || (error instanceof Error && "code" in error && error.code === "ENOENT");
+}
+
+export function assertExamVersion(current: ExamPlan | undefined, expectedVersion?: number): void {
+  if (expectedVersion !== undefined) {
+    if (!current || current.version !== expectedVersion) throw new StoreConflictError(`Version conflict: expected ${expectedVersion}, current version is ${current?.version ?? "missing"}.`);
+  } else if (current) throw new StoreConflictError(`考試 ${current.id} 已存在；更新必須提供 expectedVersion。`, "ESSAY_ALREADY_EXISTS");
+}
+export async function unlinkExamAnswer(store: EssayStore, id: string): Promise<void> {
+  for (const initial of await store.listExams()) for (let attempt = 0; ; attempt++) {
+    let plan: ExamPlan;
+    try { plan = attempt ? await store.getExam(initial.id) : initial; }
+    catch (error) { if (isStoreNotFound(error)) break; throw error; }
+    if (!plan.questions.some(q => q.answerId === id)) break;
+    try { await store.saveExam({ ...plan, ...(plan.lastBundle?.members.some(m => m.answerId === id) ? { lastBundle: undefined } : {}), updatedAt: new Date().toISOString(), questions: plan.questions.map(q => {
+      if (q.answerId !== id) return q;
+      const { answerId: _, ...question } = q; return question;
+    }) }, { expectedVersion: plan.version }); break; }
+    catch (error) { if (attempt >= 4 || !isStoreConflict(error)) throw error; await conflictBackoff(attempt); }
+  }
 }
 
 export class FileStore implements EssayStore {
@@ -132,6 +163,53 @@ export class FileStore implements EssayStore {
       }),
     );
     return templates.sort((left, right) => left.id.localeCompare(right.id));
+  }
+
+  async getExam(id: string): Promise<ExamPlan> {
+    try { return validateExamPlan(JSON.parse(await fs.readFile(path.join(`${this.answerDir}-exams`, `${safeId(id)}.json`), "utf8"))); }
+    catch (error) { if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到考試計畫。"); throw error; }
+  }
+  async listExams(): Promise<ExamPlan[]> {
+    const names = await fs.readdir(`${this.answerDir}-exams`).catch(error => {
+      if (isStoreNotFound(error)) return [] as string[]; throw error;
+    });
+    const plans = await Promise.all(names.filter(n => n.endsWith(".json")).map(async n => {
+      try { return await this.getExam(n.slice(0, -5)); }
+      catch (error) {
+        if (isStoreNotFound(error)) return;
+        console.error(JSON.stringify({ classification: "unreadable_exam_plan" }));
+      }
+    }));
+    return plans.filter((plan): plan is ExamPlan => Boolean(plan));
+  }
+  async saveExam(plan: ExamPlan, options: { expectedVersion?: number } = {}): Promise<void> {
+    const normalized = validateExamPlan(plan);
+    // ponytail: serialize plan writes for owner-wide key uniqueness; use a key index if plan volume grows.
+    await this.withAnswerWriteLock(":exam-keys", () => this.withAnswerWriteLock(normalized.id, async () => {
+      if (normalized.createRequests) for (const plan of await this.listExams()) {
+        if (plan.id === normalized.id) continue;
+        if (Object.keys(normalized.createRequests).some(key => plan.createRequests?.[key]))
+          throw new Error("IDEMPOTENCY_KEY_REUSED：此 key 已用於其他考試計畫的建立請求。");
+      }
+      let current: ExamPlan | undefined;
+      try { current = await this.getExam(normalized.id); } catch (error) { if (!isStoreNotFound(error)) throw error; }
+      assertExamVersion(current, options.expectedVersion);
+      const committed = { ...normalized, version: current ? current.version + 1 : 1, createdAt: current?.createdAt ?? normalized.createdAt };
+      const directory = `${this.answerDir}-exams`;
+      await fs.mkdir(directory, { recursive: true });
+      const filename = path.join(directory, `${safeId(normalized.id)}.json`);
+      const temporary = `${filename}.${randomUUID()}.tmp`;
+      try {
+        await fs.writeFile(temporary, JSON.stringify(committed), "utf8");
+        await renameReplacing(temporary, filename);
+      } finally { await fs.rm(temporary, { force: true }); }
+    }));
+  }
+  async deleteExam(id: string, options: { expectedVersion: number }): Promise<void> {
+    await this.withAnswerWriteLock(safeId(id), async () => {
+      assertExamVersion(await this.getExam(id), options.expectedVersion);
+      await fs.rm(path.join(`${this.answerDir}-exams`, `${id}.json`));
+    });
   }
 
   async getAnswer(answerId: string): Promise<AnswerDocument> {
@@ -236,6 +314,8 @@ export class FileStore implements EssayStore {
           `Version conflict: expected ${options.expectedVersion}, current version is ${answer.version}. Read the answer again before deleting.`,
         );
       }
+      // Unlink before removing any artifacts or history, so a CAS failure is retryable without data loss.
+      await unlinkExamAnswer(this, id);
       let names: string[] = [];
       try {
         names = await fs.readdir(this.artifactDir);

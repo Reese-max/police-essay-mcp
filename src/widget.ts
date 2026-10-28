@@ -1,5 +1,5 @@
 // Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v11.html";
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v12.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
@@ -176,6 +176,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       <span class="chip" id="version">版本：—</span>
       <span class="chip id" id="answer-id">答案：—</span>
     </div>
+    <div id="exam-progress" class="notice" role="status" aria-live="polite" hidden></div>
     <p class="notice" id="notice" role="status"></p>
     <div class="exam-tabs" id="exam-tabs" role="tablist" aria-label="考試題目" hidden></div>
     <section class="sheet-grid" id="pages" aria-label="申論答題紙畫板">
@@ -297,6 +298,33 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       let hostOutputEpoch = 0;
       let latestTabEpoch = 0;
       let examAnswers = [];
+      let examId = null;
+      let progressEpoch = 0;
+      const examProgressRegion = byId("exam-progress");
+      function showProgress(progress) {
+        if (!progress || progress.examId !== examId) return;
+        const stages = { not_started: "未建立", drafted: "正在撰寫／待檢查版面", layout_ok: "版面通過", exported: "已匯出" };
+        examProgressRegion.hidden = false;
+        notice.removeAttribute("role");
+        examProgressRegion.textContent = progress.questions.map(q => "第" + q.questionNo + "題：" + stages[q.stage]).join("；")
+          + "。" + progress.nextStep.message;
+      }
+      async function refreshProgress() {
+        if (!examId) return;
+        const id = examId, epoch = ++progressEpoch;
+        try {
+          const result = await callTool("get_exam_progress", { examId: id });
+          const progress = result?.structuredContent || result?.result?.structuredContent;
+          if (examId !== id || progressEpoch !== epoch) return;
+          showProgress(progress);
+          examAnswers = progress.questions.map(q => ({ ...examAnswers.find(a => a.questionNo === q.questionNo), ...q,
+            fits: q.stage === "layout_ok" || q.stage === "exported", warnings: q.warningCount,
+            title: examAnswers.find(a => a.answerId === q.answerId)?.title ?? (q.answerId ? "" : "未建立") }));
+          renderTabs();
+        } catch (error) {
+          if (examId === id && progressEpoch === epoch) examProgressRegion.textContent = "進度讀取失敗，請重新整理。";
+        }
+      }
       const examTabs = byId("exam-tabs");
 
       function noticeFor(answerId, message, isError) {
@@ -337,6 +365,20 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 
       async function showHostOutput(value, fromTab = false, hostMeta, initialHost = false) {
         const candidate = value && (value.structuredContent || value.result?.structuredContent || value);
+        if (candidate?.examId) {
+          examId = candidate.examId;
+          if (Array.isArray(candidate.examAnswers)) examAnswers = candidate.examAnswers;
+          showProgress(candidate.progress);
+          if (!candidate.answer?.id) {
+            state = null; pages.replaceChildren(); sectionSelect.replaceChildren();
+            title.textContent = candidate.progress?.title ?? "考試進度"; status.textContent = "未建立";
+            headingInput.value = ""; textInput.value = ""; headingInput.disabled = true; textInput.disabled = true;
+            previewButton.disabled = true; applyButton.disabled = true;
+            byId("refresh").disabled = true; byId("check").disabled = true;
+            byId("answer-id").textContent = "答案：—"; byId("version").textContent = "版本：—";
+            updateTools(); renderTabs(); void refreshProgress(); return;
+          }
+        }
         if (!candidate?.answer?.id) return;
         const epoch = ++hostOutputEpoch;
         if (fromTab) latestTabEpoch = epoch;
@@ -514,7 +556,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         // The host may have shown another answer meanwhile; never switch the view back to this one.
         if (state?.answer.id !== answerId) {
           if (rendered) updateExamAnswer(rendered);
-          renderTabs();
+          renderTabs(); void refreshProgress();
           return reason;
         }
         const fallback = saved?.answer && saved?.layout ? { ...saved, readOnly: state.readOnly } : null;
@@ -717,25 +759,25 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         pages.removeAttribute("aria-labelledby");
         updateExamAnswer(state);
         examAnswers.forEach((answer, index) => {
-          const active = answer.answerId === state.answer.id;
+          const active = Boolean(answer.answerId) && answer.answerId === state?.answer.id;
           const label = "第" + (answer.questionNo ?? index + 1) + "題 " + answer.title;
           const tab = makeElement("button", "", label + " ");
           tab.type = "button";
           tab.id = "exam-tab-" + index;
-          tab.dataset.answerId = answer.answerId;
+          tab.dataset.answerId = answer.answerId ?? "missing-" + answer.questionNo;
           tab.dataset.version = String(answer.version);
           tab.setAttribute("role", "tab");
           tab.setAttribute("aria-controls", "pages");
           tab.setAttribute("aria-selected", String(active));
-          tab.tabIndex = (focusedId ? focusedId === answer.answerId : active) ? 0 : -1;
+          tab.tabIndex = (focusedId ? focusedId === answer.answerId : state ? active : index === 0) ? 0 : -1;
           const warning = !answer.fits || answer.warnings > 0;
-          const stats = [answer.totalLines + "/" + answer.capacity + " 行"];
-          if (!answer.fits) stats.push("超出 " + Math.max(0, answer.totalLines - answer.capacity) + " 行");
+          const stats = answer.answerId ? [answer.totalLines + "/" + answer.capacity + " 行"] : ["未建立"];
+          if (answer.answerId && !answer.fits) stats.push("超出 " + Math.max(0, answer.totalLines - answer.capacity) + " 行");
           if (answer.warnings > 0) stats.push("警告 " + answer.warnings);
           tab.append(makeElement("span", "tab-status" + (warning ? " warning" : ""), stats.join("・")));
           tab.setAttribute("aria-label", label + "，" + stats.join("，"));
           tab.addEventListener("click", () => {
-            if (state.answer.id !== answer.answerId) showHostOutput({ answer: { id: answer.answerId } }, true);
+            if (answer.answerId && state?.answer.id !== answer.answerId) showHostOutput({ answer: { id: answer.answerId } }, true);
           });
           tab.addEventListener("keydown", event => {
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -755,7 +797,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         if (state?.answer.id === snapshot.answer.id && snapshot.answer.version < state.answer.version) return;
         editEpoch += 1;
         snapshot = { ...snapshot, paperSvgPages: snapshot.paperSvgPages ?? (sameAnswer(state, snapshot) ? state.paperSvgPages : undefined) };
+        if (!snapshot.examId && examId && !examAnswers.some(a => a.answerId === snapshot.answer.id)) {
+          examId = null; progressEpoch += 1; examProgressRegion.hidden = true; notice.setAttribute("role", "status");
+        }
         state = snapshot;
+        if (snapshot.examId) { examId = snapshot.examId; showProgress(snapshot.progress); }
+        void refreshProgress();
         if (Array.isArray(snapshot.examAnswers)) examAnswers = snapshot.examAnswers;
         if (!examAnswers.some(answer => answer.answerId === snapshot.answer.id)) examAnswers = [];
         renderTabs();

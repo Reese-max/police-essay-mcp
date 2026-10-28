@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import JSZip from "jszip";
 import { test } from "node:test";
 import { fork } from "node:child_process";
 import { once } from "node:events";
@@ -172,7 +173,7 @@ test("owner isolation and reader artifact denial happen before any GCS download"
   assert.equal(s.storage.downloads, 0);
   const reader = await connect(s.store(), true);
   try {
-    assert.equal((await reader.listTools()).tools.length, 10);
+    assert.equal((await reader.listTools()).tools.length, 11);
     await assert.rejects(reader.readResource({ uri: "essay://exports/" + exported.handle }));
     assert.equal((await reader.callTool({ name: "export_text", arguments: { answerId: doc.id } })).isError, true);
     assert.equal(s.storage.downloads, 0);
@@ -275,14 +276,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 30, reader 10", async () => {
+test("cloud and file expose the same tool contracts: owner 32, reader 11", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 10 : 30);
+      assert.equal(baseline.tools.length, readOnly ? 11 : 32);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());
@@ -407,17 +408,18 @@ test("cloud exam bundle stores one immutable artifact with its first pinned vers
   const client = await connect(s.store());
   try {
     const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: docs.map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["txt"],
+      answers: docs.map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["docx"],
     } });
     assert.equal(result.isError, undefined, JSON.stringify(result));
     const bundle = result.structuredContent as { files: Array<{ exportUri: string; pages: number }>; totalPages: number };
     assert.equal(bundle.files.length, 1); assert.equal(bundle.totalPages, 4);
     const artifact = await s.store().readExport(bundle.files[0].exportUri.split("/").at(-1)!);
     assert.equal(artifact.answerId, docs[0].id); assert.equal(artifact.answerVersion, 1);
-    assert.equal(artifact.data.toString("utf8").split("\f").length, 4);
+    const xml = await (await JSZip.loadAsync(artifact.data)).file("word/document.xml")!.async("string");
+    assert.equal((xml.match(/<w:tbl>/g) ?? []).length, 4);
     const uploads = s.storage.uploads;
     const stale = await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: [{ answerId: docs[0].id, expectedVersion: 2 }], formats: ["txt"],
+      answers: [{ answerId: docs[0].id, expectedVersion: 2 }], formats: ["docx"],
     } });
     assert.equal(stale.isError, true); assert.match(JSON.stringify(stale.content), /VERSION_CONFLICT/);
     assert.equal(s.storage.uploads, uploads);
@@ -458,7 +460,7 @@ test("cloud Round A bundle deletion follows any member and keeps unrelated and l
   for (const doc of [a, b, c]) await store.saveAnswer(doc);
   try {
     const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: [a, b].map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["txt"] } });
+      answers: [a, b].map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["docx"] } });
     assert.equal(result.isError, undefined);
     const handle = (result.structuredContent as { files: Array<{ exportUri: string }> }).files[0].exportUri.split("/").at(-1)!;
     const manifest = [...s.firestore.documents.values()].find(item => item.value.handle === handle)!.value;
@@ -496,8 +498,8 @@ test("cloud Round A rolls back earlier handles when the second format handle fai
       };
       s.storage.failDelete = failRollback;
       const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-        answers: [{ answerId: doc.id, expectedVersion: 1 }], formats: ["pdf", "txt"] } });
-      assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /合輯 txt.*second handle failed/);
+        answers: [{ answerId: doc.id, expectedVersion: 1 }], formats: ["pdf", "docx"] } });
+      assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /合輯 docx.*second handle failed/);
       if (failRollback) {
         assert.ok(JSON.stringify(result.content).includes(orphan)); assert.equal(s.storage.objects.size, 1);
         assert.ok([...s.firestore.documents.keys()].some(key => key.endsWith("/artifacts/" + orphan)));

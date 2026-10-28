@@ -10,7 +10,8 @@ import { FileStore } from "../src/storage.js";
 import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
 import { toolScope } from "../src/oauth.js";
 
-export const INTENTIONAL_DIFFERENCES = [{ path: "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
+export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+  reason: "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget." },{ path: "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
   reason: "Optional version binding for legacy exports; strip only expectedVersion before base comparison." },
 { path: "*.tools[render_exam_overview]",
   reason: "New essay.read canvas tool opens ordered answers in one widget with question tabs and a selected full snapshot." },
@@ -19,7 +20,7 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "owner.tools[export_docx,export_
 { path: "*.tools[read_answer]._meta",
   reason: "Data reads no longer open the widget. Remove only base read_answer metadata before comparison; current read_answer must have no UI resourceUri or outputTemplate." },
 { path: "owner.tools[export_exam_bundle]",
-  reason: "New essay.export tool combines ordered, version-pinned answers into one PDF or TXT, with page ranges and layout warnings." },
+  reason: "New essay.export tool combines ordered, version-pinned answers into PDF and Word, with page ranges and layout warnings." },
 { path: "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
   reason: "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison." },
 { path: "oauth.tools[*]._meta.securitySchemes",
@@ -47,10 +48,10 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "owner.tools[export_docx,export_
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
+export const ADDED_TOOLS = ["start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
-export const ADDED_READ_TOOLS = ["list_revisions", "preview_change", "render_exam_overview"];
+export const ADDED_READ_TOOLS = ["get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
 /** Base tools that no longer exist; all of them were read-only. */
 export const REMOVED_TOOLS = ["preview_delete_text", "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer"];
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
@@ -94,13 +95,80 @@ export function assertSchemaSubset(compact: unknown, base: unknown, where: strin
     } else assert.deepEqual(value, b[key], `${where}.${key} differs from base`);
   }
 }
-/** Strips the appended 166 note so the remaining description must equal base exactly. */
-function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T): T {
+/** Exact, declared baseline-to-short-description replacements; never derive expectations from live code. */
+export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string }> = {
+  "check_layout": {
+    "before": "Use this when the user wants exact page usage, remaining capacity, overflow count, or compression priorities for a saved answer.",
+    "after": "Read exact line usage, overflow, targets and quality warnings (not content verification)."
+  },
+  "create_answer": {
+    "before": "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
+    "after": "Create an editable answer. examId resumes existing planned questions; use idempotencyKey for retries."
+  },
+  "delete_text": {
+    "before": "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
+    "after": "Delete one section; preview_change can preview first."
+  },
+  "export_docx": {
+    "before": "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
+    "after": "Export DOCX at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+  },
+  "export_pdf": {
+    "before": "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
+    "after": "Export PDF at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+  },
+  "export_text": {
+    "before": "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
+    "after": "Export grid TXT at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+  },
+  "format_section": {
+    "before": "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
+    "after": "Change section/paragraph formatting without rewriting content."
+  },
+  "insert_text": {
+    "before": "Use this when the user wants to add a new section at a precise position in an existing answer; the complete answer is reflowed afterward.",
+    "after": "Insert a section after afterSectionId, or append when omitted."
+  },
+  "list_answers": {
+    "before": "Use this when the user wants to find saved essay answers that can be reopened or edited.",
+    "after": "List saved answers grouped by exam, ordered by question number."
+  },
+  "list_templates": {
+    "before": "Use this when the user wants to inspect available essay answer-sheet templates before creating an answer.",
+    "after": "List available answer-sheet templates."
+  },
+  "load_exam_paper": {
+    "before": "Use this when the user wants to load a template or reopen an existing essay answer with its calculated grid layout.",
+    "after": "Load template geometry and formatting rules."
+  },
+  "read_answer": {
+    "before": "Use this when the user wants the complete structured answer, section metadata, and exact rendered lines.",
+    "after": "Read the complete answer and rendered lines; no canvas."
+  },
+  "reflow_answer": {
+    "before": "Use this after content changes when the user wants the authoritative line-by-line wrapping and page assignment; it recalculates from stored sections without asking the model to estimate.",
+    "after": "Recalculate saved content with the authoritative layout engine."
+  },
+  "render_answer_sheet": {
+    "before": "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
+    "after": "Show one answer canvas with authoritative layout and editing controls."
+  },
+  "replace_text": {
+    "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
+    "after": "Replace one section's text or paragraphs, preserving other sections."
+  },
+  "write_answer": {
+    "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
+    "after": "Replace all sections; expectedVersion protects edits. Prefer edit_text for phrases."
+  }
+};
+export function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T, baseline: ContractTool[]): T {
   return { ...view, tools: view.tools.map(tool => {
-    if (!PAPER_NOTE_TOOLS.includes(tool.name)) return tool;
-    const description = String(tool.description);
-    assert.ok(description.endsWith(PAPER_FORMAT_NOTE), `${tool.name} must end with the 166 formatting note`);
-    return { ...tool, description: description.slice(0, -PAPER_FORMAT_NOTE.length) };
+    const change = DESCRIPTION_CHANGES[tool.name];
+    if (!change) return tool;
+    assert.equal(baseline.find(t => t.name === tool.name)?.description, change.before, `${tool.name} baseline description`);
+    assert.equal(tool.description, change.after + (PAPER_NOTE_TOOLS.includes(tool.name) ? PAPER_FORMAT_NOTE : ""), `${tool.name} short description`);
+    return { ...tool, description: change.before };
   }) };
 }
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
@@ -113,7 +181,7 @@ export function withoutAddedInputs<T extends { tools: ContractTool[] }>(view: T)
     if (!writeTools.includes(tool.name)) return tool;
     const input = tool.inputSchema as JsonSchema;
     const properties = { ...input.properties as JsonSchema };
-    const added = tool.name.startsWith("export_") ? ["expectedVersion"] : ["responseDetail", ...(tool.name === "create_answer" ? ["exam", "questionNo", "lineTargets", "idempotencyKey", "layoutOptions"] : [])];
+    const added = tool.name.startsWith("export_") ? ["expectedVersion"] : ["responseDetail", ...(tool.name === "create_answer" ? ["exam", "questionNo", "lineTargets", "idempotencyKey", "layoutOptions", "examId"] : [])];
     for (const name of added) {
       assert.ok(Object.hasOwn(properties, name), `${tool.name} missing declared addition ${name}`);
       assert.ok(!((input.required ?? []) as string[]).includes(name), `${tool.name}.${name} must be optional`);
@@ -208,7 +276,7 @@ export async function checkMcpContract() {
   const comparable = withBaseWidgetUri(current);
   assert.deepEqual(withoutFormatDefaults(current), current, "format fields must not declare defaults");
   const base = withoutFormatDefaults(fixture.contract) as typeof fixture.contract;
-  assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.owner)), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.reader)), ADDED_READ_TOOLS) },
+  assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.owner, base.owner.tools)), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.reader, base.reader.tools)), ADDED_READ_TOOLS) },
     { owner: withoutOutputSchemas(withoutBaseReadUi(base.owner), REMOVED_TOOLS), reader: withoutOutputSchemas(withoutBaseReadUi(base.reader), REMOVED_TOOLS) });
   for (const view of ["owner", "reader"] as const) {
     for (const baseTool of base[view].tools as ContractTool[]) {
@@ -245,7 +313,7 @@ export async function checkMcpContract() {
             : ["export_docx", "export_pdf", "export_text"].includes(tool.name) ? "essay.export" : "essay.write";
           return { ...tool, _meta: { ...tool._meta, securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", required])] }] } };
         });
-      const listed = withBaseDescriptions({ tools: withBaseWidgetUri(JSON.parse(stableJson(tools)) as ContractTool[]) }).tools;
+      const listed = withBaseDescriptions({ tools: withBaseWidgetUri(JSON.parse(stableJson(tools)) as ContractTool[]) }, base.owner.tools).tools;
       assert.deepEqual(withoutOutputSchemas(withoutAddedInputs({ tools: listed }), ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
         assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes,
