@@ -11,7 +11,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 // Arguments come from the widget's window, so compare them as plain JSON.
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 
-async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?: boolean; legacy?: boolean; overview?: boolean; warnings?: boolean; metadata?: boolean; noCallMeta?: boolean } = {}) {
+async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?: boolean; legacy?: boolean; overview?: boolean; examPlan?: boolean; emptyPlan?: boolean; warnings?: boolean; metadata?: boolean; noCallMeta?: boolean } = {}) {
   let version = 1;
   let omitPages = false;
   let answerId = "ans_widget";
@@ -40,10 +40,17 @@ async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?
     { answerId: "ans_second", title: "第二份", version: 1, totalLines: 45, capacity: 44, fits: false, warnings: 2 },
     { answerId: "ans_third", title: "第三份3", version: 1, totalLines: 3, capacity: 44, fits: true, warnings: 0 },
   ];
-  const initial = () => options.overview ? { ...result(), structuredContent: { ...result().structuredContent, activeAnswerId: answerId, examAnswers: examSummaries } } : options.summary ? summary() : result();
+  const progress = () => ({ examId: "exam_widget", questions: [
+    { questionNo: 1, ...(options.emptyPlan ? {} : { answerId: "ans_widget", version }), stage: options.emptyPlan ? "not_started" : version === 1 ? "exported" : "layout_ok" },
+    { questionNo: 2, stage: "not_started" },
+  ], nextStep: { action: "create_answer", questionNo: 2, message: "第2題尚未建立，從第2題接續。" } });
+  const planned = () => ({ ...result(), structuredContent: { ...(options.emptyPlan ? {} : result().structuredContent), examId: "exam_widget", progress: progress(),
+    examAnswers: progress().questions.map(q => ({ ...examSummaries[0], ...q, answerId: q.answerId, title: q.answerId ? "測試" : "未建立" })) } });
+  const initial = () => options.examPlan ? planned() : options.overview ? { ...result(), structuredContent: { ...result().structuredContent, activeAnswerId: answerId, examAnswers: examSummaries } } : options.summary ? summary() : result();
   const write = (text: string, id: string | undefined) => { version += 1; return { structuredContent: snapshot(id), content: [{ type: "text", text }] }; };
   const tools = async (name: string, args: Args) => {
     calls.push({ name, args });
+    if (name === "get_exam_progress") return { structuredContent: progress() };
     if (name === "render_answer_sheet" && args.answerId) answerId = args.answerId;
     const rendered = name === "render_answer_sheet" ? options.noCallMeta
       ? { structuredContent: { ...snapshot(), readOnly: Boolean(options.readOnly), warningCount: warningCount(), ...(!omitPages && options.svgPages ? { paperSvgPages: options.svgPages } : {}) }, content: [{ type: "text", text: "rendered" }] }
@@ -758,5 +765,32 @@ test("set_globals prefers full B content over stale A metadata without reloading
     assert.doesNotMatch(h.element("pages").textContent!, /政府建置/);
     assert.equal(h.calls.length, 0);
     assert.deepEqual(h.errors, []);
+  } finally { h.dom.window.close(); }
+});
+
+for (const legacy of [false, true]) for (const readOnly of [false, true]) test(`exam status updates in ${legacy ? "OpenAI" : "MCP Apps"}, no call metadata, readOnly=${readOnly}`, async () => {
+  const h = await host({ legacy, readOnly, examPlan: true, noCallMeta: true });
+  try {
+    const status = h.element("exam-progress");
+    assert.equal(status.hidden, false); assert.equal(status.getAttribute("role"), "status"); assert.equal(status.getAttribute("aria-live"), "polite");
+    assert.equal(h.dom.window.document.querySelectorAll("#exam-progress").length, 1);
+    assert.match(status.textContent!, /第1題：已匯出.*第2題：未建立.*從第2題接續/);
+    assert.match(h.element("exam-tabs").textContent!, /未建立/);
+    assert.ok(h.calls.some(c => c.name === "get_exam_progress"));
+    if (readOnly) {
+      assert.equal(h.element<HTMLButtonElement>("preview-phrase").disabled, true);
+      await h.click("apply-phrase"); assert.equal(h.calls.some(c => c.name === "edit_text"), false);
+    } else {
+      h.type("find", "建置"); h.type("replace", "導入"); await h.click("preview-phrase"); await h.click("apply-phrase");
+      assert.equal(h.version, 2); assert.equal(h.element("exam-progress"), status);
+      assert.match(status.textContent!, /第1題：版面通過.*從第2題接續/);
+      assert.doesNotMatch(status.textContent!, /[%％]|答案已查證/);
+    }
+  } finally { h.dom.window.close(); }
+});
+for (const legacy of [false, true]) test(`all-missing exam overview via ${legacy ? "OpenAI" : "MCP Apps"} keeps progress and tabs`, async () => {
+  const h = await host({ legacy, examPlan: true, emptyPlan: true, noCallMeta: true });
+  try { assert.match(h.element("exam-progress").textContent!, /未建立/); assert.equal(h.element("exam-tabs").children.length, 2);
+    assert.equal(h.element<HTMLButtonElement>("preview-phrase").disabled, true);
   } finally { h.dom.window.close(); }
 });

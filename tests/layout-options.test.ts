@@ -167,7 +167,7 @@ for (const paper of [false, true]) test(`split warnings reach check, bundle and 
     assert.ok(checked.warnings.length > 0);
     assert.ok(checked.warnings.every(warning => /wholeLatinWords=true/.test(warning.message)));
     const bundle = data<{ answers: Array<{ warnings: typeof checked.warnings }> }>(await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["txt"] } }));
+      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["docx"] } }));
     assert.deepEqual(bundle.answers[0].warnings, checked.warnings);
     const overview = data<{ examAnswers: Array<{ warnings: number }> }>(await client.callTool({ name: "render_exam_overview", arguments: { answerIds: [answer.id] } }));
     assert.equal(overview.examAnswers[0].warnings, checked.warnings.length);

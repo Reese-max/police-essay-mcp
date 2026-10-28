@@ -72,6 +72,20 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 ## 工具工作流
 
+多題試卷最短流程：`start_exam` → `create_answers(examId)` → 修正版面 → `render_exam_overview(examId)` → `export_exam_bundle(examId)`。`start_exam` 記錄考試名稱、1–20 個不重複題號、題目與目標頁數，可指定合輯格式 `pdf`／`docx`，預設兩者皆輸出。同一個 `idempotencyKey` 與請求可安全重送，換內容須換 key。
+
+中斷或使用者說「繼續」時，先呼叫 `get_exam_progress(examId)`，告知 `summary` 一次，再依 `nextStep` 接續。進度來自目前儲存的內容、版面與匯出版本，沒有估算百分比。已連結的題號再次呼叫 `create_answer`／`create_answers` 會回傳既有答案與 `replayed: true`，即使沒有 key 也不會重複建立；省略考試名稱、題號或題目時由計畫補入（題號取第一個未開始的題目）。批次可在最外層提供 `examId`，或逐題提供；兩者同時提供時必須一致。刪除答案會解除計畫連結。
+
+`get_exam_progress` 每題回傳 `not_started`（未建立）、`drafted`（已保存，版面待修正）、`layout_ok`（目前版本版面通過）或 `exported`（目前版本已收入合輯），並回傳合輯 `none`／`current`／`outdated` 與下一步 `create_answer`／`fix_layout`／`export_exam_bundle`／`done`。匯出後修改答案會讓合輯過期。舊答案版面無效時，該題回傳遮蔽路徑的 error 與 drafted，其餘題目仍可讀取。**版面通過僅代表容量符合，內容未經查證。**
+
+`render_exam_overview(examId)` 依題號顯示同一畫板，尚未建立的題目仍列為「未建立」。頂端只有一個考試進度區域（`role="status"`、`aria-live="polite"`），重新載入分頁及寫入後原地讀取最新進度；唯讀模式可以查進度、不能建立計畫或改寫答案。
+
+所有題目版面通過後，直接匯出一次，於同一則訊息提供 **PDF 與 Word 兩個下載連結**，不詢問是否匯出。整卷不提供 TXT；單題 TXT 保留供相容使用。
+
+`export_exam_bundle(examId)` 未指定 formats 時遵循計畫格式（預設 PDF 與 Word），省略 `answers` 時，依題號釘選全部已連結答案的目前版本；缺題會回傳含 `questionNo` 的結構化錯誤。所有格式成功才保存計畫的 `lastBundle`，包含格式、各格式實際匯出頁數、逐題版本與匯出時間；若保存失敗會回收匯出 handle。帶 MCP `_meta.progressToken` 時，於全部驗證、每格式逐題繪製、每格式合併、全部保存等真實階段發送 `notifications/progress`；`total = 1 + 題數 × 格式數 + 格式數 + 1`。未帶 token 不發送通知。題目目標頁數是計畫資訊；實際版面容量仍由所選模板決定。
+
+單題及進階編修沿用下列流程：
+
 1. `load_exam_paper` 讀取模板。
 2. `create_answer` 可同時帶 `exam`、`questionNo`、`lineTargets`，在版本 1 建立文件（lineTargets.sectionId 必須等於 sections 明確提供的 id），或 `write_answer` 寫入 sections。
 3. `read_answer` 讀取完整文字；`check_layout` 讀取真實行數與品質警告（孤立標題、英文斷字，僅提醒、不阻擋匯出）。
@@ -83,18 +97,18 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
    - `set_line_targets` 設定各節目標行數（含標題與空行）；`check_layout` 會回報各節行數、與目標的差距，以及補滿或壓縮時該從哪一節增減。
    - `update_answer_info` 修改標題、題目，或記錄這份答案屬於哪場考試、第幾題；`list_answers` 會依考試分組、依題號排序。`duplicate_answer` 複製目前內容成一份新答案，用來試寫另一個版本。
 7. `fits=true` 後呼叫 `export_docx`、`export_pdf` 或 `export_text`（均可選填 `expectedVersion`，不符時回傳 `VERSION_CONFLICT`）。結果保留本機 `path`，另附不含檔名的隨機 `exportUri` 與 `resource_link`；remote owner client 可在 24 小時內用 `resources/read` 取回 bytes。
-   - `export_answer(expectedVersion)` 釘選版本，一次輸出同一版本的 Word 與 PDF（`formats` 可選 `docx`、`pdf`、`txt`），檔名例如 `114年警察特考_第1題_資訊系統可行性評估.docx`；設定 `ESSAY_PUBLIC_BASE_URL` 時另附直接下載連結。
+   - `export_answer(expectedVersion)` 釘選版本，一次輸出同一版本的 Word 與 PDF（`formats` 可選 `docx`、`pdf`；舊單題 TXT 介面保持相容），檔名例如 `114年警察特考_第1題_資訊系統可行性評估.docx`；設定 `ESSAY_PUBLIC_BASE_URL` 時另附直接下載連結。
 8. 使用者明確要求永久刪除時，以 `read_answer` / `list_answers` 取得目前版本，再呼叫 `delete_answer`（必須帶 `expectedVersion`）。答案、全部修改紀錄與匯出檔一併刪除，無法復原；唯讀 credential 看不到此工具。
 
 `export_answer` 與 `export_exam_bundle` 執行失敗回傳 `isError: true` 與 `structuredContent.errors: [{ code, answerId?, questionNo?, format?, retryable, message }]`，保留原有錯誤文字。代碼為 `ANSWER_NOT_FOUND`、`VERSION_CONFLICT`、`LAYOUT_OVERFLOW`、`LAYOUT_INVALID`、`EXPORT_FAILED`；`EXPORT_FAILED` 僅在明確暫時故障時可重試：Node `ETIMEDOUT`、`ECONNRESET`、`ECONNREFUSED`、`EAI_AGAIN`、`EBUSY`、`EMFILE`、`ENFILE`、`EPIPE`，或儲存／HTTP 狀態 408、429、500、502、503、504（含 Firestore 對應的 gRPC 暫時狀態）；未知、字型、內容與確定性繪製錯誤不可重試。錯誤訊息中的絕對檔案路徑遮蔽為 `<path>`，不公開內部堆疊。單題部分格式成功時保留 files、failed 與 errors，結果不標為 isError；合輯仍全部成功才回傳檔案。
 
-多題考試可用 `export_exam_bundle`：`answers: [{ answerId, expectedVersion }]` 按順序合成一份 PDF（含逐題書籤）或 TXT；重複 answerId 的拒絕訊息與結構化錯誤會列出各個重複 id；所有題目通過版本與容量檢查，且所有格式完成繪製後才建立匯出 handle；回傳逐題頁碼範圍與品質警告，PDF 字型警告列於 files[].fontWarning 與文字結果。合輯 manifest 以 relatedAnswerIds 關聯全部成員，刪除任一成員也會刪除並計入 deletedExports。後續格式建立 handle 失敗時會盡力回收先前 handle；錯誤列出失敗格式及回收失敗的遺留 handle。
+多題考試可用 `export_exam_bundle`：`answers: [{ answerId, expectedVersion }]` 按順序合成一份 PDF（含逐題書籤）與 Word（DOCX；逐題從新頁開始，與單題共用固定格紙及字型）；重複 answerId 的拒絕訊息與結構化錯誤會列出各個重複 id；所有題目通過版本與容量檢查，且所有格式完成繪製後才建立匯出 handle；回傳逐題頁碼範圍與品質警告，PDF 字型警告列於 files[].fontWarning 與文字結果。合輯 manifest 以 relatedAnswerIds 關聯全部成員，刪除任一成員也會刪除並計入 deletedExports。後續格式建立 handle 失敗時會盡力回收先前 handle；錯誤列出失敗格式及回收失敗的遺留 handle。
 
 `create_answer` 可帶 8–128 字元的 `idempotencyKey`（英數、`_`、`-`）：同 key、同請求重送會回傳原答案目前狀態及 `replayed: true`，不另存版本；同 key 不同請求回報 `IDEMPOTENCY_KEY_REUSED`。key 產生確定的 answerId，建立請求以排序 JSON 的 SHA-256 儲存為 createRequestHash；複製答案不帶此雜湊。`create_answers`（essay.write）一次接受 1–10 題，先驗證全部，再按順序儲存，回傳精簡摘要；每題使用不同 key。驗證錯誤列出項次／代碼，完全不寫入；中途 I/O 失敗列出已建立與失敗項目，相同批次搭配原 keys 可安全重試。
 
-`export_answer` 與 `export_exam_bundle` 的 `textMode` 僅影響 TXT：預設 `paper` 保留目前格紙輸出；`paragraphs` 依權威版面去除視覺換行、縮排填充與間距行，保留標題編號、每段一行、節間空行，檔名加 `_段落`。合輯逐題附書籤標籤且不含換頁字元；容量／166 規則不變，pages 仍是稿紙頁數。
+單題 `export_answer` 的 `textMode` 僅影響 TXT：預設 `paper` 保留目前格紙輸出；`paragraphs` 依權威版面去除視覺換行、縮排填充與間距行，保留標題編號、每段一行、節間空行，檔名加 `_段落`。容量／166 規則不變，pages 仍是稿紙頁數。
 
-`read_answer` 只回傳資料，不顯示畫板；單題畫板用 `render_answer_sheet`，多題只呼叫一次 `render_exam_overview`，以題目分頁共用一個畫板。 兩種畫板工具預設 `responseDetail: "summary"`，`structuredContent` 僅含目前題目的 id／版本、版面統計與 `warningCount`（多題另含逐題摘要）；完整答案與逐行版面始終放在元件專用 `_meta.snapshot`；`responseDetail: "full"` 也在 `structuredContent` 回傳完整 snapshot 與 `readOnly`，166 模式另含 `paperSvgPages`。v11 畫板自行呼叫 render 工具一律要求 full，依序讀取結果 `_meta.snapshot`、完整 `structuredContent`、宿主初始輸出的 `toolResponseMetadata`，不依賴 `window.openai.callTool` 回傳 `_meta`。唯讀狀態依序取結果 `_meta.readOnly`、`structuredContent.readOnly`、僅宿主初始輸出的 `toolResponseMetadata.readOnly`、同答案既有狀態；皆未知時停用編輯。`openai:set_globals` 僅接受同次事件且答案 id／版本相符的 metadata；摘要缺少可用資料時呼叫一次 full render，避免顯示其他答案或舊版本。SVG 缺少時僅保留同答案同版本已顯示的原稿紙。分頁會更新寫入完成題目的行數與版本，重按目前分頁保留未儲存草稿。多題載入失敗會彙整缺少答案及帶答案 id 的版面錯誤，並遮蔽內部路徑與堆疊。
+`read_answer` 只回傳資料，不顯示畫板；單題畫板用 `render_answer_sheet`，多題只呼叫一次 `render_exam_overview`，以題目分頁共用一個畫板。 兩種畫板工具預設 `responseDetail: "summary"`，`structuredContent` 僅含目前題目的 id／版本、版面統計與 `warningCount`（多題另含逐題摘要）；完整答案與逐行版面始終放在元件專用 `_meta.snapshot`；`responseDetail: "full"` 也在 `structuredContent` 回傳完整 snapshot 與 `readOnly`，166 模式另含 `paperSvgPages`。v12 畫板自行呼叫 render 工具一律要求 full，依序讀取結果 `_meta.snapshot`、完整 `structuredContent`、宿主初始輸出的 `toolResponseMetadata`，不依賴 `window.openai.callTool` 回傳 `_meta`。唯讀狀態依序取結果 `_meta.readOnly`、`structuredContent.readOnly`、僅宿主初始輸出的 `toolResponseMetadata.readOnly`、同答案既有狀態；皆未知時停用編輯。`openai:set_globals` 僅接受同次事件且答案 id／版本相符的 metadata；摘要缺少可用資料時呼叫一次 full render，避免顯示其他答案或舊版本。SVG 缺少時僅保留同答案同版本已顯示的原稿紙。分頁會更新寫入完成題目的行數與版本，重按目前分頁保留未儲存草稿。多題載入失敗會彙整缺少答案及帶答案 id 的版面錯誤，並遮蔽內部路徑與堆疊。
 
 寫入工具預設 `responseDetail: "summary"`，只回傳答案基本資訊、版面統計與各節行數；`responseDetail: "full"` 保留完整答案與逐行版面。`read_answer`、`load_exam_paper`、`reflow_answer`、`check_layout` 仍回傳完整資料；所有工具輸出均排除僅供儲存使用的 `createRequestHash`。畫板收到寫入摘要時會透過 render_answer_sheet 載入完整答案，載入失敗顯示通知，過期回應不會蓋過後來顯示的答案。
 

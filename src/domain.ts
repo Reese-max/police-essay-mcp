@@ -3,6 +3,34 @@ import { z } from "zod";
 
 export const MAX_ANSWER_BYTES = 700 * 1024;
 
+export const MAX_EXAM_BYTES = 256 * 1024;
+export const examQuestionSchema = z.object({
+  questionNo: z.number().int().min(1).max(20), question: z.string().max(10_000).optional(),
+  targetPages: z.number().int().min(1).max(20).optional(),
+  answerId: z.string().regex(/^ans_[A-Za-z0-9-]+$/).optional(),
+});
+export const examQuestionsSchema = z.array(examQuestionSchema).min(1).max(20).refine(
+  questions => new Set(questions.map(q => q.questionNo)).size === questions.length, "questionNo 不可重複。",
+);
+export const examFormatsSchema = z.array(z.enum(["pdf", "docx"])).min(1).max(2);
+export const examPlanSchema = z.object({
+  id: z.string().regex(/^exam_[A-Za-z0-9-]+$/), title: z.string().min(1).max(100),
+  questions: examQuestionsSchema, formats: examFormatsSchema.optional(),
+  createdAt: z.string().datetime(), updatedAt: z.string().datetime(), version: z.number().int().positive(),
+  createRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  createRequests: z.record(z.string().regex(/^[a-f0-9]{64}$/), z.object({ requestHash: z.string().regex(/^[a-f0-9]{64}$/), questionNo: z.number().int().min(1).max(20) })).optional(),
+  lastBundle: z.object({ formats: examFormatsSchema, members: z.array(z.object({
+    answerId: z.string().regex(/^ans_[A-Za-z0-9-]+$/), version: z.number().int().positive(),
+  })).min(1).max(20), pages: z.object({ pdf: z.number().int().positive().optional(), docx: z.number().int().positive().optional() }).optional(),
+    exportedAt: z.string().datetime() }).optional(),
+});
+export type ExamPlan = z.infer<typeof examPlanSchema>;
+export function validateExamPlan(value: ExamPlan): ExamPlan {
+  const plan = examPlanSchema.parse(value);
+  if (Buffer.byteLength(JSON.stringify(plan)) > MAX_EXAM_BYTES) throw new Error("Exam exceeds 256 KiB document limit.");
+  return plan;
+}
+
 export function normalizeNewlines(text: string): string {
   return text.replace(/\r\n|[\r\u0085\u2028\u2029\u000b\u000c]/gu, "\n");
 }

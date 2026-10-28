@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import JSZip from "jszip";
 import { test } from "node:test";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -110,18 +111,18 @@ const pdfPageCount = (data: Buffer) => (data.toString("latin1").match(/\/Type \/
 const pdfString = (value: string) => Buffer.from("\ufeff" + value, "utf16le").swap16().toString("latin1")
   .replace(/[\n\r\t\b\f()\\]/g, character => ({ "\n": "\\n", "\r": "\\r", "\t": "\\t", "\b": "\\b", "\f": "\\f", "(": "\\(", ")": "\\)", "\\": "\\\\" }[character]!));
 
-test("exam bundle preserves single PDF pages, bookmarks, TXT separators and manifest order", async () => withClient(async (client, store) => {
+test("exam bundle preserves single PDF/DOCX pages, bookmarks and manifest order", async () => withClient(async (client, store) => {
   const first = { ...sample("甲題", 24), exam: "114年警察特考", questionNo: 4 };
   const second = sample("乙題");
   await store.saveAnswer(first); await store.saveAnswer(second);
   const singles = [];
   for (const answer of [first, second]) {
     const single = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: {
-      answerId: answer.id, expectedVersion: 1, formats: ["pdf", "txt"] } }));
+      answerId: answer.id, expectedVersion: 1, formats: ["pdf", "docx"] } }));
     singles.push(await Promise.all(single.files.map(file => readArtifact(store, file.exportUri))));
   }
   const bundled = await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [first, second].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["pdf", "txt"] } });
+    answers: [first, second].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["pdf", "docx"] } });
   const result = data<Bundle>(bundled);
   assert.equal(result.files.length, 2); assert.equal(result.totalPages, 4);
   assert.deepEqual(result.answers.map(answer => [answer.answerId, answer.version, answer.pages, answer.startPage, answer.endPage]),
@@ -130,18 +131,23 @@ test("exam bundle preserves single PDF pages, bookmarks, TXT separators and mani
   assert.equal(result.files[0].fileName, "114年警察特考_合輯.pdf");
   assert.match(result.files[0].downloadUrl!, /https:\/\/example.test\/downloads\//);
   const pdf = await readArtifact(store, result.files[0].exportUri);
-  const txt = await readArtifact(store, result.files[1].exportUri);
+  const word = await readArtifact(store, result.files[1].exportUri);
   assert.equal(pdfPageCount(pdf.data), singles.reduce((sum, files) => sum + pdfPageCount(files[0].data), 0));
   const raw = pdf.data.toString("latin1").toLowerCase();
   for (const bookmark of ["第4題 甲題", "第2題 乙題"]) assert.ok(raw.includes(pdfString(bookmark).toLowerCase()), bookmark);
   assert.equal((raw.match(/\/title /g) ?? []).length, 2);
-  assert.equal(txt.data.toString("utf8"), singles.map(files => files[1].data.toString("utf8").slice(0, -1)).join("\n\f\n") + "\n");
+  const xml = await (await JSZip.loadAsync(word.data)).file("word/document.xml")!.async("string");
+  assert.equal((xml.match(/<w:tbl>/g) ?? []).length, result.totalPages);
+  for (const [i, files] of singles.entries()) {
+    const singleXml = await (await JSZip.loadAsync(files[1].data)).file("word/document.xml")!.async("string");
+    assert.equal((singleXml.match(/<w:tbl>/g) ?? []).length, result.answers[i].pages);
+  }
   assert.equal(pdf.answerId, first.id); assert.equal(pdf.answerVersion, 1);
   assert.equal((bundled.content as Array<{ type: string }>).filter(item => item.type === "resource_link").length, 2);
   const reversed = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [{ answerId: second.id, expectedVersion: 1 }, { answerId: first.id, expectedVersion: 1 }], formats: ["txt"], title: "自訂合輯" } }));
+    answers: [{ answerId: second.id, expectedVersion: 1 }, { answerId: first.id, expectedVersion: 1 }], formats: ["docx"], title: "自訂合輯" } }));
   assert.deepEqual(reversed.answers.map(answer => answer.answerId), [second.id, first.id]);
-  assert.equal(reversed.files[0].fileName, "自訂合輯.txt");
+  assert.equal(reversed.files[0].fileName, "自訂合輯.docx");
 }, { downloadBaseUrl: "https://example.test" }));
 
 test("exam validation collects all failures and renders nothing; overflow is explicitly opt-in", async () => withClient(async (client, store) => {
@@ -164,7 +170,7 @@ test("exam validation collects all failures and renders nothing; overflow is exp
   assert.deepEqual(await artifactNames(store), []);
   const duplicate = await client.callTool({ name: "export_exam_bundle", arguments: { answers: [pin(good), pin(good)] } });
   assert.equal(duplicate.isError, true); assert.match(text(duplicate), /不可重複/); assert.equal(handles, 0);
-  const allowed = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: { answers: [pin(overflow)], formats: ["txt"], allowOverflow: true } }));
+  const allowed = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: { answers: [pin(overflow)], formats: ["docx"], allowOverflow: true } }));
   assert.equal(allowed.totalPages, 3); assert.equal(handles, 1);
 }));
 
@@ -204,12 +210,12 @@ test("a second-format rendering failure creates no handles", async () => withCli
   let formats = 0, handles = 0;
   store.resolveExportPath = (name, format) => {
     formats++;
-    if (format === "txt") throw new Error("模擬第二格式失敗");
+    if (format === "docx") throw new Error("模擬第二格式失敗");
     return resolve(name, format);
   };
   store.createExportHandle = async () => { handles++; throw new Error("unexpected handle"); };
   const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "txt"],
+    answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "docx"],
   } });
   assert.equal(result.isError, true); assert.match(text(result), /模擬第二格式失敗/);
   assert.equal(formats, 2); assert.equal(handles, 0);
@@ -224,7 +230,7 @@ test("bundle preserves PDF font warnings in its file and text results", async ()
   process.env.ESSAY_MCP_PDF_FONT = invalidFont;
   try {
     const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "txt"],
+      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "docx"],
     } });
     const files = data<Bundle>(result).files;
     assert.match(files[0].fontWarning!, /Helvetica/);
@@ -278,13 +284,13 @@ test("quality warnings detect orphan headings and split Latin words without modi
   const check = await client.callTool({ name: "check_layout", arguments: { answerId: answer.id } });
   assert.deepEqual(data<{ warnings: LayoutWarning[] }>(check).warnings, warnings);
   assert.match(text(check), /ORPHAN_HEADING/); assert.match(text(check), /SPLIT_LATIN_WORD/);
-  const bundled = await client.callTool({ name: "export_exam_bundle", arguments: { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["txt"] } });
+  const bundled = await client.callTool({ name: "export_exam_bundle", arguments: { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["docx"] } });
   const bundle = data<Bundle>(bundled);
   assert.deepEqual(bundle.answers[0].warnings, warnings);
   for (const warning of warnings) assert.ok(text(bundled).includes(`\n  ${warning.code} 第 ${warning.page} 頁第 ${warning.line} 行：${warning.message}`));
 }));
 
-test("166 bundle shares its single PDF font and two-page policy", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
+test("166 bundle shares its single PDF font and two-page policy", { skip: !process.env.ESSAY_MCP_PAPER_FONT && "ESSAY_MCP_PAPER_FONT not set" }, async () => withClient(async (client, store) => {
   const answer = createAnswerDocument({ templateId: "police_information_essay_166", title: "原稿紙", sections: [{ text: "原稿紙內容。" }] });
   await store.saveAnswer(answer);
   const single = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["pdf"] } }));
@@ -435,7 +441,7 @@ test("batch needs write scope; data reads have no widget but explicit canvas too
   }
 });
 
-test("paragraph TXT rebuilds numbered headings and wrapped paragraphs exactly, with bundle labels", async () => withClient(async (client, store) => {
+test("single-answer paragraph TXT rebuilds numbered headings and wrapped paragraphs exactly", async () => withClient(async (client, store) => {
   const heading = "很長的標題".repeat(10), paragraph = "正文含空白 A B 與標點，".repeat(16);
   const doc = createAnswerDocument({ templateId: "police_information_essay", title: "甲題", sections: [
     { id: "one", heading: "五、" + heading, headingStyle: { numbered: true }, paragraphs: [{ text: paragraph }, { text: "次段 原有空白" }],
@@ -448,11 +454,6 @@ test("paragraph TXT rebuilds numbered headings and wrapped paragraphs exactly, w
   const single = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: { answerId: first.id, formats: ["txt"], textMode: "paragraphs" } }));
   assert.equal(single.files[0].fileName, "第4題_甲題_段落.txt"); assert.equal(single.files[0].pages, 2);
   assert.equal((await readArtifact(store, single.files[0].exportUri)).data.toString("utf8"), expected);
-  const bundled = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [first, second].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["txt"], textMode: "paragraphs" } }));
-  assert.equal(bundled.files[0].fileName, "申論合輯_段落.txt"); assert.equal(bundled.files[0].pages, 4);
-  const content = (await readArtifact(store, bundled.files[0].exportUri)).data.toString("utf8");
-  assert.equal(content, `第4題 甲題\n\n${expected}\n第2題 乙題\n\n${second.sections[0].text}\n`); assert.equal(content.includes("\f"), false);
   const paper = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: { answerId: first.id, formats: ["txt"], textMode: "paper" } }));
   assert.ok((await readArtifact(store, paper.files[0].exportUri)).data.toString("utf8").includes("\f"));
   const overflow = sample("超頁", 45); await store.saveAnswer(overflow); const before = await artifactNames(store);
@@ -466,7 +467,7 @@ test("file bundles follow every member, preserve unrelated artifacts and read le
   const [a, b, c] = ["甲", "乙", "丙"].map(title => sample(title));
   for (const answer of [a, b, c]) await store.saveAnswer(answer);
   const result = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [a, b].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["txt"] } }));
+    answers: [a, b].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["docx"] } }));
   const handle = result.files[0].exportUri.split("/").at(-1)!;
   const manifest = JSON.parse(await fs.readFile(path.join(store.artifactDir, handle + ".json"), "utf8"));
   assert.deepEqual(manifest.relatedAnswerIds, [a.id, b.id]);
@@ -493,8 +494,9 @@ test("file bundle rolls back an earlier handle on second-format handle failure a
     };
     store.deleteExport = rollbackFails ? async () => { throw new Error("回收 I/O 失敗"); } : remove;
     const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "txt"] } });
-    assert.equal(result.isError, true); assert.match(text(result), /合輯 txt.*第二 handle 失敗/);
+      answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf", "docx"] } });
+    assert.equal(result.isError, true); assert.match(text(result), /合輯 docx.*第二 handle 失敗/);
+    assert.equal(exportErrors(result)[0].format, "docx");
     if (rollbackFails) { assert.ok(text(result).includes(orphan)); await remove(orphan); }
     assert.deepEqual(await artifactNames(store), []);
   }
@@ -645,7 +647,7 @@ test("exam overview is a widget-enabled read tool for read-only and reader scope
   }
 });
 
-test("166 overview carries exactly the active answer's paper preview metadata", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
+test("166 overview carries exactly the active answer's paper preview metadata", { skip: !process.env.ESSAY_MCP_PAPER_FONT && "ESSAY_MCP_PAPER_FONT not set" }, async () => withClient(async (client, store) => {
   const plain = sample("一般");
   const paper = createAnswerDocument({ templateId: "police_information_essay_166", title: "原稿紙", sections: [{ text: "正文" }] });
   await store.saveAnswer(plain); await store.saveAnswer(paper);
@@ -667,7 +669,7 @@ test("bundle rechecks every member after all handles exist and rolls back deleti
   };
   store.getAnswer = async id => { if (handles.length === 2) rechecked.push(id); return getAnswer(id); };
   const result = await client.callTool({ name: "export_exam_bundle", arguments: {
-    answers: [first, second].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["txt", "pdf"],
+    answers: [first, second].map(answer => ({ answerId: answer.id, expectedVersion: 1 })), formats: ["docx", "pdf"],
   } });
   assert.equal(result.isError, true); assert.equal(text(result), `ANSWER_NOT_FOUND ${second.id}：匯出期間已刪除`);
   assert.equal(handles.length, 2); assert.deepEqual(rechecked, [first.id, second.id]);
@@ -755,7 +757,7 @@ test("export tools carry every validation code and known question number without
       [overflow.id, 1, "LAYOUT_OVERFLOW", 4], [invalid.id, 1, "LAYOUT_INVALID", 5],
     ] as const) {
       const result = await client.callTool({ name, arguments: { ...(name === "export_answer" ? { answerId, expectedVersion }
-        : { answers: [{ answerId, expectedVersion }] }), formats: ["txt"] } });
+        : { answers: [{ answerId, expectedVersion }] }), formats: ["pdf"] } });
       assert.equal(result.isError, true, text(result));
       const errors = exportErrors(result);
       assert.equal(errors.length, 1); assert.equal(errors[0].code, code); assert.equal(errors[0].answerId, answerId);
@@ -774,10 +776,10 @@ test("export storage failures are retryable; partial single exports retain files
   };
   for (const name of ["export_answer", "export_exam_bundle"]) {
     const result = await client.callTool({ name, arguments: { ...(name === "export_answer" ? { answerId: answer.id, expectedVersion: 1 }
-      : { answers: [{ answerId: answer.id, expectedVersion: 1 }] }), formats: ["txt"] } });
+      : { answers: [{ answerId: answer.id, expectedVersion: 1 }] }), formats: ["pdf"] } });
     assert.equal(result.isError, true); assert.match(text(result), /transient storage failure/);
     const [error] = exportErrors(result);
-    assert.equal(error.code, "EXPORT_FAILED"); assert.equal(error.retryable, true); assert.equal(error.format, "txt");
+    assert.equal(error.code, "EXPORT_FAILED"); assert.equal(error.retryable, true); assert.equal(error.format, "pdf");
     if (name === "export_answer") { assert.equal(error.answerId, answer.id); assert.equal(error.questionNo, 8); }
     assert.deepEqual(await artifactNames(store), []);
   }
@@ -791,7 +793,7 @@ test("export storage failures are retryable; partial single exports retain files
   store.getTemplate = async () => { throw Object.assign(new Error("transient template storage failure"), { code: "ECONNRESET" }); };
   for (const name of ["export_answer", "export_exam_bundle"]) {
     const result = await client.callTool({ name, arguments: name === "export_answer" ? { answerId: answer.id, formats: ["txt"] }
-      : { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["txt"] } });
+      : { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf"] } });
     assert.equal(result.isError, true); assert.equal(exportErrors(result)[0].code, "EXPORT_FAILED");
     assert.equal(exportErrors(result)[0].retryable, true); assert.equal(exportErrors(result)[0].questionNo, 8);
   }
@@ -852,7 +854,7 @@ test("batch tools match single tool visibility, direct-call denial and widget re
       const tools = (await client.listTools()).tools;
       for (const [batch, single, args] of [
         ["create_answers", "create_answer", { answers: [{ title: "denied" }] }],
-        ["export_exam_bundle", "export_answer", { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["txt"] }],
+        ["export_exam_bundle", "export_answer", { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf"] }],
         ["render_exam_overview", "render_answer_sheet", { answerIds: [answer.id] }],
       ] as const) {
         const tool = tools.find(tool => tool.name === batch), peer = tools.find(tool => tool.name === single);
@@ -891,7 +893,7 @@ test("invalid stored JSON is a non-retryable layout error while read I/O failure
       store.getTemplate = source === "template" ? async () => { throw error; } : getTemplate;
       for (const name of ["export_answer", "export_exam_bundle"]) {
         const result = await client.callTool({ name, arguments: name === "export_answer" ? { answerId: answer.id, formats: ["txt"] }
-          : { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["txt"] } });
+          : { answers: [{ answerId: answer.id, expectedVersion: 1 }], formats: ["pdf"] } });
         assert.equal(result.isError, true);
         const [failure] = exportErrors(result);
         assert.equal(failure.code, error instanceof SyntaxError ? "LAYOUT_INVALID" : "EXPORT_FAILED");
@@ -936,11 +938,11 @@ test("export errors redact Windows, POSIX and file paths in structured and text 
   const create = store.createExportHandle.bind(store);
   const message = String.raw`missing C:\private\font.ttf and /srv/private/font.ttf and file:///private/renderer.js` + "\n    at secretRenderer (C:\\private\\renderer.js:10:2)";
   store.createExportHandle = async (file, details) => {
-    if (details.format === "txt") throw new Error(message);
+    if (details.format === "txt" || details.format === "pdf") throw new Error(message);
     return create(file, details);
   };
   for (const name of ["export_answer", "export_exam_bundle"]) {
-    const result = await client.callTool({ name, arguments: { ...(name === "export_answer" ? { answerId: answer.id } : { answers: [{ answerId: answer.id, expectedVersion: 1 }] }), formats: ["txt"] } });
+    const result = await client.callTool({ name, arguments: { ...(name === "export_answer" ? { answerId: answer.id } : { answers: [{ answerId: answer.id, expectedVersion: 1 }] }), formats: ["pdf"] } });
     assert.equal(result.isError, true);
     const [error] = exportErrors(result);
     assert.equal(error.code, "EXPORT_FAILED"); assert.equal(error.retryable, false);
@@ -969,4 +971,59 @@ test("bundle reports each duplicated answerId once before reading or exporting",
     assert.ok(error.message.includes(error.answerId!)); assert.ok(text(result).includes(error.answerId!));
   }
   assert.deepEqual(await artifactNames(store), []);
+}));
+
+
+for (const members of [2, 4]) test(`${members}-member default DOCX/PDF bundle preserves grids, member order, breaks and page count`, async () => withClient(async (client, store) => {
+  const answers = Array.from({ length: members }, (_, i) => createAnswerDocument({ templateId: "police_information_essay", title: `題目${i + 1}`,
+    sections: [{ id: "body", text: `MemberUnique${i + 1}` }] }));
+  for (const answer of answers) await store.saveAnswer(answer);
+  const result = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: {
+    answers: answers.map(answer => ({ answerId: answer.id, expectedVersion: 1 })) } }));
+  assert.deepEqual(result.files.map(f => f.format), ["pdf", "docx"]);
+  const pdf = await readArtifact(store, result.files[0].exportUri), word = await readArtifact(store, result.files[1].exportUri);
+  const xml = await (await JSZip.loadAsync(word.data)).file("word/document.xml")!.async("string");
+  const tables = xml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g)!;
+  const internalBreaks = (xml.match(/<w:pageBreakBefore\/>/g) ?? []).length;
+  const sections = (xml.match(/<w:sectPr>/g) ?? []).length;
+  assert.equal(sections, members); assert.equal(internalBreaks, members);
+  assert.equal((xml.match(/<w:type w:val="nextPage"\/>/g) ?? []).length, members);
+  assert.equal(internalBreaks + sections, pdfPageCount(pdf.data));
+  assert.equal(tables.length, result.totalPages); assert.equal(result.totalPages, pdfPageCount(pdf.data));
+  assert.ok(result.files.every(f => f.pages === result.totalPages));
+  assert.equal((xml.match(/<w:bookmarkStart /g) ?? []).length, members);
+  const plain = xml.replace(/<[^>]+>/g, ""); let previous = -1;
+  for (const [i, answer] of answers.entries()) {
+    const marker = `MemberUnique${i + 1}`;
+    assert.equal(plain.split(marker).length - 1, 1); assert.ok(plain.indexOf(marker) > previous); previous = plain.indexOf(marker);
+    assert.ok(tables[i * 2].includes(marker)); assert.ok(!tables[i * 2 + 1].includes(marker));
+    const single = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["docx"] } }));
+    const singleXml = await (await JSZip.loadAsync((await readArtifact(store, single.files[0].exportUri)).data)).file("word/document.xml")!.async("string");
+    const singleTables = singleXml.match(/<w:tbl>[\s\S]*?<\/w:tbl>/g)!;
+    const stripBookmarks = (value: string) => value.replace(/<w:bookmark(?:Start|End)[^>]*\/>/g, "");
+    assert.deepEqual(tables.slice(i * 2, i * 2 + 2).map(stripBookmarks), singleTables);
+    assert.equal((tables[i * 2].match(/<w:tr>/g) ?? []).length, 22);
+  }
+  const before = await artifactNames(store);
+  const stale = await client.callTool({ name: "export_exam_bundle", arguments: {
+    answers: answers.map((answer, i) => ({ answerId: answer.id, expectedVersion: i === members - 1 ? 2 : 1 })), formats: ["docx", "pdf"] } });
+  assert.equal(stale.isError, true); assert.equal(exportErrors(stale)[0].code, "VERSION_CONFLICT");
+  assert.deepEqual(await artifactNames(store), before);
+}));
+
+test("166 bundle DOCX shares embedded font, paper background and exact page counts with PDF", {
+  skip: !process.env.ESSAY_MCP_PAPER_FONT && "ESSAY_MCP_PAPER_FONT not set",
+}, async () => withClient(async (client, store) => {
+  const answers = [1, 2].map(n => createAnswerDocument({ templateId: "police_information_essay_166", title: `第${n}題`, sections: [{ text: `第${n}題論述。` }] }));
+  for (const answer of answers) await store.saveAnswer(answer);
+  const result = data<Bundle>(await client.callTool({ name: "export_exam_bundle", arguments: { answers: answers.map(a => ({ answerId: a.id, expectedVersion: 1 })) } }));
+  const pdf = await readArtifact(store, result.files[0].exportUri), word = await readArtifact(store, result.files[1].exportUri);
+  const zip = await JSZip.loadAsync(word.data), xml = await zip.file("word/document.xml")!.async("string");
+  assert.equal(result.totalPages, 4); assert.equal(pdfPageCount(pdf.data), 4);
+  assert.equal((xml.match(/<w:tbl>/g) ?? []).length, 4);
+  assert.equal((xml.match(/<w:pageBreakBefore\/>/g) ?? []).length, 2);
+  assert.equal((xml.match(/<w:sectPr>/g) ?? []).length, 2);
+  assert.ok(zip.file("word/fonts/font1.odttf"));
+  assert.match(await zip.file("word/header1.xml")!.async("string"), /behindDoc="1"/);
+  assert.match(await zip.file("word/header2.xml")!.async("string"), /behindDoc="1"/);
 }));

@@ -5,10 +5,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { answerDocumentSchema, MAX_ANSWER_BYTES, type AnswerDocument } from "./domain.js";
+import { answerDocumentSchema, MAX_ANSWER_BYTES, validateExamPlan, type ExamPlan, type AnswerDocument } from "./domain.js";
 import { layoutSections } from "./layout.js";
 import {
-  FileStore, StoreNotFoundError, safeId, exportMimeType, exportArtifactHandlePattern,
+  FileStore, StoreNotFoundError, StoreConflictError, assertExamVersion, safeId, exportMimeType, exportArtifactHandlePattern,
   EXPORT_ARTIFACT_TTL_MS, type DeletedAnswer, type EssayStore, type ExportDetails,
 } from "./storage.js";
 
@@ -16,7 +16,6 @@ export const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export type FirestoreClient = Pick<Firestore, "doc" | "collection" | "runTransaction">;
 export type StorageClient = Pick<Storage, "bucket">;
 
-class StoreConflictError extends Error {}
 export class StoreUnavailableError extends Error {
   constructor(cause?: unknown) {
     // Firestore gRPC statuses: deadline exceeded, resource exhausted, internal, unavailable.
@@ -99,6 +98,51 @@ export class CloudStore implements EssayStore {
     if (!parsed.success) throw new StoreUnavailableError();
     return parsed.data;
   }
+  private examRef(id: string) { return this.options.firestore.doc(this.userPath + "/exams/" + safeId(id)); }
+  private parseExam(value: unknown): ExamPlan {
+    if (!value || (value as { ownerKey?: string }).ownerKey !== this.options.ownerKey) throw new StoreNotFoundError("Exam not found.");
+    try { return validateExamPlan(value as ExamPlan); } catch { throw new StoreUnavailableError(); }
+  }
+  async getExam(id: string): Promise<ExamPlan> {
+    return this.parseExam((await backend(() => this.examRef(id).get(), true)).data());
+  }
+  async listExams(): Promise<ExamPlan[]> {
+    const result = await backend(() => this.options.firestore.collection(this.userPath + "/exams").get());
+    return result.docs.flatMap(doc => {
+      try { return [this.parseExam(doc.data())]; }
+      catch { logStorageFailure("unreadable_exam_plan"); return []; }
+    });
+  }
+  async saveExam(plan: ExamPlan, options: { expectedVersion?: number } = {}): Promise<void> {
+    this.requireWriter();
+    const normalized = JSON.parse(JSON.stringify(validateExamPlan(plan))) as ExamPlan;
+    await backend(() => this.options.firestore.runTransaction(async tx => {
+      const ref = this.examRef(normalized.id);
+      const value = (await tx.get(ref)).data();
+      const current = value ? this.parseExam(value) : undefined;
+      assertExamVersion(current, options.expectedVersion);
+      const keys = Object.entries(normalized.createRequests ?? {}).map(([key, request]) => ({
+        ref: this.options.firestore.doc(this.userPath + "/examCreateKeys/" + key), request,
+      }));
+      for (const key of keys) {
+        const value = (await tx.get(key.ref)).data();
+        if (value && (value.examId !== normalized.id || value.requestHash !== key.request.requestHash))
+          throw new StoreConflictError("IDEMPOTENCY_KEY_REUSED：此 key 已用於不同的建立請求。", "ESSAY_IDEMPOTENCY_CONFLICT");
+      }
+      for (const key of keys) tx.set(key.ref, { examId: normalized.id, requestHash: key.request.requestHash });
+      tx.set(ref, { ...normalized, version: current ? current.version + 1 : 1,
+        createdAt: current?.createdAt ?? normalized.createdAt, ownerKey: this.options.ownerKey });
+    }));
+  }
+  async deleteExam(id: string, options: { expectedVersion: number }): Promise<void> {
+    this.requireWriter();
+    await backend(() => this.options.firestore.runTransaction(async tx => {
+      const ref = this.examRef(id); const current = this.parseExam((await tx.get(ref)).data());
+      assertExamVersion(current, options.expectedVersion);
+      for (const key of Object.keys(current.createRequests ?? {})) tx.delete(this.options.firestore.doc(this.userPath + "/examCreateKeys/" + key));
+      tx.delete(ref);
+    }));
+  }
   async getAnswer(id: string): Promise<AnswerDocument> {
     const result = await backend(() => this.answerRef(id).get(), true);
     return this.parseAnswer(result.data());
@@ -169,6 +213,17 @@ export class CloudStore implements EssayStore {
         const value = doc.data();
         return value.answerId === answer.id || (Array.isArray(value.relatedAnswerIds) && value.relatedAnswerIds.includes(answer.id));
       });
+      const plans = (await transaction.get(this.options.firestore.collection(this.userPath + "/exams"))).docs;
+      for (const doc of plans) {
+        let plan: ExamPlan;
+        try { plan = this.parseExam(doc.data()); }
+        catch { logStorageFailure("unreadable_exam_plan"); continue; }
+        const { lastBundle, ...rest } = plan;
+        if (plan.questions.some(q => q.answerId === id)) transaction.set(doc.ref, { ...rest,
+          ...(lastBundle && !lastBundle.members.some(m => m.answerId === id) ? { lastBundle } : {}),
+          ownerKey: this.options.ownerKey, version: plan.version + 1, updatedAt: new Date(this.now()).toISOString(),
+          questions: plan.questions.map(q => { const { answerId, ...rest } = q; return answerId === id ? rest : q; }) });
+      }
       for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
       transaction.delete(ref);
       return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
