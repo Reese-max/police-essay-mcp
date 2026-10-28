@@ -1,5 +1,5 @@
 // Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v5.html";
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v11.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
@@ -67,6 +67,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .chip.id { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; color: var(--faint); font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12px; }
     .notice { min-height: 20px; margin: 0 0 12px; color: var(--muted); font-size: 13px; }
     .notice.error { padding: 9px 12px; border-radius: var(--radius-sm); background: var(--bad-soft); color: var(--bad); }
+    .exam-tabs { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin-bottom: 12px; }
+    .exam-tabs[hidden] { display: none; }
+    .exam-tabs button { flex: 0 1 auto; max-width: 100%; padding: 7px 10px; white-space: normal; overflow-wrap: anywhere; gap: 6px; }
+    .exam-tabs button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+    .exam-tabs .tab-status { color: var(--muted); font-size: 12px; }
+    .exam-tabs .tab-status.warning { color: var(--bad); }
     .sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 385px), 1fr)); gap: 16px; align-items: start; }
     .sheet-grid:has(.paper-body) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); }
     .paper { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
@@ -171,6 +177,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       <span class="chip id" id="answer-id">答案：—</span>
     </div>
     <p class="notice" id="notice" role="status"></p>
+    <div class="exam-tabs" id="exam-tabs" role="tablist" aria-label="考試題目" hidden></div>
     <section class="sheet-grid" id="pages" aria-label="申論答題紙畫板">
       <div class="empty">請在對話中要求 Police Essay MCP 建立或載入答案，畫板會在這裡顯示。</div>
     </section>
@@ -287,6 +294,10 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       let renumberArmed = false;
       let renumberArgs = null;
       let snapshotEpoch = 0;
+      let hostOutputEpoch = 0;
+      let latestTabEpoch = 0;
+      let examAnswers = [];
+      const examTabs = byId("exam-tabs");
 
       function noticeFor(answerId, message, isError) {
         if (state?.answer.id === answerId) setNotice(message, isError);
@@ -306,9 +317,44 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         else if (button.dataset.previousText) button.textContent = button.dataset.previousText;
       }
 
-      function extract(value) {
+      function sameAnswer(left, right) {
+        return Boolean(left?.answer?.id && right?.answer?.id) && left.answer.id === right.answer.id && left.answer.version === right.answer.version;
+      }
+
+      function extract(value, hostMeta, initialHost = false) {
         const candidate = value && (value.structuredContent || value.result?.structuredContent || value);
-        return candidate && candidate.answer && candidate.layout ? { ...candidate, readOnly: value?._meta?.readOnly ?? window.openai?.toolResponseMetadata?.readOnly ?? true, paperSvgPages: value?._meta?.paperSvgPages ?? window.openai?.toolResponseMetadata?.paperSvgPages } : null;
+        const directMeta = value?._meta || value?.result?._meta || {};
+        const full = snapshot => snapshot?.answer && Array.isArray(snapshot.layout?.lines);
+        const matches = snapshot => full(snapshot) && sameAnswer(snapshot, candidate);
+        const meta = sameAnswer(hostMeta?.snapshot, candidate) || (initialHost && hostMeta && !hostMeta.snapshot) ? hostMeta : {};
+        const snapshot = matches(directMeta.snapshot) ? directMeta.snapshot : full(candidate) ? candidate : matches(meta.snapshot) ? meta.snapshot : null;
+        if (!snapshot) return null;
+        return { ...candidate, ...snapshot,
+          readOnly: directMeta.readOnly ?? candidate.readOnly ?? (initialHost ? meta.readOnly : undefined)
+            ?? (state?.answer.id === snapshot.answer.id ? state.readOnly : undefined) ?? true,
+          paperSvgPages: directMeta.paperSvgPages ?? candidate.paperSvgPages ?? meta.paperSvgPages };
+      }
+
+      async function showHostOutput(value, fromTab = false, hostMeta, initialHost = false) {
+        const candidate = value && (value.structuredContent || value.result?.structuredContent || value);
+        if (!candidate?.answer?.id) return;
+        const epoch = ++hostOutputEpoch;
+        if (fromTab) latestTabEpoch = epoch;
+        const snapshot = extract(value, hostMeta, initialHost);
+        if (snapshot) { renderSnapshot(snapshot); return; }
+        const shownEpoch = snapshotEpoch;
+        try {
+          const rendered = extract(await callTool("render_answer_sheet", { answerId: candidate.answer.id, responseDetail: "full" }));
+          if (epoch !== hostOutputEpoch || shownEpoch !== snapshotEpoch) {
+            if (fromTab && epoch === latestTabEpoch && shownEpoch !== snapshotEpoch && state?.answer.id !== candidate.answer.id)
+              setNotice("畫板已更新，請再按一次題目分頁。", false);
+            return;
+          }
+          if (!rendered) throw new Error("工具沒有回傳可顯示的答題紙資料。");
+          renderSnapshot(rendered);
+        } catch (error) {
+          if (epoch === hostOutputEpoch && shownEpoch === snapshotEpoch) setNotice(error instanceof Error ? error.message : "重新顯示失敗。", true);
+        }
       }
 
       function request(method, params) {
@@ -456,15 +502,21 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       // on the grid instead, so the view never stays on the version the write replaced.
       // Returns why the render failed, or "" when it did not.
       async function showSaved(answerId, saved) {
+        updateExamAnswer(saved);
+        if (state?.answer.id !== answerId) renderTabs();
         let rendered = null, reason = "";
         try {
-          rendered = extract(await callTool("render_answer_sheet", { answerId }));
+          rendered = extract(await callTool("render_answer_sheet", { answerId, responseDetail: "full" }));
           if (!rendered) reason = "工具沒有回傳可顯示的答題紙資料";
         } catch (error) {
           reason = error instanceof Error ? error.message : "重新顯示失敗";
         }
         // The host may have shown another answer meanwhile; never switch the view back to this one.
-        if (state?.answer.id !== answerId) return reason;
+        if (state?.answer.id !== answerId) {
+          if (rendered) updateExamAnswer(rendered);
+          renderTabs();
+          return reason;
+        }
         const fallback = saved?.answer && saved?.layout ? { ...saved, readOnly: state.readOnly } : null;
         if (rendered || fallback) renderSnapshot(rendered || fallback);
         return reason;
@@ -483,7 +535,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         updateTools();
         try {
           const answerId = args.answerId;
-          const result = await callTool(name, args);
+          const result = await callTool(name, { ...args, responseDetail: "full" });
           const reason = await showSaved(answerId, result?.structuredContent || result?.result?.structuredContent);
           savedNotice(answerId, summaryOf(result), reason);
           return result;
@@ -648,10 +700,65 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         }
       }
 
+      function updateExamAnswer(snapshot) {
+        if (!snapshot?.answer || !Array.isArray(snapshot.layout?.lines)) return;
+        examAnswers = examAnswers.map(answer => answer.answerId === snapshot.answer.id && snapshot.answer.version >= answer.version
+          ? { ...answer, title: snapshot.answer.title, version: snapshot.answer.version,
+              totalLines: snapshot.layout.totalLines, capacity: snapshot.layout.capacity, fits: snapshot.layout.fits,
+              warnings: snapshot.warningCount } : answer);
+      }
+
+      function renderTabs() {
+        const focusedTabId = examTabs.contains(document.activeElement) ? document.activeElement.dataset.answerId : null;
+        const focusedId = examAnswers.some(answer => answer.answerId === focusedTabId) ? focusedTabId : null;
+        examTabs.replaceChildren();
+        examTabs.hidden = !examAnswers.length;
+        pages.removeAttribute("role");
+        pages.removeAttribute("aria-labelledby");
+        updateExamAnswer(state);
+        examAnswers.forEach((answer, index) => {
+          const active = answer.answerId === state.answer.id;
+          const label = "第" + (answer.questionNo ?? index + 1) + "題 " + answer.title;
+          const tab = makeElement("button", "", label + " ");
+          tab.type = "button";
+          tab.id = "exam-tab-" + index;
+          tab.dataset.answerId = answer.answerId;
+          tab.dataset.version = String(answer.version);
+          tab.setAttribute("role", "tab");
+          tab.setAttribute("aria-controls", "pages");
+          tab.setAttribute("aria-selected", String(active));
+          tab.tabIndex = (focusedId ? focusedId === answer.answerId : active) ? 0 : -1;
+          const warning = !answer.fits || answer.warnings > 0;
+          const stats = [answer.totalLines + "/" + answer.capacity + " 行"];
+          if (!answer.fits) stats.push("超出 " + Math.max(0, answer.totalLines - answer.capacity) + " 行");
+          if (answer.warnings > 0) stats.push("警告 " + answer.warnings);
+          tab.append(makeElement("span", "tab-status" + (warning ? " warning" : ""), stats.join("・")));
+          tab.setAttribute("aria-label", label + "，" + stats.join("，"));
+          tab.addEventListener("click", () => {
+            if (state.answer.id !== answer.answerId) showHostOutput({ answer: { id: answer.answerId } }, true);
+          });
+          tab.addEventListener("keydown", event => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            const tabs = [...examTabs.children];
+            const next = tabs[(index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length];
+            tabs.forEach(item => { item.tabIndex = item === next ? 0 : -1; });
+            next.focus();
+          });
+          examTabs.append(tab);
+          if (active) { pages.setAttribute("role", "tabpanel"); pages.setAttribute("aria-labelledby", tab.id); }
+        });
+        if (focusedId) [...examTabs.children].find(tab => tab.dataset.answerId === focusedId)?.focus();
+      }
+
       function renderSnapshot(snapshot) {
         if (state?.answer.id === snapshot.answer.id && snapshot.answer.version < state.answer.version) return;
         editEpoch += 1;
+        snapshot = { ...snapshot, paperSvgPages: snapshot.paperSvgPages ?? (sameAnswer(state, snapshot) ? state.paperSvgPages : undefined) };
         state = snapshot;
+        if (Array.isArray(snapshot.examAnswers)) examAnswers = snapshot.examAnswers;
+        if (!examAnswers.some(answer => answer.answerId === snapshot.answer.id)) examAnswers = [];
+        renderTabs();
         invalidateTools();
         byId("refresh").disabled = false;
         byId("check").disabled = false;
@@ -733,7 +840,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         const answerId = state.answer.id;
         setBusy(button, true);
         try {
-          const result = await callTool("render_answer_sheet", { answerId });
+          const result = await callTool("render_answer_sheet", { answerId, responseDetail: "full" });
           if (state?.answer.id !== answerId) return;
           const snapshot = extract(result);
           if (!snapshot) throw new Error("工具沒有回傳可顯示的答題紙資料。");
@@ -752,7 +859,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         setBusy(button, true);
         try {
           await callTool("check_layout", { answerId });
-          const result = await callTool("render_answer_sheet", { answerId });
+          const result = await callTool("render_answer_sheet", { answerId, responseDetail: "full" });
           if (state?.answer.id !== answerId) return;
           const snapshot = extract(result);
           if (!snapshot) throw new Error("工具沒有回傳最新答案與版面資料。");
@@ -827,7 +934,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         headingInput.disabled = true; textInput.disabled = true; sectionSelect.disabled = true; previewButton.disabled = true;
         setBusy(applyButton, true);
         try {
-          const result = await callTool("replace_text", edit.args);
+          const result = await callTool("replace_text", { ...edit.args, responseDetail: "full" });
           const snapshot = result?.structuredContent || result?.result?.structuredContent;
           if (!snapshot?.answer || !snapshot?.layout) throw new Error("工具沒有回傳更新後的答題紙資料。");
           pendingEdit = null;
@@ -875,8 +982,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
           return;
         }
         if (message.method === "ui/notifications/tool-result") {
-          const snapshot = extract(message.params);
-          if (snapshot) renderSnapshot(snapshot);
+          showHostOutput(message.params);
         }
       });
 
@@ -904,16 +1010,14 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       if (typeof ResizeObserver === "function") new ResizeObserver(() => fitGridLines()).observe(pages);
       updateTools();
       window.addEventListener("openai:set_globals", event => {
-        const snapshot = extract(event.detail?.globals?.toolOutput);
-        if (snapshot) renderSnapshot(snapshot);
+        showHostOutput({ structuredContent: event.detail?.globals?.toolOutput }, false, event.detail?.globals?.toolResponseMetadata);
       });
       if (!window.openai?.callTool && window.parent !== window) {
         request("ui/initialize", { appInfo: { name: "police-essay-answer-sheet", version: "0.1.0" }, appCapabilities: {}, protocolVersion: "2026-01-26" })
           .then(() => window.parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, hostOrigin || "*"))
           .catch(error => setNotice(error.message, true));
       }
-      const initial = extract(window.openai?.toolOutput);
-      if (initial) renderSnapshot(initial);
+      showHostOutput(window.openai?.toolOutput, false, window.openai?.toolResponseMetadata, true);
     })();
   </script>
 </body>

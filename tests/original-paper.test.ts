@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { templateSchema, createAnswerDocument } from '../src/domain.js';
 import { layoutSections } from '../src/layout.js';
-import { originalPaper, originalPaperImage, wrapOriginalPaper } from '../src/original-paper.js';
+import { originalPaper, originalPaperImage, wrapOriginalPaper, originalPaperMeasure, originalPaperAvailableWidth } from '../src/original-paper.js';
+import { layoutWarnings } from '../src/planning.js';
 import { exportDocx, exportPdf } from '../src/exporters.js';
 const template = templateSchema.parse(JSON.parse(readFileSync(new URL('../templates/police_information_essay_166.json', import.meta.url), 'utf8')));
 const format = { firstLineIndent:0, leftIndent:0, rightIndent:0, alignment:'left' as const, spaceBeforeLines:0, spaceAfterLines:0, tabSize:4, bold:false, italic:false };
@@ -27,12 +28,85 @@ test('166 measured wrapping preserves mixed text, punctuation and all characters
  assert.throws(()=>wrapOriginalPaper(text,{...format,bold:true},template),/關閉粗體/);
  assert.throws(()=>wrapOriginalPaper(text,format,{...template,pages:3}),/維持標準設定/);
 });
+
+test('166 whole Latin words use measured next-line width and preserve punctuation carry', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {
+ let foundWord = false, foundPunctuation = false, foundSpace = false;
+ for (let count = 0; count < 50; count++) {
+  const text = '前'.repeat(count) + ' Zero Trust Redundancy，完成。';
+  const off = wrapOriginalPaper(text,format,template);
+  const on = wrapOriginalPaper(text,format,template,{wholeLatinWords:true});
+  assert.equal(off.join(''),text); assert.equal(on.join(''),text);
+  if (!off.some(line=>line.includes('Redundancy'))) {
+   foundWord = true; assert.ok(on.some(line=>line.includes('Redundancy')));
+  }
+  const punct = '前'.repeat(count) + 'Redundancy。';
+  const punctOff = wrapOriginalPaper(punct,format,template);
+  const punctOn = wrapOriginalPaper(punct,format,template,{wholeLatinWords:true});
+  assert.equal(punctOn.join(''),punct); assert.ok(punctOn.every(line=>line!=='。'));
+  if (punctOff.some((line,index)=>/[A-Za-z]$/.test(line) && /^[A-Za-z]/.test(punctOff[index+1]??''))) {
+   foundPunctuation = true; assert.ok(punctOn.some(line=>line.includes('Redundancy')));
+  }
+  const spaced = 'W'.repeat(count) + ' Hello';
+  const spacedOff = wrapOriginalPaper(spaced,format,template);
+  if (spacedOff.length===2 && (spacedOff[0].endsWith(' ') || spacedOff[1].startsWith(' '))) {
+   foundSpace = true; assert.deepEqual(wrapOriginalPaper(spaced,format,template,{wholeLatinWords:true}),spacedOff);
+  }
+ }
+ assert.ok(foundWord); assert.ok(foundPunctuation); assert.ok(foundSpace);
+ const long = 'W'.repeat(200);
+ const off = wrapOriginalPaper(long,format,template), on = wrapOriginalPaper(long,format,template,{wholeLatinWords:true});
+ assert.ok(on.length>1); assert.equal(on.join(''),long); assert.deepEqual(on,off);
+});
 test('166 exports reject 45 lines even when an overflow override is requested', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {
  const answer=createAnswerDocument({templateId:template.id,title:'測試',sections:[{text:Array(45).fill('甲').join('\n')}]});
  const report=layoutSections(template,answer.sections);
  assert.equal(report.totalLines,45);assert.equal(report.fits,false);
  await assert.rejects(exportDocx(report,template,'unused.docx',true),/兩頁44行/);
  await assert.rejects(exportPdf(report,template,'unused.pdf'),/兩頁44行/);
+});
+
+test('166 full-run lookahead avoids oversized and whitespace-only moves, including punctuation carry', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {
+ const measure=originalPaperMeasure(template), available=originalPaperAvailableWidth(format,template);
+ let count=1;
+ while(measure('W'.repeat(count+1))<=available) count++;
+ const word='W'.repeat(count);
+ for(const text of ['ab '+'W'.repeat(count+5),'  '+word,'ab '+word+'。']) {
+  const off=wrapOriginalPaper(text,format,template), on=wrapOriginalPaper(text,format,template,{wholeLatinWords:true});
+  assert.deepEqual(on,off,text); assert.equal(on.join(''),text);
+  assert.ok(on.every((line,index)=>measure(line)<=originalPaperAvailableWidth(format,template,index)));
+ }
+ assert.deepEqual(wrapOriginalPaper('ab '+word,format,template,{wholeLatinWords:true}),['ab ',word]);
+ let punctCount=count;
+ while(measure('W'.repeat(punctCount)+'。')>available) punctCount--;
+ const punctWord='W'.repeat(punctCount);
+ const following='前前 '+punctWord+'。'+'Z'.repeat(count+5);
+ const followingLines=wrapOriginalPaper(following,format,template,{wholeLatinWords:true});
+ assert.equal(followingLines.join(''),following);
+ assert.ok(followingLines.some(line=>line.includes(punctWord+'。')),'the next word after punctuation is a separate run');
+ // Width checks must honor the next line's left/right indents as well.
+ const indented={...format,leftIndent:4,rightIndent:3,firstLineIndent:2};
+ const long='ab '+'W'.repeat(count);
+ assert.deepEqual(wrapOriginalPaper(long,indented,template,{wholeLatinWords:true}),wrapOriginalPaper(long,indented,template));
+});
+
+test('166 split warnings use full-run font widths and non-first-line available width', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {
+ const measure=originalPaperMeasure(template);
+ for(const character of ['W','i','1']) {
+  const indented={...format,leftIndent:2,rightIndent:3,firstLineIndent:4};
+  const available=originalPaperAvailableWidth(indented,template);
+  let count=1;
+  while(measure(character.repeat(count+1))<=available) count++;
+  for(const [length,expected] of [[count,/wholeLatinWords=true/],[count*3,/長於一行/]] as const) {
+   const text='前 '+character.repeat(length);
+   const answer=createAnswerDocument({templateId:template.id,title:'量測',sections:[{text,paragraphFormat:indented}]});
+   const report=layoutSections(template,answer.sections);
+   assert.equal(report.lines.map(line=>line.text).join(''),text);
+   const warnings=layoutWarnings(report,template);
+   assert.ok(warnings.length>0);
+   assert.ok(warnings.every(warning=>expected.test(warning.message)),`${character} x ${length}`);
+   assert.ok(warnings.every(warning=>/不阻擋匯出/.test(warning.message)));
+  }
+ }
 });
 
 test('166 asset does not appear as a template and invalid formatting does not persist', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {

@@ -36,6 +36,7 @@ export function safeId(id: string): string {
 
 export interface ExportDetails {
   answerId: string;
+  relatedAnswerIds?: string[];
   answerVersion: number;
   format: ExportFormat;
   temporaryDir?: string;
@@ -64,6 +65,7 @@ export interface EssayStore {
   createExportHandle(outputPath: string, details: ExportDetails): Promise<{
     handle: string; name: string; mimeType: string; expiresAt: string;
   }>;
+  deleteExport(handle: string): Promise<void>;
   readExport(handle: string): Promise<{
     name: string; mimeType: string; answerId: string; answerVersion: number;
     format: ExportFormat; expiresAt: string; data: Buffer;
@@ -159,7 +161,7 @@ export class FileStore implements EssayStore {
     const answerId = safeId(normalized.id);
     // Reject formatting that cannot be laid out before writing the answer or its history.
     // Overflow is still saved so the caller can preview and revise the answer.
-    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
+    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections, normalized.layoutOptions);
     await this.withAnswerWriteLock(answerId, async () => {
       const filename = path.join(this.answerDir, `${answerId}.json`);
       let current: AnswerDocument | undefined;
@@ -256,7 +258,7 @@ export class FileStore implements EssayStore {
         } catch {
           continue;
         }
-        if (!isExportArtifactManifest(value, handle) || value.answerId !== id) continue;
+        if (!isExportArtifactManifest(value, handle) || (value.answerId !== id && !value.relatedAnswerIds?.includes(id))) continue;
         // Bytes first, manifest second: a failure leaves the manifest for a retry to find.
         await fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true });
         await fs.rm(path.join(this.artifactDir, name), { force: true });
@@ -346,6 +348,7 @@ export class FileStore implements EssayStore {
       artifactFilename,
       name,
       answerId: safeId(details.answerId),
+      ...(details.relatedAnswerIds ? { relatedAnswerIds: answerDocumentSchema.shape.id.array().max(20).parse(details.relatedAnswerIds) } : {}),
       answerVersion: details.answerVersion,
       format: details.format,
       createdAt,
@@ -396,7 +399,7 @@ export class FileStore implements EssayStore {
         throw new StoreNotFoundError("Export artifact not found.");
       }
       // Never serve bytes of an answer that has been deleted.
-      await this.getAnswer(value.answerId);
+      for (const id of new Set([value.answerId, ...value.relatedAnswerIds ?? []])) await this.getAnswer(id);
 
       const artifactRoot = path.resolve(this.artifactDir);
       const artifactPath = path.resolve(artifactRoot, value.artifactFilename);
@@ -421,6 +424,18 @@ export class FileStore implements EssayStore {
     }
   }
 
+  async deleteExport(handle: string): Promise<void> {
+    if (!exportArtifactHandlePattern.test(handle)) throw new StoreNotFoundError("Export artifact not found.");
+    const manifestPath = path.join(this.artifactDir, `${handle}.json`);
+    let value: unknown;
+    try { value = JSON.parse(await fs.readFile(manifestPath, "utf8")); }
+    catch (error) { if (isStoreNotFound(error)) return; throw error; }
+    if (!isExportArtifactManifest(value, handle)) throw new StoreNotFoundError("Export artifact not found.");
+    // Bytes first leaves the manifest available if cleanup must be retried.
+    await fs.rm(path.join(this.artifactDir, value.artifactFilename), { force: true });
+    await fs.rm(manifestPath, { force: true });
+  }
+
 }
 
 export const EXPORT_ARTIFACT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -433,6 +448,7 @@ interface ExportArtifactManifest {
   artifactFilename: string;
   name: string;
   answerId: string;
+  relatedAnswerIds?: string[];
   answerVersion: number;
   format: ExportFormat;
   createdAt: number;
@@ -459,6 +475,8 @@ function isExportArtifactManifest(value: unknown, handle: string): value is Expo
     && manifest.name.endsWith(`.${format}`)
     && typeof manifest.answerId === "string"
     && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(manifest.answerId)
+    && (manifest.relatedAnswerIds === undefined || (Array.isArray(manifest.relatedAnswerIds) && manifest.relatedAnswerIds.length <= 20
+      && manifest.relatedAnswerIds.every(id => typeof id === "string" && /^ans_[A-Za-z0-9-]+$/.test(id))))
     && typeof manifest.answerVersion === "number"
     && Number.isSafeInteger(manifest.answerVersion)
     && manifest.answerVersion > 0

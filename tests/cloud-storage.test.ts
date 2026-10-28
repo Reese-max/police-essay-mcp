@@ -172,7 +172,7 @@ test("owner isolation and reader artifact denial happen before any GCS download"
   assert.equal(s.storage.downloads, 0);
   const reader = await connect(s.store(), true);
   try {
-    assert.equal((await reader.listTools()).tools.length, 9);
+    assert.equal((await reader.listTools()).tools.length, 10);
     await assert.rejects(reader.readResource({ uri: "essay://exports/" + exported.handle }));
     assert.equal((await reader.callTool({ name: "export_text", arguments: { answerId: doc.id } })).isError, true);
     assert.equal(s.storage.downloads, 0);
@@ -275,14 +275,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 27, reader 9", async () => {
+test("cloud and file expose the same tool contracts: owner 30, reader 10", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 9 : 27);
+      assert.equal(baseline.tools.length, readOnly ? 10 : 30);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());
@@ -398,4 +398,127 @@ test("GCS lost save response plus 412 is idempotent only for matching pinned byt
       assert.equal([...s.firestore.documents.keys()].filter(p => p.includes("/artifacts/")).length, 0);
     }
   }
+});
+
+test("cloud exam bundle stores one immutable artifact with its first pinned version and all member ids", async () => {
+  const s = setup();
+  const docs = [answer("first"), answer("second")];
+  for (const doc of docs) await s.store().saveAnswer(doc);
+  const client = await connect(s.store());
+  try {
+    const result = await client.callTool({ name: "export_exam_bundle", arguments: {
+      answers: docs.map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["txt"],
+    } });
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    const bundle = result.structuredContent as { files: Array<{ exportUri: string; pages: number }>; totalPages: number };
+    assert.equal(bundle.files.length, 1); assert.equal(bundle.totalPages, 4);
+    const artifact = await s.store().readExport(bundle.files[0].exportUri.split("/").at(-1)!);
+    assert.equal(artifact.answerId, docs[0].id); assert.equal(artifact.answerVersion, 1);
+    assert.equal(artifact.data.toString("utf8").split("\f").length, 4);
+    const uploads = s.storage.uploads;
+    const stale = await client.callTool({ name: "export_exam_bundle", arguments: {
+      answers: [{ answerId: docs[0].id, expectedVersion: 2 }], formats: ["txt"],
+    } });
+    assert.equal(stale.isError, true); assert.match(JSON.stringify(stale.content), /VERSION_CONFLICT/);
+    assert.equal(s.storage.uploads, uploads);
+  } finally { await client.close(); }
+});
+
+test("cloud Round A idempotent creates race safely, batch retries replay, and owners remain isolated", async () => {
+  const s = setup(); const store = s.store(); const client = await connect(store);
+  try {
+    const args = { title: "重送", idempotencyKey: "cloud_race_01", sections: [{ id: "body", text: "正文" }] };
+    const results = await Promise.all([1, 2].map(() => client.callTool({ name: "create_answer", arguments: args })));
+    for (const result of results) assert.equal(result.isError, undefined, JSON.stringify(result));
+    const docs = results.map(result => result.structuredContent as { answer: AnswerDocument; replayed?: boolean });
+    assert.equal(docs[0].answer.id, docs[1].answer.id); assert.equal(docs.filter(doc => doc.replayed).length, 1);
+    assert.equal((await store.listAnswers()).length, 1); assert.equal((await store.listRevisions(docs[0].answer.id, { limit: 10 })).length, 1);
+    const reused = await client.callTool({ name: "create_answer", arguments: { ...args, title: "不同" } });
+    assert.equal(reused.isError, true); assert.match(JSON.stringify(reused.content), /IDEMPOTENCY_KEY_REUSED/);
+    const other = await connect(s.store("b".repeat(64)));
+    try {
+      const own = await other.callTool({ name: "create_answer", arguments: { ...args, title: "另一擁有者" } });
+      assert.equal(own.isError, undefined); assert.equal((own.structuredContent as { answer: AnswerDocument }).answer.id, docs[0].answer.id);
+      assert.equal((await store.getAnswer(docs[0].answer.id)).title, args.title);
+    } finally { await other.close(); }
+    const answers = [1, 2, 3].map(index => ({ title: `批次${index}`, idempotencyKey: `cloud_batch_${index}`, sections: [{ text: "文" }] }));
+    const first = await client.callTool({ name: "create_answers", arguments: { answers } });
+    assert.equal(first.isError, undefined);
+    const repeated = await client.callTool({ name: "create_answers", arguments: { answers } });
+    assert.equal(repeated.isError, undefined);
+    const replayed = (repeated.structuredContent as { answers: Array<{ index: number; version: number; replayed: boolean }> }).answers;
+    assert.deepEqual(replayed.map(item => item.index), [1, 2, 3]); assert.ok(replayed.every(item => item.replayed && item.version === 1));
+    assert.equal((await store.listAnswers()).length, 4);
+  } finally { await client.close(); }
+});
+
+test("cloud Round A bundle deletion follows any member and keeps unrelated and legacy manifests", async () => {
+  const s = setup(); const store = s.store(); const client = await connect(store);
+  const [a, b, c] = [answer("甲"), answer("乙"), answer("丙")];
+  for (const doc of [a, b, c]) await store.saveAnswer(doc);
+  try {
+    const result = await client.callTool({ name: "export_exam_bundle", arguments: {
+      answers: [a, b].map(doc => ({ answerId: doc.id, expectedVersion: 1 })), formats: ["txt"] } });
+    assert.equal(result.isError, undefined);
+    const handle = (result.structuredContent as { files: Array<{ exportUri: string }> }).files[0].exportUri.split("/").at(-1)!;
+    const manifest = [...s.firestore.documents.values()].find(item => item.value.handle === handle)!.value;
+    assert.deepEqual(manifest.relatedAnswerIds, [a.id, b.id]);
+    assert.equal((await store.deleteAnswer(c.id, { expectedVersion: 1 })).exports, 0); await store.readExport(handle);
+    const deleted = await client.callTool({ name: "delete_answer", arguments: { answerId: b.id, expectedVersion: 1 } });
+    assert.equal(deleted.isError, undefined); assert.equal((deleted.structuredContent as { deletedExports: number }).deletedExports, 1);
+    await assert.rejects(store.readExport(handle), isStoreNotFound);
+    assert.equal(s.storage.objects.size, 0); assert.ok(![...s.firestore.documents.keys()].some(key => key.includes("/artifacts/")));
+    const legacy = await artifact(s, a);
+    const old = [...s.firestore.documents.values()].find(item => item.value.handle === legacy.handle)!.value;
+    assert.equal(Object.hasOwn(old, "relatedAnswerIds"), false); await store.readExport(legacy.handle);
+    await s.store("b".repeat(64)).deleteExport(legacy.handle); await store.readExport(legacy.handle);
+    await assert.rejects(s.store(ownerKey, true).deleteExport(legacy.handle), /Read credential/);
+    const originalOwner = old.ownerKey; old.ownerKey = "b".repeat(64);
+    await assert.rejects(store.deleteExport(legacy.handle), isStoreNotFound); assert.equal(s.storage.objects.size, 1);
+    old.ownerKey = originalOwner;
+    const originalName = old.objectName; old.objectName = "production/another-owner/file.txt";
+    await assert.rejects(store.deleteExport(legacy.handle), isStoreNotFound); assert.equal(s.storage.objects.size, 1);
+    old.objectName = originalName;
+    await store.deleteExport(legacy.handle); await store.deleteExport(legacy.handle);
+    assert.equal(s.storage.objects.size, 0); assert.ok(![...s.firestore.documents.keys()].some(key => key.includes("/artifacts/")));
+  } finally { await client.close(); }
+});
+
+test("cloud Round A rolls back earlier handles when the second format handle fails, naming rollback orphans", async () => {
+  const s = setup(); const store = s.store(); const doc = answer("回收"); await store.saveAnswer(doc);
+  const client = await connect(store); const create = store.createExportHandle.bind(store);
+  try {
+    for (const failRollback of [false, true]) {
+      let calls = 0, orphan = "";
+      store.createExportHandle = async (...args) => {
+        if (++calls === 2) throw new Error("second handle failed");
+        const result = await create(...args); orphan = result.handle; return result;
+      };
+      s.storage.failDelete = failRollback;
+      const result = await client.callTool({ name: "export_exam_bundle", arguments: {
+        answers: [{ answerId: doc.id, expectedVersion: 1 }], formats: ["pdf", "txt"] } });
+      assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /合輯 txt.*second handle failed/);
+      if (failRollback) {
+        assert.ok(JSON.stringify(result.content).includes(orphan)); assert.equal(s.storage.objects.size, 1);
+        assert.ok([...s.firestore.documents.keys()].some(key => key.endsWith("/artifacts/" + orphan)));
+        s.storage.failDelete = false; await store.deleteExport(orphan);
+      }
+      assert.equal(s.storage.objects.size, 0); assert.ok(![...s.firestore.documents.keys()].some(key => key.includes("/artifacts/")));
+    }
+  } finally { await client.close(); }
+});
+
+test("cloud batch document limit preflight rejects item 2 before saving item 1", async () => {
+  const s = setup(), client = await connect(s.store());
+  try {
+    const result = await client.callTool({ name: "create_answers", arguments: { answers: [
+      { title: "可建立", idempotencyKey: "size_batch_01", sections: [{ text: "正文" }] },
+      { title: "超過文件上限", idempotencyKey: "size_batch_02", sections: Array.from({ length: 2 }, (_, index) => ({ id: `large_${index}`, text: "字".repeat(60000) })) },
+    ] } });
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result.content), /第 2 項 INVALID_INPUT：.*700 KiB/);
+    assert.equal(s.firestore.documents.size, 0);
+    assert.equal((await s.store().listAnswers()).length, 0);
+    assert.equal(s.storage.uploads, 0);
+  } finally { await client.close(); }
 });

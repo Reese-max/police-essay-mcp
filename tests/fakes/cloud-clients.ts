@@ -71,6 +71,7 @@ export class MemoryFirestore {
       create: async (value: Data) => {
         await this.commit([], [{ path, value, create: true }]);
       },
+      delete: async () => { await this.commit([], [{ path, value: {}, create: false, delete: true }]); },
       collection: (name: string) => this.collection(path + "/" + name),
     };
   }

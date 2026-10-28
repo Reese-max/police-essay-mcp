@@ -1,11 +1,11 @@
 import { createHash, createPublicKey, verify, type JsonWebKey } from "node:crypto";
 
 export const OAUTH_SCOPES = ["essay.read", "essay.write", "essay.export"] as const;
-export const WRITE_TOOLS = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "delete_answer",
+export const WRITE_TOOLS = ["create_answer", "create_answers", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "delete_answer",
   "edit_text", "restore_revision", "move_section", "renumber_items", "set_line_targets", "update_answer_info", "duplicate_answer"] as const;
-export const EXPORT_TOOLS = ["export_docx", "export_pdf", "export_text", "export_answer"] as const;
+export const EXPORT_TOOLS = ["export_docx", "export_pdf", "export_text", "export_answer", "export_exam_bundle"] as const;
 export const READ_TOOLS = ["list_templates", "load_exam_paper", "list_answers", "read_answer",
-  "reflow_answer", "check_layout", "render_answer_sheet", "preview_change", "list_revisions"] as const;
+  "reflow_answer", "check_layout", "render_answer_sheet", "render_exam_overview", "preview_change", "list_revisions"] as const;
 export function toolScope(name: string): string {
   return (READ_TOOLS as readonly string[]).includes(name) ? "essay.read"
     : (EXPORT_TOOLS as readonly string[]).includes(name) ? "essay.export" : "essay.write";
