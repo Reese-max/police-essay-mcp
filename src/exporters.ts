@@ -1,4 +1,4 @@
-import { promises as fs, createWriteStream, existsSync } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {
@@ -62,7 +62,7 @@ export function embeddedFontTable(document: Document, fontFamily: string, altNam
     + `<w:embedRegular r:id="rId1" w:fontKey="{${fontKey}}" w:subsetted="1"/></w:font></w:fonts>` }];
 }
 
-function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
+export function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
   if (template.paperProfile) {
     validateOriginalPaper(template);
     if (!report.fits || allowOverflow) throw new Error("166 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
@@ -337,6 +337,7 @@ function drawPdfPage(
   regularFont: unknown,
   boldFont: unknown,
   italicFont: unknown,
+  regularFace: unknown = regularFont,
 ): void {
   const metrics = gridMetrics(template);
   const left = metrics.leftPt;
@@ -368,7 +369,7 @@ function drawPdfPage(
     const indent = lineIndentColumns(line);
     const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
     const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
-    const y = template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    const y = template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFace as { ascent: number; unitsPerEm: number }).ascent / (regularFace as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
     if (template.paperProfile) {
       // This profile is measured with the actual font and forbids tabs/alignment changes.
       document.text(line.text, x, y, { lineBreak: false });
@@ -384,72 +385,104 @@ export async function exportPdf(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
-  const pages = outputPageCount(report, template, allowOverflow);
-  let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
-  let boldFontPath = findPdfFont(true);
-  let italicFontPath = findPdfItalicFont();
-  let regularFont: unknown;
-  let boldFont: unknown;
-  let italicFont: unknown;
+  return exportPdfBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+export interface ExportPages {
+  report: LayoutReport;
+  template: AnswerTemplate;
+  bookmark?: string;
+}
+
+/** Single answers and bundles use the same fonts and page drawing. */
+export async function exportPdfBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+  : Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
   const document = new PDFDocument({ autoFirstPage: false, size: "A4", margin: 0 });
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-
-  const result = new Promise<void>((resolve, reject) => {
-    const stream = createWriteStream(outputPath);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-    document.pipe(stream);
+  // ponytail: buffer one PDF in memory; stream if large overflow bundles need it.
+  const chunks: Buffer[] = [];
+  const result = new Promise<Buffer>((resolve, reject) => {
+    document.on("data", (chunk: Buffer) => chunks.push(chunk));
+    document.on("end", () => resolve(Buffer.concat(chunks)));
+    document.on("error", reject);
   });
-
-  if (fontPath) {
-    try {
-      regularFont = openPdfFont(fontPath, preferredCjkTcFace(fontPath));
-      document.font(regularFont as never);
-    } catch {
-      if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
-      fontPath = undefined;
-      document.font("Helvetica");
+  const allWarnings = new Set<string>();
+  const fonts = new Set<string>();
+  const openedFonts = new Map<string, unknown>();
+  const bundleFont = (fontPath: string, preferredFace?: string) => {
+    const key = `${fontPath}#${preferredFace ?? ""}`;
+    if (!openedFonts.has(key)) {
+      const face = openPdfFont(fontPath, preferredFace);
+      document.registerFont(key, face as never);
+      openedFonts.set(key, face);
     }
-  } else {
-    document.font("Helvetica");
-  }
-
-  if (boldFontPath) {
-    try {
-      boldFont = openPdfFont(boldFontPath, preferredCjkTcFace(boldFontPath));
-    } catch {
-      boldFontPath = undefined;
-    }
-  }
-
-  if (italicFontPath) {
-    try {
-      italicFont = openPdfFont(italicFontPath);
-    } catch {
-      italicFontPath = undefined;
-    }
-  }
-
-  for (let page = 1; page <= pages; page += 1) {
-    document.addPage({ size: "A4", margin: 0 });
-    drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont);
-  }
-  document.end();
-  await result;
-
-  const warnings: string[] = [];
-  if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
-  if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
-  if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
-    warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
-  }
-  return {
-    path: outputPath,
-    pages,
-    format: "pdf",
-    font: fontPath ?? "Helvetica",
-    ...(warnings.length ? { fontWarning: warnings.join(" ") } : {}),
+    return { key, face: openedFonts.get(key) };
   };
+  try {
+    for (const [index, { report, template, bookmark }] of entries.entries()) {
+      let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
+      let boldFontPath = findPdfFont(true);
+      let italicFontPath = findPdfItalicFont();
+      let regularFont: unknown;
+      let regularFace: unknown;
+      let boldFont: unknown;
+      let italicFont: unknown;
+      if (fontPath) {
+        try {
+          const font = bundleFont(fontPath, preferredCjkTcFace(fontPath));
+          regularFont = font.key;
+          regularFace = font.face;
+          document.font(regularFont as never);
+        } catch {
+          if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
+          fontPath = undefined;
+          document.font("Helvetica");
+        }
+      } else {
+        document.font("Helvetica");
+      }
+
+      if (boldFontPath) {
+        try {
+          boldFont = bundleFont(boldFontPath, preferredCjkTcFace(boldFontPath)).key;
+        } catch {
+          boldFontPath = undefined;
+        }
+      }
+
+      if (italicFontPath) {
+        try {
+          italicFont = bundleFont(italicFontPath).key;
+        } catch {
+          italicFontPath = undefined;
+        }
+      }
+
+      for (let page = 1; page <= counts[index]; page += 1) {
+        document.addPage({ size: "A4", margin: 0 });
+        if (page === 1 && bookmark) document.outline.addItem(bookmark);
+        drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont, regularFace);
+      }
+      const warnings: string[] = [];
+      if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
+      if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
+      if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
+        warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
+      }
+      warnings.forEach((warning) => allWarnings.add(warning));
+      fonts.add(fontPath ?? "Helvetica");
+    }
+    document.end();
+    await result;
+  } catch (error) {
+    document.end();
+    await result.catch(() => undefined);
+    throw error;
+  }
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, await result);
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "pdf", font: [...fonts].join(", "),
+    ...(allWarnings.size ? { fontWarning: [...allWarnings].join(" ") } : {}) };
 }
 
 export async function exportText(
@@ -458,15 +491,45 @@ export async function exportText(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "txt" }> {
-  const pages = outputPageCount(report, template, allowOverflow);
-  const pageTexts = Array.from({ length: pages }, (_, pageIndex) => {
+  return exportTextBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+export async function exportTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+  : Promise<{ path: string; pages: number; format: "txt" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const pageTexts = entries.flatMap(({ report, template }, index) => Array.from({ length: counts[index] }, (_, pageIndex) => {
     const lines = pageLines(report, pageIndex + 1).map((line) => renderTextLine(line, template));
     while (lines.length < template.linesPerPage) lines.push("");
     return lines.join("\n");
-  });
+  }));
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, `${pageTexts.join("\n\f\n")}\n`, "utf8");
-  return { path: outputPath, pages, format: "txt" };
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "txt" };
+}
+
+export async function exportParagraphTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false)
+  : Promise<{ path: string; pages: number; format: "txt" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const texts = entries.map(({ report, bookmark }) => {
+    const sections: string[][] = [];
+    let sectionId: string | undefined, paragraphIndex = -1, isHeading = false;
+    for (const line of report.lines) {
+      if (line.isSpacer) continue;
+      if (line.sectionId !== sectionId) {
+        sections.push([]); sectionId = line.sectionId; paragraphIndex = -1;
+      }
+      const paragraphs = sections.at(-1)!;
+      if (line.paragraphIndex !== paragraphIndex || line.isHeading !== isHeading) paragraphs.push("");
+      paragraphs[paragraphs.length - 1] += line.text;
+      paragraphIndex = line.paragraphIndex; isHeading = line.isHeading;
+    }
+    const text = sections.map(section => section.join("\n")).join("\n\n");
+    return (bookmark ? `${bookmark}\n\n` : "") + text;
+  });
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, texts.join("\n\n") + "\n", "utf8");
+  // pages remains the paper page count of the content, including in paragraphs mode.
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "txt" };
 }
 
 

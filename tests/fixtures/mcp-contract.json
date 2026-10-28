@@ -29303,6 +29303,30 @@
   },
   "intentionalDifferences": [
     {
+      "path": "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
+      "reason": "Optional version binding for legacy exports; strip only expectedVersion before base comparison."
+    },
+    {
+      "path": "*.tools[render_exam_overview]",
+      "reason": "New essay.read canvas tool opens ordered answers in one widget with question tabs and a selected full snapshot."
+    },
+    {
+      "path": "owner.tools[create_answers]",
+      "reason": "New essay.write batch create tool validates all items before saving and shares retry-safe create semantics."
+    },
+    {
+      "path": "*.tools[read_answer]._meta",
+      "reason": "Data reads no longer open the widget. Remove only base read_answer metadata before comparison; current read_answer must have no UI resourceUri or outputTemplate."
+    },
+    {
+      "path": "owner.tools[export_exam_bundle]",
+      "reason": "New essay.export tool combines ordered, version-pinned answers into one PDF or TXT, with page ranges and layout warnings."
+    },
+    {
+      "path": "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
+      "reason": "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison."
+    },
+    {
       "path": "oauth.tools[*]._meta.securitySchemes",
       "reason": "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base."
     },
@@ -29339,7 +29363,7 @@
       "reason": "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments."
     },
     {
-      "path": "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
+      "path": "*.tools[load_exam_paper,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
       "reason": "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing."
     },
     {

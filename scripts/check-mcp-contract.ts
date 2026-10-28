@@ -10,7 +10,19 @@ import { FileStore } from "../src/storage.js";
 import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
 import { toolScope } from "../src/oauth.js";
 
-export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySchemes",
+export const INTENTIONAL_DIFFERENCES = [{ path: "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
+  reason: "Optional version binding for legacy exports; strip only expectedVersion before base comparison." },
+{ path: "*.tools[render_exam_overview]",
+  reason: "New essay.read canvas tool opens ordered answers in one widget with question tabs and a selected full snapshot." },
+{ path: "owner.tools[create_answers]",
+  reason: "New essay.write batch create tool validates all items before saving and shares retry-safe create semantics." },
+{ path: "*.tools[read_answer]._meta",
+  reason: "Data reads no longer open the widget. Remove only base read_answer metadata before comparison; current read_answer must have no UI resourceUri or outputTemplate." },
+{ path: "owner.tools[export_exam_bundle]",
+  reason: "New essay.export tool combines ordered, version-pinned answers into one PDF or TXT, with page ranges and layout warnings." },
+{ path: "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
+  reason: "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison." },
+{ path: "oauth.tools[*]._meta.securitySchemes",
   reason: "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base." },
 { path: "*.tools[*].outputSchema",
   reason: "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema." },
@@ -28,17 +40,17 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "oauth.tools[*]._meta.securitySc
   reason: "Loosened so check_layout can also return each section's lines against its target (sections, notes)." },
 { path: "*.tools[preview_delete_text,preview_format_section,preview_insert_text,preview_replace_text,preview_write_answer]",
   reason: "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments." },
-{ path: "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
+{ path: "*.tools[load_exam_paper,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
   reason: "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing." },
 { path: "*.tools[*].inputSchema,*.tools[*].outputSchema,*.prompts[*].argsSchema: paragraph format and heading style fields",
   reason: "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing." },
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["delete_answer", "duplicate_answer", "edit_text", "export_answer", "list_revisions", "move_section",
-  "preview_change", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
+export const ADDED_TOOLS = ["create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
+  "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
-export const ADDED_READ_TOOLS = ["list_revisions", "preview_change"];
+export const ADDED_READ_TOOLS = ["list_revisions", "preview_change", "render_exam_overview"];
 /** Base tools that no longer exist; all of them were read-only. */
 export const REMOVED_TOOLS = ["preview_delete_text", "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer"];
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
@@ -93,6 +105,37 @@ function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T): T {
 }
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
   return { ...view, tools: view.tools.filter(tool => !drop.includes(tool.name)).map(({ outputSchema: _output, ...tool }) => tool) };
+}
+/** Remove only declared optional additions; every remaining base input stays strictly compared. */
+export function withoutAddedInputs<T extends { tools: ContractTool[] }>(view: T): T {
+  const writeTools = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "render_answer_sheet", "export_docx", "export_pdf", "export_text"];
+  return { ...view, tools: view.tools.map(tool => {
+    if (!writeTools.includes(tool.name)) return tool;
+    const input = tool.inputSchema as JsonSchema;
+    const properties = { ...input.properties as JsonSchema };
+    const added = tool.name.startsWith("export_") ? ["expectedVersion"] : ["responseDetail", ...(tool.name === "create_answer" ? ["exam", "questionNo", "lineTargets", "idempotencyKey", "layoutOptions"] : [])];
+    for (const name of added) {
+      assert.ok(Object.hasOwn(properties, name), `${tool.name} missing declared addition ${name}`);
+      assert.ok(!((input.required ?? []) as string[]).includes(name), `${tool.name}.${name} must be optional`);
+      delete properties[name];
+    }
+    return { ...tool, inputSchema: { ...input, properties } };
+  }) };
+}
+function withoutBaseReadUi<T extends { tools: ContractTool[] }>(view: T): T {
+  return { ...view, tools: view.tools.map(tool => {
+    if (tool.name !== "read_answer") return tool;
+    const { _meta, ...dataTool } = tool;
+    assert.ok((_meta?.ui as { resourceUri?: string })?.resourceUri);
+    assert.ok(_meta?.["openai/outputTemplate"]);
+    return dataTool;
+  }) };
+}
+function assertReadHasNoUi(tools: ContractTool[]) {
+  const read = tools.find(tool => tool.name === "read_answer");
+  assert.ok(read);
+  assert.equal((read._meta?.ui as { resourceUri?: string } | undefined)?.resourceUri, undefined);
+  assert.equal(read._meta?.["openai/outputTemplate"], undefined);
 }
 /** Drops the default keyword of paragraph-format and heading-style fields anywhere in a contract view. */
 export function withoutFormatDefaults<T>(value: T): T {
@@ -157,6 +200,7 @@ export async function checkMcpContract() {
   assert.notEqual(ANSWER_SHEET_WIDGET_URI, BASE_WIDGET_URI);
   // Every reference must have moved to the versioned URI, or normalizing would hide a stale one.
   for (const view of ["owner", "reader"] as const) {
+    assertReadHasNoUi(current[view].tools);
     assert.ok(!JSON.stringify(current[view]).includes(JSON.stringify(BASE_WIDGET_URI)), `${view} still references ${BASE_WIDGET_URI}`);
     assert.ok((current[view].resources as Array<{ uri: string }>).some(resource => resource.uri === ANSWER_SHEET_WIDGET_URI),
       `${view} does not register ${ANSWER_SHEET_WIDGET_URI}`);
@@ -164,8 +208,8 @@ export async function checkMcpContract() {
   const comparable = withBaseWidgetUri(current);
   assert.deepEqual(withoutFormatDefaults(current), current, "format fields must not declare defaults");
   const base = withoutFormatDefaults(fixture.contract) as typeof fixture.contract;
-  assert.deepEqual({ owner: withoutOutputSchemas(withBaseDescriptions(comparable.owner), ADDED_TOOLS), reader: withoutOutputSchemas(withBaseDescriptions(comparable.reader), ADDED_READ_TOOLS) },
-    { owner: withoutOutputSchemas(base.owner, REMOVED_TOOLS), reader: withoutOutputSchemas(base.reader, REMOVED_TOOLS) });
+  assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.owner)), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.reader)), ADDED_READ_TOOLS) },
+    { owner: withoutOutputSchemas(withoutBaseReadUi(base.owner), REMOVED_TOOLS), reader: withoutOutputSchemas(withoutBaseReadUi(base.reader), REMOVED_TOOLS) });
   for (const view of ["owner", "reader"] as const) {
     for (const baseTool of base[view].tools as ContractTool[]) {
       if (REMOVED_TOOLS.includes(baseTool.name)) continue;
@@ -190,18 +234,19 @@ export async function checkMcpContract() {
     await server.connect(a); await client.connect(b);
     try {
       const tools = (await client.listTools()).tools.sort((a, b) => a.name.localeCompare(b.name)) as ContractTool[];
+      assertReadHasNoUi(tools);
       const added = ADDED_TOOLS.filter(tool => scopes.includes(toolScope(tool)));
       const kept = (fixture.oauthTools[name] as string[]).filter(tool => !REMOVED_TOOLS.includes(tool));
       assert.deepEqual(tools.map(t => t.name).sort(), [...kept, ...added].sort());
       // Base-surface difference: the existing OAuth declaration, with exact expected scopes.
-      const expected = base.owner.tools.filter((t: { name: string }) => kept.includes(t.name))
+      const expected = withoutBaseReadUi(base.owner).tools.filter((t: { name: string }) => kept.includes(t.name))
         .map((tool: ContractTool) => {
           const required = fixture.oauthTools.read.includes(tool.name) ? "essay.read"
             : ["export_docx", "export_pdf", "export_text"].includes(tool.name) ? "essay.export" : "essay.write";
           return { ...tool, _meta: { ...tool._meta, securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", required])] }] } };
         });
       const listed = withBaseDescriptions({ tools: withBaseWidgetUri(JSON.parse(stableJson(tools)) as ContractTool[]) }).tools;
-      assert.deepEqual(withoutOutputSchemas({ tools: listed }, ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
+      assert.deepEqual(withoutOutputSchemas(withoutAddedInputs({ tools: listed }), ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
         assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes,
           [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }]);

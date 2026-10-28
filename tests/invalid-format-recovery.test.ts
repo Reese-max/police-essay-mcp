@@ -219,7 +219,7 @@ test("normal restore recovers a legacy poisoned current answer as N+1 while reta
     const unrelatedBytes = await fs.readFile(unrelatedPath);
     await withClient(store, async client => {
       const restored = structured<{ answer: AnswerDocument; layout: { fits: boolean }; changes: string[] }>(
-        await client.callTool({ name: "restore_revision", arguments: { answerId: legacy.good.id, version: 1, expectedVersion: 2 } }));
+        await client.callTool({ name: "restore_revision", arguments: { responseDetail: "full", answerId: legacy.good.id, version: 1, expectedVersion: 2 } }));
       assert.equal(restored.answer.version, 3);
       assert.deepEqual(restored.answer.sections, historical.sections);
       assert.deepEqual(restored.answer.lineTargets, historical.lineTargets);

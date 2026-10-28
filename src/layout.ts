@@ -8,6 +8,7 @@ import {
   type AnswerTemplate,
   type HeadingStyle,
   type LayoutLine,
+  type LayoutOptions,
   type ParagraphFormat,
   type CompressionHint,
   type LayoutReport,
@@ -185,17 +186,20 @@ function wrapParagraph(
   paragraph: string,
   format: ParagraphFormat,
   columns: number,
+  options: LayoutOptions = {},
 ): string[] {
   const lines: string[] = [];
   let current = "";
   let currentWidth = 0;
   let lineIndex = 0;
+  let offset = 0;
 
   while (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0) >= columns) {
     throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、leftIndent 或 rightIndent。");
   }
 
   for (const character of splitGraphemes(paragraph)) {
+    offset += character.length;
     while (true) {
       const lineIndent = format.leftIndent + (lineIndex === 0 ? format.firstLineIndent : 0);
       const available = columns - lineIndent - format.rightIndent;
@@ -210,9 +214,15 @@ function wrapParagraph(
         currentWidth += width;
         break;
       }
-      lines.push(current);
-      current = "";
-      currentWidth = 0;
+      const trailing = options.wholeLatinWords && /^[A-Za-z0-9]$/.test(character)
+        ? current.match(/[A-Za-z0-9]+$/)?.[0] ?? "" : "";
+      const nextAvailable = columns - format.leftIndent - format.rightIndent;
+      const run = trailing ? trailing + character + (paragraph.slice(offset).match(/^[A-Za-z0-9]*/)?.[0] ?? "") : "";
+      const carry = trailing && /\S/u.test(current.slice(0, -trailing.length))
+        && displayWidth(run) <= nextAvailable ? trailing : "";
+      lines.push(carry ? current.slice(0, -carry.length) : current);
+      current = carry;
+      currentWidth = carry.length;
       lineIndex += 1;
     }
   }
@@ -264,14 +274,15 @@ function addParagraph(
   format: ParagraphFormat,
   options: { isHeading?: boolean } = {},
   template: AnswerTemplate,
+  layoutOptions: LayoutOptions,
 ): void {
   for (let index = 0; index < format.spaceBeforeLines; index += 1) {
     makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
   }
 
   const wrapped = splitParagraphText(text).flatMap(part => template.paperProfile
-    ? wrapOriginalPaper(part, format, template)
-    : wrapParagraph(part, format, template.columns));
+    ? wrapOriginalPaper(part, format, template, layoutOptions)
+    : wrapParagraph(part, format, template.columns, layoutOptions));
   wrapped.forEach((line, index) => {
     makeLine(lines, sectionId, paragraphIndex, line, format, {
       isHeading: options.isHeading,
@@ -320,6 +331,7 @@ function compressionHints(
 export function layoutSections(
   template: AnswerTemplate,
   sections: AnswerSection[],
+  options: LayoutOptions = {},
 ): LayoutReport {
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
@@ -338,6 +350,7 @@ export function layoutSections(
         paragraphFormatSchema.parse(headingStyle),
         { isHeading: true },
         template,
+        options,
       );
     }
 
@@ -350,9 +363,33 @@ export function layoutSections(
         mergeParagraphFormat(template, section, paragraph.format),
         {},
         template,
+        options,
       );
     });
     sectionLineCounts.set(section.id, lines.length - sectionStart);
+  }
+
+  if (options.keepHeadingWithNext) {
+    for (let index = 0; index < lines.length; index += 1) {
+      const heading = lines[index];
+      if (!heading.isHeading || (index > 0 && lines[index - 1].isHeading && lines[index - 1].sectionId === heading.sectionId)) continue;
+      let bodyIndex = index + 1;
+      while (bodyIndex < lines.length && lines[bodyIndex].sectionId === heading.sectionId
+        && (lines[bodyIndex].isHeading || lines[bodyIndex].isSpacer)) {
+        bodyIndex += 1;
+      }
+      if (bodyIndex === lines.length || lines[bodyIndex].sectionId !== heading.sectionId) continue;
+      const offset = index % template.linesPerPage;
+      const blockLines = bodyIndex - index + 1;
+      if (offset === 0 || blockLines > template.linesPerPage
+        || Math.floor(index / template.linesPerPage) === Math.floor(bodyIndex / template.linesPerPage)) continue;
+      const count = template.linesPerPage - offset;
+      const padding = Array.from({ length: count }, () => ({ ...heading, text: "", displayWidth: 0,
+        isHeading: false, isSpacer: true, isPadding: true, isFirstLineOfParagraph: false, isLastLineOfParagraph: false }));
+      lines.splice(index, 0, ...padding);
+      sectionLineCounts.set(heading.sectionId, (sectionLineCounts.get(heading.sectionId) ?? 0) + count);
+      index = bodyIndex + count;
+    }
   }
 
   lines.forEach((line, index) => {

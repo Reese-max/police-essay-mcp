@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
-import type { AnswerTemplate, ParagraphFormat } from "./domain.js";
+import type { AnswerTemplate, LayoutOptions, ParagraphFormat } from "./domain.js";
 
 // Resolve both src/ and dist/src/ without depending on the process working directory.
 const assetUrl = new URL(import.meta.url.includes("/dist/") ? "../../assets/paper_166.asset.json" : "../assets/paper_166.asset.json", import.meta.url);
@@ -37,22 +37,29 @@ export function validateOriginalPaper(template: AnswerTemplate, fontPath?: strin
   originalPaperImage();
   validatedOriginalPaperFont(fontPath ?? originalPaperFontPath());
 }
-export function wrapOriginalPaper(text: string, format: ParagraphFormat, template: AnswerTemplate): string[] {
-  validateOriginalPaper(template);
-  if (format.bold || format.italic || format.alignment !== "left") throw new Error("166 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
+export function originalPaperMeasure(template: AnswerTemplate): (value: string) => number {
   const face = font();
-  const lines: string[] = [];
-  let current = "";
-  const measure = (value: string) => {
+  return (value: string) => {
     const glyphWidth = face.layout(value).positions.reduce((sum: number, p: { xAdvance: number }) => sum + p.xAdvance, 0) * template.fontSizePt / face.unitsPerEm;
     // Word may add quarter-em spacing between Han and Latin letters. Reserve it
     // during shared wrapping so the editable Word rows never clip their last glyph.
     const boundaries = Array.from(value.matchAll(/(?<=[\p{Script=Han}])[A-Za-z0-9]|(?<=[A-Za-z0-9])[\p{Script=Han}]/gu)).length;
     return glyphWidth + boundaries * template.fontSizePt / 4;
   };
+}
+export function originalPaperAvailableWidth(format: ParagraphFormat, template: AnswerTemplate, lineIndex = 1): number {
   // Leave 2pt reserve for Word shaping/rounding; do not rewrite or drop characters.
-  const available = () => 496 - 130.32 - 2 - (format.leftIndent + format.rightIndent + (lines.length === 0 ? format.firstLineIndent : 0)) * template.fontSizePt / 2;
-  for (const { segment } of new Intl.Segmenter("zh-TW", { granularity: "grapheme" }).segment(text)) {
+  return 496 - 130.32 - 2 - (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0)) * template.fontSizePt / 2;
+}
+export function wrapOriginalPaper(text: string, format: ParagraphFormat, template: AnswerTemplate, options: LayoutOptions = {}): string[] {
+  validateOriginalPaper(template);
+  if (format.bold || format.italic || format.alignment !== "left") throw new Error("166 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
+  const face = font();
+  const measure = originalPaperMeasure(template);
+  const lines: string[] = [];
+  let current = "";
+  const available = (lineIndex = lines.length) => originalPaperAvailableWidth(format, template, lineIndex);
+  for (const { segment, index } of new Intl.Segmenter("zh-TW", { granularity: "grapheme" }).segment(text)) {
     if (segment === "\t") throw new Error("166 原稿紙請以明確縮排取代定位字元。");
     for (const character of Array.from(segment)) if (!face.hasGlyphForCodePoint(character.codePointAt(0)!)) throw new Error(`稿紙字型缺字：${character}`);
     if (measure(current + segment) > available()) {
@@ -61,6 +68,15 @@ export function wrapOriginalPaper(text: string, format: ParagraphFormat, templat
       const characters = Array.from(new Intl.Segmenter("zh-TW", { granularity: "grapheme" }).segment(current), s => s.segment);
       let carry = "";
       if (/[，。；：！？、）】」』〉》]/u.test(segment) || /[（【「『〈《]$/u.test(current)) carry = characters.pop() ?? "";
+      const trailing = options.wholeLatinWords && /^[A-Za-z0-9]/.test(carry + segment)
+        ? characters.join("").match(/[A-Za-z0-9]+$/)?.[0] ?? "" : "";
+      const rest = trailing && /^[A-Za-z0-9]/.test(segment)
+        ? text.slice(index + segment.length).match(/^[A-Za-z0-9]*[，。；：！？、）】」』〉》]?/u)?.[0] ?? "" : "";
+      if (trailing && /\S/u.test(characters.slice(0, -trailing.length).join(""))
+        && measure(trailing + carry + segment + rest) <= available(lines.length + 1)) {
+        carry = trailing + carry;
+        characters.splice(characters.length - trailing.length);
+      }
       if (!characters.length) throw new Error("稿紙縮排不足以容納標點與前一字。");
       lines.push(characters.join("")); current = carry;
       if (measure(current + segment) > available()) throw new Error("段落縮排使稿紙可用寬度不足。");

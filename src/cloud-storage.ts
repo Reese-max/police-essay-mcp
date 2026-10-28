@@ -5,21 +5,25 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { answerDocumentSchema, type AnswerDocument } from "./domain.js";
+import { answerDocumentSchema, MAX_ANSWER_BYTES, type AnswerDocument } from "./domain.js";
 import { layoutSections } from "./layout.js";
 import {
   FileStore, StoreNotFoundError, safeId, exportMimeType, exportArtifactHandlePattern,
   EXPORT_ARTIFACT_TTL_MS, type DeletedAnswer, type EssayStore, type ExportDetails,
 } from "./storage.js";
 
-export const MAX_ANSWER_BYTES = 700 * 1024;
 export const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export type FirestoreClient = Pick<Firestore, "doc" | "collection" | "runTransaction">;
 export type StorageClient = Pick<Storage, "bucket">;
 
 class StoreConflictError extends Error {}
 export class StoreUnavailableError extends Error {
-  constructor() { super("儲存暫時故障"); }
+  constructor(cause?: unknown) {
+    // Firestore gRPC statuses: deadline exceeded, resource exhausted, internal, unavailable.
+    const code = Number((cause as { code?: unknown })?.code);
+    const status = ({ 4: 408, 8: 429, 13: 500, 14: 503 } as Record<number, number>)[code];
+    super("儲存暫時故障", { cause: status ? { status, cause } : cause });
+  }
 }
 function errorCode(error: unknown): number | undefined {
   return Number((error as { code?: unknown })?.code) || undefined;
@@ -33,13 +37,14 @@ async function backend<T>(operation: () => Promise<T>, missing = false): Promise
     if (error instanceof StoreConflictError || error instanceof StoreNotFoundError || error instanceof StoreUnavailableError) throw error;
     if (missing && [404, 5].includes(errorCode(error)!)) throw new StoreNotFoundError("找不到");
     logStorageFailure("storage_unavailable");
-    throw new StoreUnavailableError();
+    throw new StoreUnavailableError(error);
   }
 }
 
 const manifestSchema = z.object({
   schemaVersion: z.literal(1), handle: z.string().regex(exportArtifactHandlePattern),
-  ownerKey: z.string(), answerId: z.string(), answerVersion: z.number().int().positive(),
+  ownerKey: z.string(), answerId: answerDocumentSchema.shape.id, answerVersion: z.number().int().positive(),
+  relatedAnswerIds: z.array(answerDocumentSchema.shape.id).max(20).optional(),
   format: z.enum(["docx", "pdf", "txt"]), name: z.string(), mimeType: z.string(),
   bucket: z.string(), objectName: z.string(), generation: z.string().regex(/^[1-9][0-9]*$/),
   sha256: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().nonnegative(),
@@ -125,7 +130,7 @@ export class CloudStore implements EssayStore {
     if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_ANSWER_BYTES) throw new Error("Answer exceeds 700 KiB document limit.");
     // An unrenderable candidate must not enter the transaction or revision history.
     // A calculable layout that exceeds the page limit remains editable and may be saved.
-    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
+    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections, normalized.layoutOptions);
     await backend(() => this.options.firestore.runTransaction(async transaction => {
       const existing = (await transaction.get(ref)).data();
       const current = existing ? this.parseAnswer(existing) : undefined;
@@ -160,7 +165,10 @@ export class CloudStore implements EssayStore {
         throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + answer.version + ". Read the answer again before deleting.");
       }
       const revisions = (await transaction.get(ref.collection("revisions").select())).docs;
-      const manifests = (await transaction.get(artifacts)).docs.filter(doc => doc.data().answerId === answer.id);
+      const manifests = (await transaction.get(artifacts)).docs.filter(doc => {
+        const value = doc.data();
+        return value.answerId === answer.id || (Array.isArray(value.relatedAnswerIds) && value.relatedAnswerIds.includes(answer.id));
+      });
       for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
       transaction.delete(ref);
       return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
@@ -169,7 +177,7 @@ export class CloudStore implements EssayStore {
     // the bucket lifecycle, which still covers any delete that fails here.
     for (const value of deleted.manifests) {
       const parsed = manifestSchema.safeParse(value);
-      if (!parsed.success || parsed.data.bucket !== this.options.artifactBucket
+      if (!parsed.success || parsed.data.ownerKey !== this.options.ownerKey || parsed.data.bucket !== this.options.artifactBucket
         || !parsed.data.objectName.startsWith(this.options.environment + "/" + this.options.ownerKey + "/")) continue;
       const { objectName, generation } = parsed.data;
       try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
@@ -180,6 +188,7 @@ export class CloudStore implements EssayStore {
 
   async createExportHandle(outputPath: string, details: ExportDetails) {
     this.requireWriter();
+    const relatedAnswerIds = manifestSchema.shape.relatedAnswerIds.parse(details.relatedAnswerIds);
     const answer = await this.getAnswer(details.answerId);
     // Export refers to the rendered snapshot, even if an edit has since committed.
     if (!Number.isSafeInteger(details.answerVersion) || details.answerVersion < 1 || details.answerVersion > answer.version) {
@@ -225,17 +234,18 @@ export class CloudStore implements EssayStore {
       await this.options.firestore.doc(this.userPath + "/artifacts/" + handle).create({
         schemaVersion: 1, handle, ownerKey: this.options.ownerKey,
         answerId: answer.id, answerVersion: details.answerVersion, format: details.format, name, mimeType,
+        ...(relatedAnswerIds ? { relatedAnswerIds } : {}),
         bucket: this.options.artifactBucket, objectName, generation,
         sha256, sizeBytes: data.length,
         createdAt: Timestamp.fromMillis(createdAt), expiresAt: Timestamp.fromMillis(expiresAt),
       });
-    } catch {
+    } catch (error) {
       if (generation && /^[1-9][0-9]*$/.test(generation)) {
         try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
         catch { logStorageFailure("artifact_compensation_failed"); }
       } else logStorageFailure("artifact_generation_unknown");
       logStorageFailure("storage_unavailable");
-      throw new StoreUnavailableError();
+      throw new StoreUnavailableError(error);
     }
     return { handle, name, mimeType, expiresAt: new Date(expiresAt).toISOString() };
   }
@@ -258,7 +268,7 @@ export class CloudStore implements EssayStore {
       this.resolveExportPath(value.name, value.format);
       if (exportMimeType(value.name) !== value.mimeType) throw notFound();
       // A manifest committed after a concurrent delete_answer must not expose deleted content.
-      await this.getAnswer(value.answerId);
+      for (const id of new Set([value.answerId, ...value.relatedAnswerIds ?? []])) await this.getAnswer(id);
       const file = this.bucket.file(value.objectName, { generation: value.generation });
       const [metadata] = await backend(() => file.getMetadata(), true);
       if (String(metadata.generation) !== value.generation || Number(metadata.size) !== value.sizeBytes) throw notFound();
@@ -271,6 +281,28 @@ export class CloudStore implements EssayStore {
       if (error instanceof StoreUnavailableError) throw error;
       throw notFound();
     }
+  }
+
+  async deleteExport(handle: string): Promise<void> {
+    this.requireWriter();
+    if (!exportArtifactHandlePattern.test(handle)) throw new StoreNotFoundError("Export artifact not found.");
+    const ref = this.options.firestore.doc(this.userPath + "/artifacts/" + handle);
+    const result = await backend(() => ref.get());
+    const raw = result.data();
+    if (raw === undefined) return;
+    const parsed = manifestSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.ownerKey !== this.options.ownerKey || parsed.data.handle !== handle
+      || parsed.data.bucket !== this.options.artifactBucket
+      || parsed.data.objectName !== this.options.environment + "/" + this.options.ownerKey + "/" + handle + "." + parsed.data.format) {
+      throw new StoreNotFoundError("Export artifact not found.");
+    }
+    const { objectName, generation } = parsed.data;
+    // Keep the manifest on a byte-delete failure so rollback can be retried by handle.
+    await backend(async () => {
+      try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
+      catch (error) { if (errorCode(error) !== 404) throw error; }
+      await ref.delete();
+    });
   }
 
   async checkReadiness(): Promise<void> {

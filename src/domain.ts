@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+export const MAX_ANSWER_BYTES = 700 * 1024;
+
 export function normalizeNewlines(text: string): string {
   return text.replace(/\r\n|[\r\u0085\u2028\u2029\u000b\u000c]/gu, "\n");
 }
@@ -139,6 +141,12 @@ export const paragraphFormatPatchSchema = z.object({
 
 export type ParagraphFormatPatch = z.input<typeof paragraphFormatPatchSchema>;
 
+export const layoutOptionsSchema = z.strictObject({
+  wholeLatinWords: z.boolean().optional(),
+  keepHeadingWithNext: z.boolean().optional(),
+});
+export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;
+
 export const answerDocumentSchema = z.object({
   id: z.string().regex(/^ans_[A-Za-z0-9-]+$/),
   templateId: z.string().min(1),
@@ -150,6 +158,8 @@ export const answerDocumentSchema = z.object({
   sections: z.array(answerSectionSchema).max(100),
   /** Planned lines per section id (heading and spacing included); set with set_line_targets. */
   lineTargets: z.record(z.string(), z.number().int().min(1).max(200)).optional(),
+  createRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  layoutOptions: layoutOptionsSchema.optional(),
   version: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -167,6 +177,7 @@ export interface LayoutLine {
   paragraphIndex: number;
   isHeading: boolean;
   isSpacer: boolean;
+  isPadding?: boolean;
   isFirstLineOfParagraph: boolean;
   isLastLineOfParagraph: boolean;
   format: ParagraphFormat;
@@ -217,6 +228,7 @@ export const layoutLineSchema = z.object({
   paragraphIndex: z.number().int().nonnegative(),
   isHeading: z.boolean(),
   isSpacer: z.boolean(),
+  isPadding: z.boolean().optional(),
   isFirstLineOfParagraph: z.boolean(),
   isLastLineOfParagraph: z.boolean(),
   format: paragraphFormatSchema,

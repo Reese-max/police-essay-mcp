@@ -226,11 +226,11 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     const renderTool = tools.tools.find((tool) => tool.name === "render_answer_sheet");
     assert.ok(renderTool, "missing tool render_answer_sheet");
     const renderMeta = renderTool._meta as { ui?: { resourceUri?: string } } | undefined;
-    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet-v5.html");
+    assert.equal(renderMeta?.ui?.resourceUri, "ui://widget/police-essay-answer-sheet-v11.html");
 
     const resources = await client.listResources();
-    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet-v5.html"));
-    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet-v5.html" });
+    assert.ok(resources.resources.some((resource) => resource.uri === "ui://widget/police-essay-answer-sheet-v11.html"));
+    const widgetResource = await client.readResource({ uri: "ui://widget/police-essay-answer-sheet-v11.html" });
     const widgetText = String(widgetResource.contents.find((content) => "text" in content)?.text ?? "");
     assert.match(widgetText, /警察資訊三等/);
     assert.match(widgetText, /tools\/call/);
@@ -255,7 +255,8 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     });
     assert.equal(rendered.isError, undefined);
     assert.equal(rendered._meta?.readOnly, false);
-    const renderedSnapshot = rendered.structuredContent as { answer: { id: string }; layout: { lines: unknown[] } };
+    const renderedSnapshot = rendered._meta?.snapshot as { answer: { id: string }; layout: { lines: unknown[] } };
+    assert.equal(Object.hasOwn((rendered.structuredContent as { layout: object }).layout, "lines"), false);
     assert.equal(renderedSnapshot.answer.id, createdSnapshot.answer.id);
     assert.ok(renderedSnapshot.layout.lines.length > 0);
 
@@ -278,6 +279,7 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     const formatted = await client.callTool({
       name: "format_section",
       arguments: {
+        responseDetail: "full",
         answerId: createdSnapshot.answer.id,
         sectionId: "intro",
         expectedVersion: 1,
@@ -335,7 +337,7 @@ test("independent HTTP MCP clients cannot overwrite the same accepted answer ver
       const answerId = await create(clients[0], `重疊作答 ${round}`);
       const otherId = await create(clients[2], `獨立作答 ${round}`);
       const edit = (client: Client, id: string, text: string) => client.callTool({
-        name: "write_answer", arguments: { answerId: id, expectedVersion: 1,
+        name: "write_answer", arguments: { responseDetail: "full", answerId: id, expectedVersion: 1,
           sections: [{ id: "intro", text }],
         },
       });
