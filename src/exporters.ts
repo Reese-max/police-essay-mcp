@@ -38,7 +38,7 @@ function pageLines(report: LayoutReport, page: number): LayoutLine[] {
   return report.lines.filter((line) => line.page === page);
 }
 
-import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath } from "./original-paper.js";
+import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath, originalPaperRenderBaseline } from "./original-paper.js";
 import { subsetFont } from "./font-subset.js";
 
 /** Printable ASCII and common full-width marks stay editable in Word beyond the answer's own characters. */
@@ -392,7 +392,7 @@ function drawPdfPage(
     const indent = lineIndentColumns(line);
     const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
     const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
-    const y = template.paperProfile ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFace as { ascent: number; unitsPerEm: number }).ascent / (regularFace as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    const y = template.paperProfile ? originalPaperRenderBaseline(row) - template.fontSizePt * ((regularFace as { ascent: number; unitsPerEm: number }).ascent / (regularFace as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
     if (template.paperProfile) {
       // This profile is measured with the actual font and forbids tabs/alignment changes.
       document.text(line.text, x, y, { lineBreak: false });
