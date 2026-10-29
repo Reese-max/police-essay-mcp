@@ -261,11 +261,13 @@ export class FileStore implements EssayStore {
       }
 
       const revisionDir = path.join(this.revisionDir, answerId);
+      // Runtime parsing strips opaque fields; retain the raw envelope under the same write lock.
+      const previous = current ? JSON.parse(await fs.readFile(filename, "utf8")) : undefined;
       await fs.mkdir(revisionDir, { recursive: true });
       const write = async (target: string, value: AnswerDocument) => {
         const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
         try {
-          await fs.writeFile(temporary, `${JSON.stringify(encodeAnswer(value), null, 2)}\n`, "utf8");
+          await fs.writeFile(temporary, `${JSON.stringify(encodeAnswer(value, previous), null, 2)}\n`, "utf8");
           await renameReplacing(temporary, target);
         } finally {
           await fs.rm(temporary, { force: true }).catch(() => undefined);

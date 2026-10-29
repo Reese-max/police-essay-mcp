@@ -5,12 +5,23 @@ import { answerDocumentSchema, type AnswerDocument } from "./domain.js";
 // Keep the public/runtime shape unchanged and extend only the persisted envelope.
 // Stored extensions can grow; validate known fields and ignore future keys.
 const extensions = z.object({ avoidPunctuationOnlyLines: z.boolean().optional() });
-export function encodeAnswer(answer: AnswerDocument) {
+export function encodeAnswer(answer: AnswerDocument, previous?: unknown): AnswerDocument & Record<string, unknown> & { layoutExtensions?: Record<string, unknown> } {
   const normalized = answerDocumentSchema.parse(answer);
   const { avoidPunctuationOnlyLines, ...legacyOptions } = normalized.layoutOptions ?? {};
-  return { ...normalized,
+  const stored = previous === undefined ? {} : z.record(z.string(), z.unknown()).parse(previous);
+  if (previous !== undefined && decodeAnswer(previous).id !== normalized.id) {
+    throw new Error("Persisted envelope belongs to a different answer.");
+  }
+  const opaque = Object.fromEntries(Object.entries(stored).filter(([key]) =>
+    key !== "layoutExtensions" && !Object.hasOwn(answerDocumentSchema.shape, key)));
+  const oldExtensions = stored.layoutExtensions === undefined ? {} :
+    z.record(z.string(), z.unknown()).parse(stored.layoutExtensions);
+  const { avoidPunctuationOnlyLines: _oldFlag, ...futureExtensions } = oldExtensions;
+  const nextExtensions: Record<string, unknown> = { ...futureExtensions,
+    ...(avoidPunctuationOnlyLines === undefined ? {} : { avoidPunctuationOnlyLines }) };
+  return { ...opaque, ...normalized,
     ...(normalized.layoutOptions ? { layoutOptions: legacyOptions } : {}),
-    ...(avoidPunctuationOnlyLines === undefined ? {} : { layoutExtensions: { avoidPunctuationOnlyLines } }),
+    ...(Object.keys(nextExtensions).length || Object.hasOwn(stored, "layoutExtensions") ? { layoutExtensions: nextExtensions } : {}),
   };
 }
 
