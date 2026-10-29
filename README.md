@@ -93,6 +93,10 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 3. `read_answer` 讀取完整文字；`check_layout` 讀取真實行數與品質警告（孤立標題、英文斷字，僅提醒、不阻擋匯出）。
 4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text`、`edit_text`、`move_section` 或 `renumber_items`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
+
+一般模板新答案另預設 `layoutOptions.avoidPunctuationOnlyLines=true`：自然換行若只剩結尾標點，將前行最後一個字素（可完整容納時優先保留英文整詞）連同標點放入下一行，保留全部文字與字級；明確輸入的獨立標點或分隔線不改動。舊答案省略此旗標時維持既有換行，可用 `update_answer_info` 明確啟用。未啟用且發生自然換行的純標點行會回報 `PUNCTUATION_ONLY_LINE`。166 的量測換行沿用既有實作。
+
+一般模板 PDF 在整行可容納時，會使用實際字形 advance 避免寬英文字母互相覆畫；放不下時保留原欄位位置並警告，不把更多字元推離頁面。實際字形寬度仍可能超出名義欄數，所以匯出 `fontWarning` 會指明合輯頁／行與不重疊排版所需寬度的超出點數。遇到這個警告應明確換行再匯出，不能把 `fits=true` 當成實際字形均在格內，也不會默默縮字或刪字。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
    - `move_section` 把區塊移到另一個區塊之前或之後。
    - 插入、刪除或搬移後，手寫編號（壹、一、（一）、1.、（1））若不再連續，`renumber_items` 會依層級重新編號：標題自成一串，各區塊的段落各自一串，下層遇到上層項目時從 1 重新起算。

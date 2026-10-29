@@ -91,7 +91,7 @@ export function describeTargetChanges(before: AnswerDocument, after: AnswerDocum
 }
 
 export interface LayoutWarning {
-  code: "ORPHAN_HEADING" | "SPLIT_LATIN_WORD";
+  code: "ORPHAN_HEADING" | "SPLIT_LATIN_WORD" | "PUNCTUATION_ONLY_LINE";
   page: number;
   line: number;
   sectionId: string;
@@ -109,6 +109,10 @@ export function layoutWarnings(layout: LayoutReport, template?: AnswerTemplate):
   const measure = template?.paperProfile ? originalPaperMeasure(template) : displayWidth;
   for (const [index, line] of lines.entries()) {
     const previous = lines[index - 1];
+    if (previous && continues(previous, line) && /^[，。！？、；：,.!?;:…」』）】〉》]+$/u.test(line.text)) {
+      warnings.push({ code: "PUNCTUATION_ONLY_LINE", page: line.page, line: line.lineOnPage, sectionId: line.sectionId,
+        message: "自然換行後只剩結尾標點；不阻擋匯出，建議以 update_answer_info 設定 layoutOptions.avoidPunctuationOnlyLines=true，或調整換行。" });
+    }
     if (line.isHeading) headings.set(line.sectionId, line);
     else if (!bodies.has(line.sectionId)) {
       bodies.add(line.sectionId);

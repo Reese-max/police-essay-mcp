@@ -71,10 +71,16 @@
 - `npm run build`：exit 0。
 - 進度檔測試：26／26 通過，含兩種儲存介面的新增孤立標題案例；其後補充的格式缺漏及無效模板斷言也在下列完整測試中通過。
 - 相容性重點測試（progress、widget、MCP contract）：77 項，76 通過、0 失敗、1 跳過（缺少舊版 checkout），exit 0；紀錄為上層 `quality-compatibility.tap`。
-- Node `v24.19.0` 最終完整測試：315 項，290 通過、0 失敗、25 跳過，exit 0；約 44 秒。使用與 `scripts/run-tests.js` 相同的全部 `tests/**/*.test.ts` 檔案，另選 TAP reporter 留存結果。完整紀錄在工作目錄上層 `quality-tests-node24.tap`。相容性修正後的型別檢查與建置也以同一 Node 24 重跑，均為 exit 0。
+- Node `v24.19.0` 交付狀態相容性階段完整測試：315 項，290 通過、0 失敗、25 跳過，exit 0；約 44 秒。使用與 `scripts/run-tests.js` 相同的全部 `tests/**/*.test.ts` 檔案，另選 TAP reporter 留存結果。完整紀錄在工作目錄上層 `quality-tests-node24.tap`。相容性修正後的型別檢查與建置也以同一 Node 24 重跑，均為 exit 0。
 - 25 項跳過涉及 166 專用字型、Noto CJK／實際轉檔等前置環境、Firestore emulator、contract provenance 的舊版 checkout，以及實際 Docker build context；各項原始跳過原因在 TAP 中。既有 MCP contract 檢查通過，但重新產生舊版 provenance 的測試未執行。CloudStore 測試使用 fake，不代表正式 Firestore／GCS 已驗收。
 - `git diff --check`：exit 0。
 
 環境處理：第一次沙箱測試的預設暫存目錄發生原子 rename 的 `EPERM`，將測試暫存資料明確放入本次授權工作區後，FileStore 測試通過。沙箱內完整測試又遇 HTTP 子程序連線逾時，因此停止該次測試，改用獲准的本機 Node 24 完整執行並取得上述 exit 0。沒有為配合環境而削弱測試或修改產品儲存／HTTP 邏輯。依賴以 `npm ci --ignore-scripts` 安裝，沒有變更 lockfile。
 
 本輪未執行真實 ChatGPT 宿主驗收、正式雲端測試、新舊 PDF 逐頁比對或四題內容查證。程式修正與提案可本機審閱，後續發布仍須另外進行。
+
+## 後續合成成品自我測試
+
+已依使用者追加授權完成真實 MCP 生成、13 頁逐頁渲染查看與回修，詳見 [合成申論 PDF 端到端檢查與回修](docs/quality-e2e-20261029.md)。新增一般模板自然純標點行保護與警告，以及實際 PDF glyph advance／超寬檢查；超寬 42 字元 fixture 仍保留，最終落框的改善包含經 MCP 明確分行，不能稱引擎已自動處理所有長串。已核對 PR 48 patch，沒有重做其尾字裁切修復，但未來合併仍需核對同檔案的重疊區域。
+
+此為合成案例及外部視覺檢查，沒有取得正式講義或正式 PDF，也沒有把 API 的 `not_checked` 改為驗收通過。完整測試及本輪針對性重跑的結果、未測項與產物路徑，以該報告為準。
