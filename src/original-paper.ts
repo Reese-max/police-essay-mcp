@@ -7,6 +7,13 @@ import type { AnswerTemplate, LayoutOptions, ParagraphFormat } from "./domain.js
 // Resolve both src/ and dist/src/ without depending on the process working directory.
 const assetUrl = new URL(import.meta.url.includes("/dist/") ? "../../assets/paper_166.asset.json" : "../assets/paper_166.asset.json", import.meta.url);
 export const originalPaper = JSON.parse(readFileSync(fileURLToPath(assetUrl), "utf8")) as { imageBase64: string; sha256: string; imageRect: number[]; rows: number[][] };
+/** Shared PDF/SVG baseline. The reference's 43 rows sit 1.04–1.72pt above the old 3.5pt inset.
+ * A 5pt inset reduces that systematic difference without changing wrapping or Word tables.
+ * It is an approximate visual calibration, not a claim of identical reference coordinates.
+ */
+export function originalPaperRenderBaseline(rowIndex: number): number {
+  return originalPaper.rows[rowIndex][1] - 5;
+}
 export function originalPaperImage(): Buffer {
   const image = Buffer.from(originalPaper.imageBase64, "base64");
   if (createHash("sha256").update(image).digest("hex") !== originalPaper.sha256) throw new Error("166 稿紙底圖雜湊不符。");
@@ -133,7 +140,7 @@ export function originalPaperPreview(template: AnswerTemplate, report: import('.
         const position = run.positions[i];
         const id = `p${index+1}g${glyph.id}`;
         if (!defined.has(glyph.id)) defined.set(glyph.id, `<path id="${id}" d="${compactGlyphPath(glyph.path.commands)}" transform="scale(${scale} ${-scale})"/>`);
-        const use = `<use href="#${id}" x="${round(pen+position.xOffset*scale)}" y="${round(row[1]-3.5-position.yOffset*scale)}"/>`;
+        const use = `<use href="#${id}" x="${round(pen+position.xOffset*scale)}" y="${round(originalPaperRenderBaseline(line.lineOnPage-1)-position.yOffset*scale)}"/>`;
         pen += position.xAdvance * scale;
         return use;
       }).join('');
