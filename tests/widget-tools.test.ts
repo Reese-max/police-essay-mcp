@@ -11,7 +11,7 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 // Arguments come from the widget's window, so compare them as plain JSON.
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 
-async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?: boolean; legacy?: boolean; overview?: boolean; examPlan?: boolean; emptyPlan?: boolean; warnings?: boolean; metadata?: boolean; noCallMeta?: boolean } = {}) {
+async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?: boolean; legacy?: boolean; overview?: boolean; examPlan?: boolean; emptyPlan?: boolean; exportedPlan?: boolean; warnings?: boolean; metadata?: boolean; noCallMeta?: boolean } = {}) {
   let version = 1;
   let omitPages = false;
   let answerId = "ans_widget";
@@ -40,10 +40,18 @@ async function host(options: { readOnly?: boolean; svgPages?: string[]; summary?
     { answerId: "ans_second", title: "第二份", version: 1, totalLines: 45, capacity: 44, fits: false, warnings: 2 },
     { answerId: "ans_third", title: "第三份3", version: 1, totalLines: 3, capacity: 44, fits: true, warnings: 0 },
   ];
-  const progress = () => ({ examId: "exam_widget", questions: [
+  const progress = () => ({ examId: "exam_widget", questions: options.exportedPlan ? [
+    { questionNo: 1, answerId: "ans_widget", version, stage: "exported" },
+    { questionNo: 2, answerId: "ans_second", version, stage: "exported" },
+  ] : [
     { questionNo: 1, ...(options.emptyPlan ? {} : { answerId: "ans_widget", version }), stage: options.emptyPlan ? "not_started" : version === 1 ? "exported" : "layout_ok" },
     { questionNo: 2, stage: "not_started" },
-  ], nextStep: { action: "create_answer", questionNo: 2, message: "第2題尚未建立，從第2題接續。" } });
+  ], nextStep: options.exportedPlan
+    ? { action: "done", message: "合輯已匯出：4 頁 PDF 與 Word（容量檢查通過；內容、來源與逐頁視覺驗收尚未完成）。" }
+    : { action: "create_answer", questionNo: 2, message: "第2題尚未建立，從第2題接續。" },
+    ...(options.exportedPlan ? { delivery: { status: "awaiting_review", checks: {
+      layoutCapacity: "passed", content: "not_checked", source: "not_checked", visual: "not_checked" } } } : {}),
+  });
   const planned = () => ({ ...result(), structuredContent: { ...(options.emptyPlan ? {} : result().structuredContent), examId: "exam_widget", progress: progress(),
     examAnswers: progress().questions.map(q => ({ ...examSummaries[0], ...q, answerId: q.answerId, title: q.answerId ? "測試" : "未建立" })) } });
   const initial = () => options.examPlan ? planned() : options.overview ? { ...result(), structuredContent: { ...result().structuredContent, activeAnswerId: answerId, examAnswers: examSummaries } } : options.summary ? summary() : result();
@@ -792,5 +800,19 @@ for (const legacy of [false, true]) test(`all-missing exam overview via ${legacy
   const h = await host({ legacy, examPlan: true, emptyPlan: true, noCallMeta: true });
   try { assert.match(h.element("exam-progress").textContent!, /未建立/); assert.equal(h.element("exam-tabs").children.length, 2);
     assert.equal(h.element<HTMLButtonElement>("preview-phrase").disabled, true);
+  } finally { h.dom.window.close(); }
+});
+
+for (const legacy of [false, true]) test(`exported exam in ${legacy ? "OpenAI" : "MCP Apps"} keeps legacy done action and displays pending review`, async () => {
+  const h = await host({ legacy, examPlan: true, exportedPlan: true, noCallMeta: true });
+  try {
+    const status = h.element("exam-progress");
+    assert.match(status.textContent!, /合輯已匯出.*內容、來源與逐頁視覺驗收尚未完成/);
+    assert.doesNotMatch(status.textContent!, /成品已完成/);
+    await h.click("refresh");
+    assert.equal(h.element("exam-progress"), status);
+    assert.match(status.textContent!, /內容、來源與逐頁視覺驗收尚未完成/);
+    assert.ok(h.calls.every(c => ["get_exam_progress", "render_answer_sheet"].includes(c.name)), "rendering pending review must not invoke an action or repeat export");
+    assert.deepEqual(h.errors, []);
   } finally { h.dom.window.close(); }
 });

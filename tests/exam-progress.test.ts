@@ -96,7 +96,12 @@ for (const cloud of [false, true]) {
     const h = await connect(store); const c = h.client;
     try {
       const id = data(await call(c, "start_exam", { title: "四題試卷", questions: [{ questionNo: 2 }, { questionNo: 1 }], formats: ["pdf"] })).examId;
-      const progress = async () => { const r = await call(c, "get_exam_progress", { examId: id }); assert.doesNotMatch(JSON.stringify(r), /[%％]/); const p = data(r); assert.equal(text(r), p.summary); return p; };
+      const progress = async () => {
+        const r = await call(c, "get_exam_progress", { examId: id }); assert.doesNotMatch(JSON.stringify(r), /[%％]/);
+        const p = data(r); assert.equal(text(r), p.summary);
+        assert.ok(["create_answer", "fix_layout", "export_exam_bundle", "done"].includes(p.nextStep.action), "preserve the published action enum for legacy clients");
+        return p;
+      };
       assert.deepEqual((await progress()).questions.map((q: any) => q.stage), ["not_started", "not_started"]);
       assert.deepEqual((await progress()).delivery, { status: "not_ready", checks: {
         layoutCapacity: "pending", content: "not_checked", source: "not_checked", visual: "not_checked" } });
@@ -124,14 +129,14 @@ for (const cloud of [false, true]) {
       assert.equal(notify.length, 8); assert.deepEqual(notify.map(p => p.progress), [1,2,3,4,5,6,7,8]); assert.equal(notify.at(-1).total, 8);
       const plan = await store.getExam(id); assert.equal(plan.lastBundle?.members[0].version, 2);
       const exported = await progress();
-      assert.equal(exported.bundle.status, "current"); assert.equal(exported.nextStep.action, "review_delivery");
+      assert.equal(exported.bundle.status, "current"); assert.equal(exported.nextStep.action, "done", "done remains the export workflow terminal action, not an approval");
       assert.match(exported.summary, /合輯已匯出：4 頁 PDF 與 Word.*內容、來源與逐頁視覺驗收尚未完成/);
       assert.doesNotMatch(exported.summary, /成品已完成/);
       assert.deepEqual(exported.delivery, { status: "awaiting_review", checks: {
         layoutCapacity: "passed", content: "not_checked", source: "not_checked", visual: "not_checked" } });
       const review = data(await call(c, "render_exam_overview", { examId: id, responseDetail: "full" }));
       assert.deepEqual(review.progress.delivery, exported.delivery);
-      assert.equal(review.progress.nextStep.action, "review_delivery");
+      assert.equal(review.progress.nextStep.action, "done");
       assert.equal(review.progress.summary, exported.summary);
       assert.deepEqual((await store.getExam(id)).lastBundle, plan.lastBundle, "reading progress must not record an approval");
       data(await call(c, "replace_text", { answerId: one, sectionId: "body", newText: "修訂論述。", expectedVersion: 2 }));
@@ -282,7 +287,7 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} export with
     assert.equal(progress.delivery.checks.layoutCapacity, "passed");
     assert.equal(progress.delivery.status, "awaiting_review");
     assert.equal(progress.delivery.checks.visual, "not_checked");
-    assert.equal(progress.nextStep.action, "review_delivery");
+    assert.equal(progress.nextStep.action, "done");
     assert.match(progress.summary, /Word.*容量檢查通過/);
     assert.doesNotMatch(progress.summary, /成品已完成|版面檢查通過/);
   } finally { await h.close(); }

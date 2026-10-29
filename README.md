@@ -76,9 +76,9 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 中斷或使用者說「繼續」時，先呼叫 `get_exam_progress(examId)`，告知 `summary` 一次，再依 `nextStep` 接續。進度來自目前儲存的內容、版面與匯出版本，沒有估算百分比。已連結的題號再次呼叫 `create_answer`／`create_answers` 會回傳既有答案與 `replayed: true`，即使沒有 key 也不會重複建立；省略考試名稱、題號或題目時由計畫補入（題號取第一個未開始的題目）。批次可在最外層提供 `examId`，或逐題提供；兩者同時提供時必須一致。刪除答案會解除計畫連結。
 
-`get_exam_progress` 每題回傳 `not_started`（未建立）、`drafted`（已保存，版面待修正）、`layout_ok`（目前版本版面通過）或 `exported`（目前版本已收入合輯），並回傳合輯 `none`／`current`／`outdated` 與下一步 `create_answer`／`fix_layout`／`export_exam_bundle`／`review_delivery`。匯出後修改答案會讓合輯過期。舊答案版面無效時，該題回傳遮蔽路徑的 error 與 drafted，其餘題目仍可讀取。**版面通過僅代表容量符合，內容未經查證。**
+`get_exam_progress` 每題回傳 `not_started`（未建立）、`drafted`（已保存，版面待修正）、`layout_ok`（目前版本版面通過）或 `exported`（目前版本已收入合輯），並回傳合輯 `none`／`current`／`outdated` 與下一步 `create_answer`／`fix_layout`／`export_exam_bundle`／`done`。匯出後修改答案會讓合輯過期。舊答案版面無效時，該題回傳遮蔽路徑的 error 與 drafted，其餘題目仍可讀取。**版面通過僅代表容量符合，內容未經查證。**
 
-交付狀態另以 `delivery` 回傳：合輯尚未匯出、缺少計畫要求的格式或版本過期時，`status` 為 `not_ready`；目前版本及格式均已匯出時為 `awaiting_review`，不再回傳 `nextStep.action=done` 或「成品已完成」。`checks.layoutCapacity` 只依目前各題的容量結果回傳 `pending`／`passed`，不表示品質警告已排除。`checks.content`、`source`、`visual` 固定為 `not_checked`，因為目前沒有保存內容、講義頁碼核對或逐頁視覺驗收的證據。`review_delivery` 是人工／助理核對的工作階段，不是可呼叫的 MCP 工具；檢查時應逐題核對題意、來源與實際匯出頁面，不能因此重複建立或匯出。此版本尚未提供記錄驗收通過的工具。
+交付狀態另以 `delivery` 回傳：合輯尚未匯出、缺少計畫要求的格式或版本過期時，`status` 為 `not_ready`；目前版本及格式均已匯出時為 `awaiting_review`，摘要只宣告「合輯已匯出」。為相容既有客戶端，`nextStep.action=done` 保留為匯出流程終點，不能解讀為驗收通過。`checks.layoutCapacity` 只依目前各題的容量結果回傳 `pending`／`passed`，不表示品質警告已排除。`checks.content`、`source`、`visual` 固定為 `not_checked`，因為目前沒有保存內容、講義頁碼核對或逐頁視覺驗收的證據。待驗收是人工／助理核對階段，不是可呼叫的 MCP 工具；檢查時應逐題核對題意、來源與實際匯出頁面，不能因此重複建立或匯出。此版本尚未提供記錄驗收通過的工具。
 
 `render_exam_overview(examId)` 依題號顯示同一畫板，尚未建立的題目仍列為「未建立」。頂端只有一個考試進度區域（`role="status"`、`aria-live="polite"`），重新載入分頁及寫入後原地讀取最新進度；唯讀模式可以查進度、不能建立計畫或改寫答案。
 

@@ -49,6 +49,6 @@ export async function examProgress(store: EssayStore, examId: string) {
       message: `${doneText}內容已保存，從第${drafted.questionNo}題接續檢查版面。` }
     : !current ? { action: "export_exam_bundle" as const,
       message: `${questions.length}題版面皆通過；${bundle.status === "outdated" ? "合輯已過期，請重新匯出" : "尚未匯出合輯"}。` }
-    : { action: "review_delivery" as const, message: `合輯已匯出：${pageText}${fileText}（容量檢查通過；內容、來源與逐頁視覺驗收尚未完成）。` };
+    : { action: "done" as const, message: `合輯已匯出：${pageText}${fileText}（容量檢查通過；內容、來源與逐頁視覺驗收尚未完成）。` };
   return { examId, title: plan.title, questions, bundle, delivery, nextStep, summary: nextStep.message };
 }

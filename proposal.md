@@ -29,9 +29,9 @@
 | `checks.source` | `not_checked`；系統沒有保存來源頁碼核對證據。 |
 | `checks.visual` | `not_checked`；系統沒有保存匯出檔逐頁驗收證據。 |
 
-目前有效合輯的下一步改為 `review_delivery`，文字改為「合輯已匯出」，不再宣告成品完成。此工作階段由人工／助理核對，不是新 MCP 工具，也不觸發重新匯出。
+目前有效合輯保留既有 `nextStep.action=done` 作為匯出流程終點，文字改為「合輯已匯出」，另以 `delivery.status=awaiting_review` 表示待驗收，不再宣告成品完成。驗收由人工／助理核對，不是新 MCP 工具，也不觸發重新匯出。
 
-`get_exam_progress` 與 `render_exam_overview` 共用相同進度資料，因此現有畫板進度文字也會顯示待驗收狀態。`src/server.ts` 的工作流指引同步說明 `review_delivery` 的意義；README 記錄回傳欄位與相容性變更。沒有新增可任意勾選「已驗收」的入口。
+`get_exam_progress` 與 `render_exam_overview` 共用相同進度資料，因此現有畫板進度文字也會顯示待驗收狀態。`src/server.ts` 的工作流指引同步說明 `done` 與 `delivery` 的界線；README 與 SPECIFICATION 記錄新增欄位。沒有新增可任意勾選「已驗收」的入口。
 
 ### 本輪驗收條件
 
@@ -59,7 +59,9 @@
 
 ## 相容性與範圍
 
-`nextStep.action` 從 `done` 改為 `review_delivery` 是有意義的輸出行為變更；自製客戶端若對 action 寫死列舉，需同步更新。現有 widget 只顯示 message，不按 `done` 分支執行。逐題 `exported` 與合輯 `current` 仍保留，意義只是版本與匯出狀態。
+相容性複核發現 SPECIFICATION 已公開列出最終 action 為 `done`。儲存庫內消費端包括 server 的工作流說明、`render_exam_overview` 共用進度、widget 的 `showProgress`，以及 progress／widget 測試；widget 只顯示 message，沒有 action switch 或 enum。`get_exam_progress` 的 output schema 僅要求 examId／summary，並允許額外欄位；MCP contract 測試不會驗證這個新增工具的所有執行期 action 值。因此 contract 測試通過不能保證改 action 對外部客戶端相容。
+
+本輪決定保留 `create_answer`／`fix_layout`／`export_exam_bundle`／`done` 全部既有 action，僅新增 `delivery` 及修正文案，避免破壞未知的外部 switch／enum。回歸測試明確核對既有 action 集合，並在 OpenAI 與 MCP Apps 兩種 widget 宿主測試 `done` 與待驗收文字並存，重新整理也不會觸發匯出或任何新動作。逐題 `exported` 與合輯 `current` 也保留，意義只是版本與匯出狀態。
 
 這輪沒有提供驗收通過的儲存工具，所以即使外部已人工核對，進度 API 仍不會自行宣布通過；後續須以上述版本綁定的證據設計補足。單題及直接 `export_exam_bundle` 的原始下載回應尚未新增 `delivery` 欄位；本次狀態保護作用於試卷進度及總覽。也未修改正式資料、答案內容、模板、全域字型、部署或依賴鎖定版本。
 
@@ -68,7 +70,8 @@
 - `npm run check`：exit 0。
 - `npm run build`：exit 0。
 - 進度檔測試：26／26 通過，含兩種儲存介面的新增孤立標題案例；其後補充的格式缺漏及無效模板斷言也在下列完整測試中通過。
-- Node `v24.19.0` 完整測試：313 項，288 通過、0 失敗、25 跳過，exit 0；約 52 秒。使用與 `scripts/run-tests.js` 相同的全部 `tests/**/*.test.ts` 檔案，另選 TAP reporter 留存結果。完整紀錄在工作目錄上層 `quality-tests-node24.tap`。
+- 相容性重點測試（progress、widget、MCP contract）：77 項，76 通過、0 失敗、1 跳過（缺少舊版 checkout），exit 0；紀錄為上層 `quality-compatibility.tap`。
+- Node `v24.19.0` 最終完整測試：315 項，290 通過、0 失敗、25 跳過，exit 0；約 44 秒。使用與 `scripts/run-tests.js` 相同的全部 `tests/**/*.test.ts` 檔案，另選 TAP reporter 留存結果。完整紀錄在工作目錄上層 `quality-tests-node24.tap`。相容性修正後的型別檢查與建置也以同一 Node 24 重跑，均為 exit 0。
 - 25 項跳過涉及 166 專用字型、Noto CJK／實際轉檔等前置環境、Firestore emulator、contract provenance 的舊版 checkout，以及實際 Docker build context；各項原始跳過原因在 TAP 中。既有 MCP contract 檢查通過，但重新產生舊版 provenance 的測試未執行。CloudStore 測試使用 fake，不代表正式 Firestore／GCS 已驗收。
 - `git diff --check`：exit 0。
 
