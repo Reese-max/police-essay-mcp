@@ -39,7 +39,7 @@ const artifactNames = async (store: FileStore) => fs.readdir(store.artifactDir).
 });
 
 test("create stores exam/question/targets in revision 1 and invalid targets save nothing", async () => withClient(async (client, store) => {
-  const args = { title: "第一題", exam: "114年警察特考", questionNo: 1, sections: [{ id: "intro", heading: "前言", text: "論述。" }],
+  const args = { templateId: "police_information_essay", title: "第一題", exam: "114年警察特考", questionNo: 1, sections: [{ id: "intro", heading: "前言", text: "論述。" }],
     lineTargets: [{ sectionId: "intro", lines: 3 }] };
   const created = await client.callTool({ name: "create_answer", arguments: args });
   const id = data<{ answer: { id: string; version: number } }>(created).answer.id;
@@ -307,7 +307,7 @@ test("166 bundle shares its single PDF font and two-page policy", { skip: !proce
 }));
 
 test("idempotent create preserves raw canonical request, replays current state and never copies its hash", async () => withClient(async (client, store) => {
-  const args = { title: "可重試", idempotencyKey: "retry_key_01", exam: "測試", questionNo: 4,
+  const args = { templateId: "police_information_essay", title: "可重試", idempotencyKey: "retry_key_01", exam: "測試", questionNo: 4,
     question: "題目", lineTargets: [{ sectionId: "body", lines: 4 }], sections: [{ id: "body", text: "第一段\r\n第二段", paragraphFormat: { leftIndent: 2 } }] };
   const created = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: args }));
   const id = "ans_idem-" + createHash("sha256").update(args.idempotencyKey).digest("hex").slice(0, 40);
@@ -315,7 +315,7 @@ test("idempotent create preserves raw canonical request, replays current state a
   const canonical = (value: unknown) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
   const { idempotencyKey: _key, ...request } = args;
-  const expectedHash = createHash("sha256").update(canonical({ templateId: "police_information_essay", ...request })).digest("hex");
+  const expectedHash = createHash("sha256").update(canonical({ ...request, templateId: "police_information_essay" })).digest("hex");
   assert.equal((await store.getAnswer(id)).createRequestHash, expectedHash);
   let saves = 0;
   const save = store.saveAnswer.bind(store);
@@ -343,7 +343,7 @@ test("idempotent create preserves raw canonical request, replays current state a
 }));
 
 test("create handles a missed preflight race and rejects a legacy id without a request hash", async () => withClient(async (client, store) => {
-  const args = { title: "競態", idempotencyKey: "race_key_01", sections: [{ text: "正文" }] };
+  const args = { templateId: "police_information_essay", title: "競態", idempotencyKey: "race_key_01", sections: [{ text: "正文" }] };
   const first = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: args }));
   const get = store.getAnswer.bind(store); let missed = false, saves = 0;
   store.getAnswer = async id => {
@@ -364,7 +364,7 @@ test("create handles a missed preflight race and rejects a legacy id without a r
 
 type Batch = { answers: Array<{ index: number; answerId: string; title: string; exam?: string; questionNo?: number;
   version: number; fits: boolean; totalLines: number; capacity: number; overflowLines: number; replayed?: boolean }> };
-const batchRequests = () => [1, 2, 3].map(index => ({ title: `題目${index}`, exam: "測試考試", questionNo: index,
+const batchRequests = () => [1, 2, 3].map(index => ({ templateId: "police_information_essay", title: `題目${index}`, exam: "測試考試", questionNo: index,
   idempotencyKey: `batch_key_${index}`, sections: [{ id: "body", text: `答案${index}` }] }));
 
 test("batch creates ordered summaries and replays every item without saving again", async () => withClient(async (client, store) => {
@@ -384,11 +384,11 @@ test("batch creates ordered summaries and replays every item without saving agai
 
 test("batch validation lists only failed item indices and never saves any item", async () => withClient(async (client, store) => {
   const answers = [batchRequests()[0],
-    { title: "錯誤目標", sections: [{ id: "body", text: "文" }], lineTargets: [{ sectionId: "missing", lines: 3 }] },
-    { title: "未知模板", templateId: "missing_template" }, { title: "錯誤欄位", sections: [{ text: 42 }] },
-    { title: "無法排版", sections: [{ text: "文", paragraphFormat: { leftIndent: 100 } }] },
-    { title: "重複區塊", sections: [{ id: "same", text: "甲" }, { id: "same", text: "乙" }] },
-    { title: "非 strict", extra: true }];
+    { templateId: "police_information_essay", title: "錯誤目標", sections: [{ id: "body", text: "文" }], lineTargets: [{ sectionId: "missing", lines: 3 }] },
+    { title: "未知模板", templateId: "missing_template" }, { templateId: "police_information_essay", title: "錯誤欄位", sections: [{ text: 42 }] },
+    { templateId: "police_information_essay", title: "無法排版", sections: [{ text: "文", paragraphFormat: { leftIndent: 100 } }] },
+    { templateId: "police_information_essay", title: "重複區塊", sections: [{ id: "same", text: "甲" }, { id: "same", text: "乙" }] },
+    { templateId: "police_information_essay", title: "非 strict", extra: true }];
   const invalid = await client.callTool({ name: "create_answers", arguments: { answers } });
   assert.equal(invalid.isError, true);
   const lines = text(invalid).split("\n");
@@ -830,7 +830,7 @@ test("render tool model summaries contain no lines or sections; component metada
 }));
 
 test("storage-only createRequestHash is absent from all full tool snapshots, including previews and widget metadata", async () => withClient(async (client, store) => {
-  const created = await client.callTool({ name: "create_answer", arguments: { title: "privacy", idempotencyKey: "privacy_key_01", sections: [{ id: "body", text: "body" }], responseDetail: "full" } });
+  const created = await client.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "privacy", idempotencyKey: "privacy_key_01", sections: [{ id: "body", text: "body" }], responseDetail: "full" } });
   const id = data<AnswerSnapshot>(created).answer.id;
   assert.ok((await store.getAnswer(id)).createRequestHash);
   const requests = [

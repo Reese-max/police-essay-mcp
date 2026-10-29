@@ -467,7 +467,7 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
       "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "move_section", "preview_change", "read_answer",
       "reflow_answer", "render_answer_sheet", "render_exam_overview", "renumber_items", "replace_text", "restore_revision", "set_line_targets", "start_exam", "update_answer_info", "write_answer",
     ]);
-    const created = await client.callTool({ name: "create_answer", arguments: { title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
+    const created = await client.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);
     assert.equal((await readdir(path.join(runtime.root, "answers"))).length, 1);
     const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;

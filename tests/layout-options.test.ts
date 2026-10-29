@@ -174,7 +174,7 @@ for (const paper of [false, true]) test(`split warnings reach check, bundle and 
   }));
 
 test("create tools default and partially override options; hash includes only supplied options", async () => withClient(async (client, store) => {
-  const args = { title: "預設", sections, idempotencyKey: "layout_hash_01" };
+  const args = { templateId: template.id, title: "預設", sections, idempotencyKey: "layout_hash_01" };
   const created = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...args, responseDetail: "full" } }));
   assert.deepEqual(created.answer.layoutOptions, enabled);
   assert.deepEqual((await store.getRevision(created.answer.id, 1)).layoutOptions, enabled);
@@ -185,19 +185,19 @@ test("create tools default and partially override options; hash includes only su
   const reused = await client.callTool({ name: "create_answer", arguments: { ...args, layoutOptions: {} } });
   assert.equal(reused.isError, true); assert.match(text(reused), /IDEMPOTENCY_KEY_REUSED/);
   const batch = data<{ answers: Array<{ answerId: string }> }>(await client.callTool({ name: "create_answers", arguments: { answers: [
-    { title: "批次預設", sections }, { title: "部分", sections, layoutOptions: { wholeLatinWords: false } },
+    { templateId: template.id, title: "批次預設", sections }, { templateId: template.id, title: "部分", sections, layoutOptions: { wholeLatinWords: false } },
   ] } }));
   assert.deepEqual((await store.getAnswer(batch.answers[0].answerId)).layoutOptions, enabled);
   assert.deepEqual((await store.getAnswer(batch.answers[1].answerId)).layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true });
   const explicit = { ...args, idempotencyKey: "layout_hash_02", layoutOptions: { wholeLatinWords: false } };
   const first = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...explicit, responseDetail: "full" } }));
   const { idempotencyKey: _key, ...request } = explicit;
-  assert.equal((await store.getAnswer(first.answer.id)).createRequestHash, createHash("sha256").update(canonical({ templateId: template.id, ...request })).digest("hex"));
+  assert.equal((await store.getAnswer(first.answer.id)).createRequestHash, createHash("sha256").update(canonical({ ...request, templateId: template.id })).digest("hex"));
   assert.deepEqual(first.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true });
   assert.equal(data<{ replayed: boolean }>(await client.callTool({ name: "create_answer", arguments: explicit })).replayed, true);
   assert.throws(() => answerDocumentSchema.parse({ ...first.answer, layoutOptions: { extra: true } }), /Unrecognized/);
   for (const name of ["create_answer", "update_answer_info"] as const) {
-    const invalid = await client.callTool({ name, arguments: { title: "無效", answerId: first.answer.id, layoutOptions: { extra: true } } });
+    const invalid = await client.callTool({ name, arguments: { templateId: template.id, title: "無效", answerId: first.answer.id, layoutOptions: { extra: true } } });
     assert.equal(invalid.isError, true);
   }
 }));

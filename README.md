@@ -4,6 +4,14 @@
 
 它把答案保存成有順序的 sections 與可獨立格式化的 paragraphs，透過固定模板計算中英文字寬與實際行數，再提供縮排、對齊、段落間距、Tab、標題粗體／編號、局部修改、溢出檢查與 DOCX/PDF 固定格線輸出。預設模板是 A4、2 頁、每頁 22 行。
 
+## 新建答案的預設模板
+
+`create_answer` 與 `create_answers`（含 `start_exam` 全卷流程）省略 `templateId` 時，使用 `police_information_essay_166` 原稿紙：A4、兩頁、每頁 22 行、19pt 教育部標準楷書、原底圖與自然字距。必須先設定 `ESSAY_MCP_PAPER_FONT`，字型來源與 SHA 校驗見 [166 工作流](docs/original-paper-workflow.md)；缺少、遭修改或缺字會明確失敗，不會改用一般模板或替代字型。
+
+一般模板及其粗體、縮排等格式仍可明確指定 `templateId: "police_information_essay"`。既有答案、預覽、複製與匯出沿用各答案儲存的模板，不遷移資料。`load_exam_paper` 不帶答案時使用新預設；帶 `answerId` 且省略模板時沿用該答案，明確指定不符模板仍拒絕。既有一般模板資源 URI `essay://templates/police_information_essay` 保持原意。
+
+同一 `idempotencyKey` 的省略模板重試沿用已存答案模板，完整請求雜湊仍會拒絕不同內容或明確改模板。匯出成功仍是 `delivery.status=awaiting_review`，不代表內容、來源或視覺已驗收。
+
 ## 執行
 
 ```powershell

@@ -41,7 +41,7 @@ import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 import { examProgress } from "./exam-progress.js";
 import { toolScope } from "./oauth.js";
 
-export const DEFAULT_TEMPLATE_ID = "police_information_essay";
+export const DEFAULT_TEMPLATE_ID = "police_information_essay_166";
 
 const responseDetailSchema = z.enum(["summary", "full"]).default("summary").describe("Full snapshot or compact summary.");
 const expectedVersionSchema = z.number().int().positive().optional();
@@ -168,6 +168,36 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   if (!parsed.success) throw new CreateError("INVALID_INPUT", parsed.error.issues.map(issue => `${issue.path.join(".") || "輸入"}：${issue.message}`).join("；"));
   const request = parsed.data;
   const keyHash = request.examId && request.idempotencyKey ? sha256(request.idempotencyKey) : undefined;
+  let savedCreate: AnswerDocument | undefined;
+  // An omitted template on a retry follows the saved answer, even if the default changed.
+  // The full request hash below still rejects a changed payload or explicit template.
+  if ((input as CreateRequest).templateId === undefined && request.idempotencyKey) {
+    let savedId = request.examId ? undefined : `ans_idem-${sha256(request.idempotencyKey).slice(0, 40)}`;
+    if (request.examId && keyHash) {
+      const plan = await store.getExam(request.examId);
+      const entry = plan.createRequests?.[keyHash];
+      savedId = entry && plan.questions.find(q => q.questionNo === entry.questionNo)?.answerId;
+    }
+    if (savedId) try {
+      savedCreate = await store.getAnswer(savedId);
+      if (request.examId) request.templateId = savedCreate.templateId;
+    }
+    catch (error) { if (!isStoreNotFound(error)) throw error; }
+  }
+  const createRequestHash = (templateId = request.templateId) => {
+    const { title, question, exam, questionNo, lineTargets } = request;
+    const received = input as CreateRequest;
+    return sha256(canonicalJson({ templateId, title, question, exam, questionNo, lineTargets,
+      sections: received.sections ?? [], ...(received.layoutOptions === undefined ? {} : { layoutOptions: received.layoutOptions }) }));
+  };
+  if (savedCreate && !request.examId) {
+    // The former default also lets a damaged stored template reach the existing replay diagnostics.
+    const replayTemplate = [request.templateId, savedCreate.templateId, "police_information_essay"]
+      .find(templateId => savedCreate!.createRequestHash === createRequestHash(templateId));
+    if (replayTemplate) request.templateId = replayTemplate;
+    const replay = await createReplay(store, { ...savedCreate, createRequestHash: createRequestHash() });
+    if (replay) return replay;
+  }
   const requestHash = keyHash ? sha256(canonicalJson({ ...(input as CreateRequest), templateId: request.templateId, sections: (input as CreateRequest).sections ?? [] })) : undefined;
   if (keyHash) for (const exam of await store.listExams()) {
     if (exam.createRequests?.[keyHash] && exam.createRequests[keyHash].requestHash !== requestHash)
@@ -218,9 +248,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   if (idempotencyKey && !request.examId) {
     answer.id = `ans_idem-${sha256(idempotencyKey).slice(0, 40)}`;
     // Only templateId gets its default before hashing; sections retain input fields and newlines.
-    const received = input as CreateRequest;
-    current.answer = { ...answer, createRequestHash: sha256(canonicalJson({ templateId, title, question, exam, questionNo,
-      lineTargets, sections: received.sections ?? [], ...(received.layoutOptions === undefined ? {} : { layoutOptions: received.layoutOptions }) })) };
+    current.answer = { ...answer, createRequestHash: createRequestHash() };
     const replay = await createReplay(store, current.answer);
     if (replay) return replay;
   }
@@ -655,7 +683,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     {
       instructions:
-        "這是一個固定版面國考申論答題紙 MCP。多題先呼叫 start_exam；單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，單題呼叫 render_answer_sheet；多題只呼叫一次 render_exam_overview 顯示同一畫板的題目分頁。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION,
+        "新建答案及全卷建立省略 templateId 時使用 police_information_essay_166；須配置已校驗教育部標準楷書，字型缺少時明確失敗。明確選其他模板及既有答案沿用原模板。這是一個固定版面國考申論答題紙 MCP。多題先呼叫 start_exam；單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，單題呼叫 render_answer_sheet；多題只呼叫一次 render_exam_overview 顯示同一畫板的題目分頁。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION,
     },
   );
 
@@ -704,7 +732,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       mimeType: "application/json",
     },
     async (uri) => {
-      const template = await store.getTemplate(DEFAULT_TEMPLATE_ID);
+      const template = await store.getTemplate("police_information_essay");
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(template, null, 2) }],
       };
@@ -725,7 +753,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         mimeType: "text/markdown",
         text: [
           "# 申論答題紙工作流程",
-          "1. create_answer 一次帶 exam、questionNo、lineTargets 與 sections；lineTargets.sectionId 必須等於 sections 明確提供的 id，在版本 1 儲存；load_exam_paper 可先查看模板。" + PAPER_FORMAT_INSTRUCTION,
+          "1. create_answer 一次帶 exam、questionNo、lineTargets 與 sections；lineTargets.sectionId 必須等於 sections 明確提供的 id，在版本 1 儲存；load_exam_paper 可先查看模板。省略 templateId 時新建答案使用 police_information_essay_166；明確選其他模板及既有答案沿用原模板。" + PAPER_FORMAT_INSTRUCTION,
           "建立重試帶相同 idempotencyKey 與請求；不同請求不可共用 key。create_answers 一次 1–10 題，全數驗證後逐題儲存，每題使用不同 key；部分儲存失敗會列出已建立項目。",
           "2. 只修改需要變更的文字：edit_text 改字句，replace_text 整段改寫，write_answer 整份重寫；format_section 只改格式。修改帶 expectedVersion，可先用 preview_change 預覽。",
           "3. 寫入預設回傳摘要；完整文字用 read_answer，或寫入時指定 responseDetail=full。read_answer 只回傳資料，不顯示畫板；單題畫板用 render_answer_sheet；多題只呼叫一次 render_exam_overview，以分頁切換，不要逐題開畫板。",
@@ -782,7 +810,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "載入申論答題紙",
       description: "Use this when the user wants to load a template or reopen an existing essay answer with its calculated grid layout.",
       inputSchema: {
-        templateId: z.string().default(DEFAULT_TEMPLATE_ID),
+        templateId: rawCreateInput(z.string().default(DEFAULT_TEMPLATE_ID)).optional(),
         answerId: answerIdSchema.optional(),
       },
       outputSchema: z.object({
@@ -794,14 +822,16 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       _meta: ANSWER_SHEET_UI_META,
     },
     async ({ templateId, answerId }) => {
-      const template = await store.getTemplate(templateId);
+      z.string().optional().parse(templateId);
+      const answer = answerId ? await store.getAnswer(answerId) : undefined;
+      const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
       if (!answerId) {
         return {
           structuredContent: { template },
           content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。`),
         };
       }
-      const answer = await store.getAnswer(answerId);
+      if (!answer) throw new Error("Answer not found");
       if (answer.templateId !== template.id) {
         throw new Error(`答案使用的模板是 ${answer.templateId}，不是 ${template.id}。`);
       }
@@ -872,6 +902,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: {
         responseDetail: responseDetailSchema,
         ...createFields,
+        templateId: rawCreateInput(createFields.templateId).optional(),
         sections: rawCreateInput(createRequestSchema.shape.sections).default([]),
       },
       outputSchema: snapshotOutputSchema,

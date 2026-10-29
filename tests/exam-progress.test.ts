@@ -32,7 +32,8 @@ async function fixture(cloud: boolean, run: (store: EssayStore, other: EssayStor
   finally { await fs.rm(root, { recursive: true, force: true }); }
 }
 const call = (client: Client, name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
-const draft = (examId: string, questionNo: number, lines = 1) => ({ examId, questionNo, title: `第${questionNo}題`,
+// These progress/rollback fixtures exercise the general template, independent of private paper fonts.
+const draft = (examId: string, questionNo: number, lines = 1) => ({ templateId: "police_information_essay", examId, questionNo, title: `第${questionNo}題`,
   sections: [{ id: "body", text: Array.from({ length: lines }, () => "論述。").join("\n") }] });
 
 for (const cloud of [false, true]) {
@@ -152,11 +153,11 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} implicit qu
   const h = await connect(store);
   try {
     const id = data(await call(h.client, "start_exam", { title: "續寫", questions: [{ questionNo: 3 }, { questionNo: 1 }, { questionNo: 2 }] })).examId;
-    const implicit = { examId: id, title: "第一題", idempotencyKey: "implicit-key-01" };
+    const implicit = { templateId: "police_information_essay", examId: id, title: "第一題", idempotencyKey: "implicit-key-01" };
     const first = data(await call(h.client, "create_answer", implicit)); assert.equal(first.answer.questionNo, 1);
     assert.equal(data(await call(h.client, "create_answer", implicit)).answer.id, first.answer.id);
     assert.equal((await store.listAnswers()).length, 1);
-    const batch = { examId: id, answers: [{ title: "第二題", idempotencyKey: "implicit-key-02" }, { title: "第三題", idempotencyKey: "implicit-key-03" }] };
+    const batch = { examId: id, answers: [{ templateId: "police_information_essay", title: "第二題", idempotencyKey: "implicit-key-02" }, { templateId: "police_information_essay", title: "第三題", idempotencyKey: "implicit-key-03" }] };
     const created = data(await call(h.client, "create_answers", batch)); assert.deepEqual(created.answers.map((a: any) => a.questionNo), [2, 3]);
     const replay = data(await call(h.client, "create_answers", batch)); assert.ok(replay.answers.every((a: any) => a.replayed));
     assert.equal((await store.listAnswers()).length, 3);
@@ -248,7 +249,7 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} default bun
   try {
     const id = data(await call(h.client, "start_exam", { title: "預設格式", questions: [{ questionNo: 1 }] })).examId;
     assert.deepEqual((await store.getExam(id)).formats, ["pdf", "docx"]);
-    data(await call(h.client, "create_answer", draft(id, 1)));
+    data(await call(h.client, "create_answer", { ...draft(id, 1), templateId: "police_information_essay" }));
     const result = data(await call(h.client, "export_exam_bundle", { examId: id }));
     assert.deepEqual(result.files.map((f: any) => f.format), ["pdf", "docx"]);
     assert.deepEqual((await store.getExam(id)).lastBundle?.pages, { pdf: 2, docx: 2 });

@@ -129,7 +129,7 @@ test("OAuth HTTP discovery, challenge, independent scopes and principal isolatio
     assert.match(JSON.stringify(missingTemplate), /找不到模板/);
     assert.ok(!JSON.stringify(missingTemplate).includes("ENOENT"));
     assert.ok(!JSON.stringify(missingTemplate).includes(store.resolveExportPath("private", "txt")));
-    const created = await owner.callTool({ name: "create_answer", arguments: { title: "Alice", sections: [{ id: "body", text: "PRIVATE_ALICE" }] } });
+    const created = await owner.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "Alice", sections: [{ id: "body", text: "PRIVATE_ALICE" }] } });
     assert.equal(created.isError, undefined);
     const id = (created.structuredContent as { answer: { id: string } }).answer.id;
     const exported = await owner.callTool({ name: "export_text", arguments: { answerId: id, filename: "alice" } });
