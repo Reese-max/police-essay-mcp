@@ -9,6 +9,7 @@ import { FileStore } from "../src/storage.js";
 
 // Isolated MCP run, no API calls, no production data, no reference-file transfer.
 const input = JSON.parse(await fs.readFile("examples/reference-comparison-1-2.json", "utf8"));
+await fs.mkdir(path.resolve("tmp/pdfs"), { recursive: true });
 const root = await fs.mkdtemp(path.resolve("tmp/pdfs/default166-"));
 const output = path.resolve("output/pdf/default166-reference-comparison");
 await fs.mkdir(output, { recursive: true });

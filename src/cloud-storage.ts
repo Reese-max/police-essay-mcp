@@ -1,3 +1,4 @@
+import { encodeAnswer, decodeAnswer } from "./answer-codec.js";
 import { Firestore, FieldValue, Timestamp } from "@google-cloud/firestore";
 import { Storage } from "@google-cloud/storage";
 import { createHash, randomUUID } from "node:crypto";
@@ -94,9 +95,7 @@ export class CloudStore implements EssayStore {
     if (!value || (value as { ownerKey?: string }).ownerKey !== this.options.ownerKey) {
       throw new StoreNotFoundError("Answer not found.");
     }
-    const parsed = answerDocumentSchema.safeParse(value);
-    if (!parsed.success) throw new StoreUnavailableError();
-    return parsed.data;
+    try { return decodeAnswer(value); } catch { throw new StoreUnavailableError(); }
   }
   private examRef(id: string) { return this.options.firestore.doc(this.userPath + "/exams/" + safeId(id)); }
   private parseExam(value: unknown): ExamPlan {
@@ -171,7 +170,7 @@ export class CloudStore implements EssayStore {
     const ref = this.answerRef(normalized.id);
     const ids = normalized.sections.map(section => section.id);
     if (new Set(ids).size !== ids.length) throw new Error("Duplicate section id.");
-    if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_ANSWER_BYTES) throw new Error("Answer exceeds 700 KiB document limit.");
+    if (Buffer.byteLength(JSON.stringify(encodeAnswer(normalized))) > MAX_ANSWER_BYTES) throw new Error("Answer exceeds 700 KiB document limit.");
     // An unrenderable candidate must not enter the transaction or revision history.
     // A calculable layout that exceeds the page limit remains editable and may be saved.
     layoutSections(await this.getTemplate(normalized.templateId), normalized.sections, normalized.layoutOptions);
@@ -185,7 +184,7 @@ export class CloudStore implements EssayStore {
       } else if (current) {
         throw new StoreConflictError("答案 " + normalized.id + " 已存在；更新既有答案時必須提供 expectedVersion。");
       }
-      const committed = { ...normalized, version: current ? current.version + 1 : 1,
+      const committed = { ...encodeAnswer(normalized), version: current ? current.version + 1 : 1,
         createdAt: current?.createdAt ?? normalized.createdAt,
         schemaVersion: 1, ownerKey: this.options.ownerKey, committedAt: FieldValue.serverTimestamp() };
       transaction.set(ref, committed);

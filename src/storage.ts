@@ -1,3 +1,4 @@
+import { encodeAnswer, decodeAnswer } from "./answer-codec.js";
 import { promises as fs } from "node:fs";
 import { layoutSections } from "./layout.js";
 import { randomUUID } from "node:crypto";
@@ -215,7 +216,7 @@ export class FileStore implements EssayStore {
   async getAnswer(answerId: string): Promise<AnswerDocument> {
     const filename = path.join(this.answerDir, `${safeId(answerId)}.json`);
     const raw = await fs.readFile(filename, "utf8");
-    return answerDocumentSchema.parse(JSON.parse(raw));
+    return decodeAnswer(JSON.parse(raw));
   }
 
   private async withAnswerWriteLock<T>(answerId: string, operation: () => Promise<T>): Promise<T> {
@@ -264,7 +265,7 @@ export class FileStore implements EssayStore {
       const write = async (target: string, value: AnswerDocument) => {
         const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
         try {
-          await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+          await fs.writeFile(temporary, `${JSON.stringify(encodeAnswer(value), null, 2)}\n`, "utf8");
           await renameReplacing(temporary, target);
         } finally {
           await fs.rm(temporary, { force: true }).catch(() => undefined);
@@ -285,7 +286,7 @@ export class FileStore implements EssayStore {
   async getRevision(answerId: string, version: number): Promise<AnswerDocument> {
     const filename = path.join(this.revisionDir, safeId(answerId), `${version}.json`);
     try {
-      return answerDocumentSchema.parse(JSON.parse(await fs.readFile(filename, "utf8")));
+      return decodeAnswer(JSON.parse(await fs.readFile(filename, "utf8")));
     } catch (error) {
       if (isStoreNotFound(error)) throw new StoreNotFoundError("找不到版本紀錄。");
       throw error;
@@ -364,7 +365,7 @@ export class FileStore implements EssayStore {
     const answers = await Promise.all(
       filenames.map(async (filename) => {
         const raw = await fs.readFile(path.join(this.answerDir, filename), "utf8");
-        return answerDocumentSchema.parse(JSON.parse(raw));
+        return decodeAnswer(JSON.parse(raw));
       }),
     );
     return answers.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
