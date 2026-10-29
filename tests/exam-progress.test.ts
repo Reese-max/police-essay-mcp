@@ -98,6 +98,8 @@ for (const cloud of [false, true]) {
       const id = data(await call(c, "start_exam", { title: "四題試卷", questions: [{ questionNo: 2 }, { questionNo: 1 }], formats: ["pdf"] })).examId;
       const progress = async () => { const r = await call(c, "get_exam_progress", { examId: id }); assert.doesNotMatch(JSON.stringify(r), /[%％]/); const p = data(r); assert.equal(text(r), p.summary); return p; };
       assert.deepEqual((await progress()).questions.map((q: any) => q.stage), ["not_started", "not_started"]);
+      assert.deepEqual((await progress()).delivery, { status: "not_ready", checks: {
+        layoutCapacity: "pending", content: "not_checked", source: "not_checked", visual: "not_checked" } });
       assert.equal((await progress()).nextStep.action, "create_answer"); assert.match((await progress()).summary, /第1題尚未建立/);
       const one = data(await call(c, "create_answer", draft(id, 1, 45))).answer.id;
       assert.equal((await progress()).questions[0].stage, "drafted");
@@ -109,6 +111,8 @@ for (const cloud of [false, true]) {
       data(await call(c, "create_answer", draft(id, 2))); assert.equal((await progress()).nextStep.action, "fix_layout");
       data(await call(c, "replace_text", { answerId: one, sectionId: "body", newText: "完成論述。", expectedVersion: 1 }));
       assert.equal((await progress()).nextStep.action, "export_exam_bundle"); assert.match((await progress()).summary, /版面皆通過；尚未匯出/);
+      assert.equal((await progress()).delivery.status, "not_ready");
+      assert.equal((await progress()).delivery.checks.layoutCapacity, "passed");
       const create = store.createExportHandle.bind(store); store.createExportHandle = async () => { throw new Error("renderer unavailable"); };
       assert.equal((await call(c, "export_exam_bundle", { examId: id })).isError, true); assert.equal((await store.getExam(id)).lastBundle, undefined);
       store.createExportHandle = create;
@@ -119,11 +123,22 @@ for (const cloud of [false, true]) {
       assert.equal(bundle.answers.length, 2); assert.deepEqual(bundle.answers.map((a: any) => a.answerId), (await progress()).questions.map((q: any) => q.answerId));
       assert.equal(notify.length, 8); assert.deepEqual(notify.map(p => p.progress), [1,2,3,4,5,6,7,8]); assert.equal(notify.at(-1).total, 8);
       const plan = await store.getExam(id); assert.equal(plan.lastBundle?.members[0].version, 2);
-      assert.equal((await progress()).bundle.status, "current"); assert.equal((await progress()).nextStep.action, "done");
-      assert.match((await progress()).summary, /成品已完成：4 頁 PDF 與 Word.*內容未經查證/);
+      const exported = await progress();
+      assert.equal(exported.bundle.status, "current"); assert.equal(exported.nextStep.action, "review_delivery");
+      assert.match(exported.summary, /合輯已匯出：4 頁 PDF 與 Word.*內容、來源與逐頁視覺驗收尚未完成/);
+      assert.doesNotMatch(exported.summary, /成品已完成/);
+      assert.deepEqual(exported.delivery, { status: "awaiting_review", checks: {
+        layoutCapacity: "passed", content: "not_checked", source: "not_checked", visual: "not_checked" } });
+      const review = data(await call(c, "render_exam_overview", { examId: id, responseDetail: "full" }));
+      assert.deepEqual(review.progress.delivery, exported.delivery);
+      assert.equal(review.progress.nextStep.action, "review_delivery");
+      assert.equal(review.progress.summary, exported.summary);
+      assert.deepEqual((await store.getExam(id)).lastBundle, plan.lastBundle, "reading progress must not record an approval");
       data(await call(c, "replace_text", { answerId: one, sectionId: "body", newText: "修訂論述。", expectedVersion: 2 }));
       const outdated = await progress(); assert.equal(outdated.bundle.status, "outdated"); assert.equal(outdated.questions[0].stage, "layout_ok");
       assert.equal(outdated.questions[1].stage, "exported"); assert.equal(outdated.nextStep.action, "export_exam_bundle"); assert.match(outdated.summary, /合輯已過期/);
+      assert.deepEqual(outdated.delivery, { status: "not_ready", checks: {
+        layoutCapacity: "passed", content: "not_checked", source: "not_checked", visual: "not_checked" } });
     } finally { await h.close(); }
   }));
 }
@@ -214,6 +229,7 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} invalid leg
       const progress = data(await call(h.client, "get_exam_progress", { examId: id }));
       assert.deepEqual(progress.questions.map((q: any) => q.stage), ["drafted", "layout_ok"]);
       assert.equal(progress.nextStep.action, "fix_layout"); assert.equal(progress.nextStep.questionNo, 1);
+      assert.equal(progress.delivery.status, "not_ready"); assert.equal(progress.delivery.checks.layoutCapacity, "pending");
       assert.ok(progress.questions[0].error); assert.doesNotMatch(progress.questions[0].error, /private|internal/);
       const overview = data(await call(h.client, "render_exam_overview", { examId: id, responseDetail: "full" }));
       assert.equal(overview.examAnswers.length, 2); assert.equal(overview.progress.questions[0].error, progress.questions[0].error);
@@ -234,14 +250,41 @@ for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} default bun
     const template = store.getTemplate.bind(store);
     store.getTemplate = async id => ({ ...await template(id), pages: 4 });
     const progress = data(await call(h.client, "get_exam_progress", { examId: id }));
-    assert.match(progress.summary, /成品已完成：2 頁 PDF 與 Word/);
+    assert.match(progress.summary, /合輯已匯出：2 頁 PDF 與 Word/);
     assert.deepEqual(progress.bundle.pages, { pdf: 2, docx: 2 });
     store.getTemplate = template;
     const plan = await store.getExam(id); await store.saveExam({ ...plan, formats: ["docx"] }, { expectedVersion: plan.version });
     const word = data(await call(h.client, "export_exam_bundle", { examId: id }));
     assert.deepEqual(word.files.map((f: any) => f.format), ["docx"]);
+    const wordPlan = await store.getExam(id);
+    await store.saveExam({ ...wordPlan, formats: ["pdf", "docx"] }, { expectedVersion: wordPlan.version });
+    const missingFormat = data(await call(h.client, "get_exam_progress", { examId: id }));
+    assert.equal(missingFormat.bundle.status, "outdated"); assert.equal(missingFormat.delivery.status, "not_ready");
+    assert.equal(missingFormat.nextStep.action, "export_exam_bundle");
     assert.equal((await call(h.client, "export_exam_bundle", { examId: id, formats: ["txt"] })).isError, true);
     assert.equal((await call(h.client, "start_exam", { title: "TXT拒絕", questions: [{ questionNo: 1 }], formats: ["txt"] })).isError, true);
+  } finally { await h.close(); }
+}));
+
+for (const cloud of [false, true]) test(`${cloud ? "cloud" : "file"} export with layout warnings still awaits delivery review`, async () => fixture(cloud, async store => {
+  const h = await connect(store);
+  try {
+    const id = data(await call(h.client, "start_exam", { title: "待驗收", questions: [{ questionNo: 1 }], formats: ["docx"] })).examId;
+    data(await call(h.client, "create_answer", { ...draft(id, 1), layoutOptions: { keepHeadingWithNext: false }, sections: [
+      { id: "padding", text: Array.from({ length: 21 }, () => "論述。").join("\n") },
+      { id: "orphan", heading: "標題", text: "正文。" },
+    ] }));
+    const result = data(await call(h.client, "export_exam_bundle", { examId: id }));
+    assert.ok(result.answers[0].warnings.some((w: any) => w.code === "ORPHAN_HEADING"));
+    const progress = data(await call(h.client, "get_exam_progress", { examId: id }));
+    assert.equal(progress.questions[0].warningCount, 1);
+    assert.equal(progress.bundle.status, "current");
+    assert.equal(progress.delivery.checks.layoutCapacity, "passed");
+    assert.equal(progress.delivery.status, "awaiting_review");
+    assert.equal(progress.delivery.checks.visual, "not_checked");
+    assert.equal(progress.nextStep.action, "review_delivery");
+    assert.match(progress.summary, /Word.*容量檢查通過/);
+    assert.doesNotMatch(progress.summary, /成品已完成|版面檢查通過/);
   } finally { await h.close(); }
 }));
 
