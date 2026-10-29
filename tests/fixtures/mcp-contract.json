@@ -29375,6 +29375,10 @@
       "reason": "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing."
     },
     {
+      "path": "*.tools[create_answer,load_exam_paper].inputSchema.templateId.default",
+      "reason": "User-authorized default for newly created answers and template-only loads is police_information_essay_166. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison."
+    },
+    {
       "path": "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
       "reason": "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix."
     }

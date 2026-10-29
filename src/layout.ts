@@ -228,6 +228,21 @@ function wrapParagraph(
   }
 
   if (current.length > 0 || lines.length === 0) lines.push(current);
+  if (options.avoidPunctuationOnlyLines) {
+    for (let index = 1; index < lines.length; index++) {
+      if (!/^[，。！？、；：,.!?;:…」』）】〉》]+$/u.test(lines[index])) continue;
+      const previous = lines[index - 1];
+      const last = splitGraphemes(previous).at(-1);
+      if (!last) continue;
+      const word = options.wholeLatinWords ? previous.match(/[A-Za-z0-9]+$/)?.[0] : undefined;
+      const carry = word && /\S/u.test(previous.slice(0, -word.length))
+        && displayWidth(word + lines[index]) <= columns - format.leftIndent - format.rightIndent ? word : last;
+      if (!/\S/u.test(previous.slice(0, -carry.length))
+        || displayWidth(carry + lines[index]) > columns - format.leftIndent - format.rightIndent) continue;
+      lines[index - 1] = previous.slice(0, -carry.length);
+      lines[index] = carry + lines[index];
+    }
+  }
   return lines;
 }
 

@@ -28,6 +28,12 @@ export async function examProgress(store: EssayStore, examId: string) {
     && (!plan.formats || plan.formats.every(f => plan.lastBundle?.formats.includes(f)));
   const bundle = { status: !plan.lastBundle ? "none" as const : current ? "current" as const : "outdated" as const,
     ...(plan.lastBundle ? { exportedAt: plan.lastBundle.exportedAt, pages: plan.lastBundle.pages } : {}) };
+  // Export/version freshness is observable; content, source and visual approval are not recorded.
+  // Keep those checks unknown even when capacity passes and all files have been exported.
+  const delivery = { status: current ? "awaiting_review" as const : "not_ready" as const, checks: {
+    layoutCapacity: questions.every(q => q.stage === "layout_ok" || q.stage === "exported") ? "passed" as const : "pending" as const,
+    content: "not_checked" as const, source: "not_checked" as const, visual: "not_checked" as const,
+  } };
   const missing = questions.find(q => q.stage === "not_started");
   const drafted = questions.find(q => q.stage === "drafted");
   const completed = questions.filter(q => q.stage === "layout_ok" || q.stage === "exported").map(q => q.questionNo);
@@ -43,6 +49,6 @@ export async function examProgress(store: EssayStore, examId: string) {
       message: `${doneText}內容已保存，從第${drafted.questionNo}題接續檢查版面。` }
     : !current ? { action: "export_exam_bundle" as const,
       message: `${questions.length}題版面皆通過；${bundle.status === "outdated" ? "合輯已過期，請重新匯出" : "尚未匯出合輯"}。` }
-    : { action: "done" as const, message: `成品已完成：${pageText}${fileText}（版面檢查通過；內容未經查證）。` };
-  return { examId, title: plan.title, questions, bundle, nextStep, summary: nextStep.message };
+    : { action: "done" as const, message: `合輯已匯出：${pageText}${fileText}（容量檢查通過；內容、來源與逐頁視覺驗收尚未完成）。` };
+  return { examId, title: plan.title, questions, bundle, delivery, nextStep, summary: nextStep.message };
 }

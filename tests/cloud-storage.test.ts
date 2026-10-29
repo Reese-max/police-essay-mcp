@@ -429,7 +429,7 @@ test("cloud exam bundle stores one immutable artifact with its first pinned vers
 test("cloud Round A idempotent creates race safely, batch retries replay, and owners remain isolated", async () => {
   const s = setup(); const store = s.store(); const client = await connect(store);
   try {
-    const args = { title: "重送", idempotencyKey: "cloud_race_01", sections: [{ id: "body", text: "正文" }] };
+    const args = { templateId: "police_information_essay", title: "重送", idempotencyKey: "cloud_race_01", sections: [{ id: "body", text: "正文" }] };
     const results = await Promise.all([1, 2].map(() => client.callTool({ name: "create_answer", arguments: args })));
     for (const result of results) assert.equal(result.isError, undefined, JSON.stringify(result));
     const docs = results.map(result => result.structuredContent as { answer: AnswerDocument; replayed?: boolean });
@@ -443,7 +443,7 @@ test("cloud Round A idempotent creates race safely, batch retries replay, and ow
       assert.equal(own.isError, undefined); assert.equal((own.structuredContent as { answer: AnswerDocument }).answer.id, docs[0].answer.id);
       assert.equal((await store.getAnswer(docs[0].answer.id)).title, args.title);
     } finally { await other.close(); }
-    const answers = [1, 2, 3].map(index => ({ title: `批次${index}`, idempotencyKey: `cloud_batch_${index}`, sections: [{ text: "文" }] }));
+    const answers = [1, 2, 3].map(index => ({ templateId: "police_information_essay", title: `批次${index}`, idempotencyKey: `cloud_batch_${index}`, sections: [{ text: "文" }] }));
     const first = await client.callTool({ name: "create_answers", arguments: { answers } });
     assert.equal(first.isError, undefined);
     const repeated = await client.callTool({ name: "create_answers", arguments: { answers } });
@@ -514,8 +514,8 @@ test("cloud batch document limit preflight rejects item 2 before saving item 1",
   const s = setup(), client = await connect(s.store());
   try {
     const result = await client.callTool({ name: "create_answers", arguments: { answers: [
-      { title: "可建立", idempotencyKey: "size_batch_01", sections: [{ text: "正文" }] },
-      { title: "超過文件上限", idempotencyKey: "size_batch_02", sections: Array.from({ length: 2 }, (_, index) => ({ id: `large_${index}`, text: "字".repeat(60000) })) },
+      { templateId: "police_information_essay", title: "可建立", idempotencyKey: "size_batch_01", sections: [{ text: "正文" }] },
+      { templateId: "police_information_essay", title: "超過文件上限", idempotencyKey: "size_batch_02", sections: Array.from({ length: 2 }, (_, index) => ({ id: `large_${index}`, text: "字".repeat(60000) })) },
     ] } });
     assert.equal(result.isError, true);
     assert.match(JSON.stringify(result.content), /第 2 項 INVALID_INPUT：.*700 KiB/);

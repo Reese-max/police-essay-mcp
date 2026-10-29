@@ -45,6 +45,8 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[check_layout,create_ans
   reason: "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing." },
 { path: "*.tools[*].inputSchema,*.tools[*].outputSchema,*.prompts[*].argsSchema: paragraph format and heading style fields",
   reason: "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing." },
+{ path: "*.tools[create_answer,load_exam_paper].inputSchema.templateId.default",
+  reason: "User-authorized default for newly created answers and template-only loads is police_information_essay_166. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison." },
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
@@ -174,6 +176,17 @@ export function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: 
 function withoutOutputSchemas<T extends { tools: ContractTool[] }>(view: T, drop: string[] = []): T {
   return { ...view, tools: view.tools.filter(tool => !drop.includes(tool.name)).map(({ outputSchema: _output, ...tool }) => tool) };
 }
+/** Guard the one authorized default change while preserving every other schema keyword. */
+export function withBaseTemplateDefault<T extends { tools: ContractTool[] }>(view: T): T {
+  return { ...view, tools: view.tools.map(tool => {
+    if (!["create_answer", "load_exam_paper"].includes(tool.name)) return tool;
+    const input = tool.inputSchema as JsonSchema;
+    const properties = input.properties as Record<string, JsonSchema>;
+    assert.equal(properties.templateId.default, "police_information_essay_166", `${tool.name} authorized template default`);
+    return { ...tool, inputSchema: { ...input, properties: { ...properties,
+      templateId: { ...properties.templateId, default: "police_information_essay" } } } };
+  }) };
+}
 /** Remove only declared optional additions; every remaining base input stays strictly compared. */
 export function withoutAddedInputs<T extends { tools: ContractTool[] }>(view: T): T {
   const writeTools = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "render_answer_sheet", "export_docx", "export_pdf", "export_text"];
@@ -276,7 +289,7 @@ export async function checkMcpContract() {
   const comparable = withBaseWidgetUri(current);
   assert.deepEqual(withoutFormatDefaults(current), current, "format fields must not declare defaults");
   const base = withoutFormatDefaults(fixture.contract) as typeof fixture.contract;
-  assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.owner, base.owner.tools)), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseDescriptions(comparable.reader, base.reader.tools)), ADDED_READ_TOOLS) },
+  assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseTemplateDefault(withBaseDescriptions(comparable.owner, base.owner.tools))), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseTemplateDefault(withBaseDescriptions(comparable.reader, base.reader.tools))), ADDED_READ_TOOLS) },
     { owner: withoutOutputSchemas(withoutBaseReadUi(base.owner), REMOVED_TOOLS), reader: withoutOutputSchemas(withoutBaseReadUi(base.reader), REMOVED_TOOLS) });
   for (const view of ["owner", "reader"] as const) {
     for (const baseTool of base[view].tools as ContractTool[]) {
@@ -314,7 +327,7 @@ export async function checkMcpContract() {
           return { ...tool, _meta: { ...tool._meta, securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", required])] }] } };
         });
       const listed = withBaseDescriptions({ tools: withBaseWidgetUri(JSON.parse(stableJson(tools)) as ContractTool[]) }, base.owner.tools).tools;
-      assert.deepEqual(withoutOutputSchemas(withoutAddedInputs({ tools: listed }), ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
+      assert.deepEqual(withoutOutputSchemas(withoutAddedInputs(withBaseTemplateDefault({ tools: listed })), ADDED_TOOLS).tools, withoutOutputSchemas({ tools: expected }).tools);
       for (const name of added) {
         assert.deepEqual(listed.find(tool => tool.name === name)?._meta?.securitySchemes,
           [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }]);

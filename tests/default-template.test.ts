@@ -1,0 +1,112 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createEssayMcpServer, DEFAULT_TEMPLATE_ID } from "../src/server.js";
+import { FileStore } from "../src/storage.js";
+import { withBaseTemplateDefault } from "../scripts/check-mcp-contract.js";
+
+const general = "police_information_essay", paper = "police_information_essay_166";
+async function withClient(run: (client: Client, store: FileStore) => Promise<void>) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "essay-default-template-"));
+  const store = new FileStore({ templateDir: path.resolve("templates"), answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
+  const server = createEssayMcpServer(store), client = new Client({ name: "default-template-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b); await client.listTools();
+  try { await run(client, store); }
+  finally { await client.close(); await server.close(); await fs.rm(root, { recursive: true, force: true }); }
+}
+async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+  const result = await client.callTool({ name, arguments: args });
+  assert.equal(result.isError, undefined, JSON.stringify(result));
+  return result.structuredContent as any;
+}
+const body = [{ id: "body", text: "資料與流程須相互配合。" }];
+
+test("contract normalization guards only the authorized template default", () => {
+  const input = { tools: [{ name: "create_answer", inputSchema: { properties: { templateId: { type: "string", default: paper }, title: { type: "string" } } } }] };
+  const before = structuredClone(input), normalized = withBaseTemplateDefault(input);
+  assert.equal(normalized.tools[0].inputSchema.properties.templateId.default, general);
+  assert.deepEqual(input, before);
+  assert.deepEqual(normalized.tools[0].inputSchema.properties.title, input.tools[0].inputSchema.properties.title);
+  assert.throws(() => withBaseTemplateDefault({ tools: [{ ...input.tools[0], inputSchema: { properties: { templateId: { default: general } } } }] }), /authorized template default/);
+});
+
+test("template-only load defaults to 166 and named general resource remains general", async () => withClient(async client => {
+  assert.equal(DEFAULT_TEMPLATE_ID, paper);
+  assert.equal((await call(client, "load_exam_paper")).template.id, paper);
+  assert.equal((await call(client, "load_exam_paper", { templateId: general })).template.id, general);
+  const resource = await client.readResource({ uri: "essay://templates/police_information_essay" });
+  assert.equal(JSON.parse((resource.contents[0] as { text: string }).text).id, general);
+}));
+
+test("missing paper font rejects omitted-template creation and saves no answer; explicit general still works", async () => withClient(async (client, store) => {
+  const prior = process.env.ESSAY_MCP_PAPER_FONT;
+  try {
+    delete process.env.ESSAY_MCP_PAPER_FONT;
+    const result = await client.callTool({ name: "create_answer", arguments: { title: "字型不可偷換", sections: body } });
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /ESSAY_MCP_PAPER_FONT/);
+    assert.equal((await store.listAnswers()).length, 0);
+    const batch = await client.callTool({ name: "create_answers", arguments: { answers: [
+      { templateId: general, title: "可用的一般模板", sections: body },
+      { title: "缺字型的預設模板", sections: body },
+    ] } });
+    assert.equal(batch.isError, true);
+    assert.match(JSON.stringify(batch), /ESSAY_MCP_PAPER_FONT/);
+    assert.equal((await store.listAnswers()).length, 0, "batch must not partially save when its default-template validation fails");
+    const created = await call(client, "create_answer", { templateId: general, title: "明確選一般", sections: body });
+    assert.equal((await store.getAnswer(created.answer.id)).templateId, general);
+  } finally { if (prior === undefined) delete process.env.ESSAY_MCP_PAPER_FONT; else process.env.ESSAY_MCP_PAPER_FONT = prior; }
+}));
+
+test("single, batch and exam omitted templates use 166; explicit overrides and existing answers survive", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
+  const first = await call(client, "create_answer", { title: "單題", sections: body });
+  assert.equal((await store.getAnswer(first.answer.id)).templateId, paper);
+  assert.equal((await call(client, "preview_change", { answerId: first.answer.id, operation: "replace_text", sectionId: "body", newText: "預覽保留原稿紙。" })).after.answer.templateId, paper);
+  await call(client, "create_answers", { answers: [{ title: "批次一", sections: body }, { title: "批次二", templateId: general, sections: body }] });
+  assert.deepEqual((await store.listAnswers()).map(a => a.templateId).sort(), [general, paper, paper].sort());
+  const plan = await call(client, "start_exam", { title: "全卷", questions: [{ questionNo: 1 }, { questionNo: 2 }] });
+  await call(client, "create_answers", { examId: plan.examId, answers: [{ title: "全卷一", sections: body }, { title: "全卷二", templateId: general, sections: body }] });
+  const savedPlan = await store.getExam(plan.examId);
+  assert.equal((await store.getAnswer(savedPlan.questions[0].answerId!)).templateId, paper);
+  assert.equal((await store.getAnswer(savedPlan.questions[1].answerId!)).templateId, general);
+  const old = await call(client, "create_answer", { title: "既有一般答案", templateId: general, sections: body });
+  const before = await store.getAnswer(old.answer.id);
+  assert.equal((await call(client, "load_exam_paper", { answerId: before.id })).template.id, general);
+  assert.equal((await client.callTool({ name: "load_exam_paper", arguments: { answerId: before.id, templateId: paper } })).isError, true);
+  await call(client, "preview_change", { answerId: before.id, operation: "replace_text", sectionId: "body", newText: "預覽內容。" });
+  const copied = await call(client, "duplicate_answer", { answerId: before.id });
+  assert.equal((await store.getAnswer(copied.answer.id)).templateId, general);
+  await call(client, "export_text", { answerId: before.id });
+  assert.deepEqual(await store.getAnswer(before.id), before);
+  assert.equal((await call(client, "get_exam_progress", { examId: plan.examId })).delivery.status, "not_ready");
+}));
+
+test("old omitted-template idempotent retries retain saved template and still reject changed payloads", async () => withClient(async (client, store) => {
+  // Old default hashes equal an explicit general request: defaults are resolved before hashing.
+  const args = { title: "舊單題重試", sections: body, idempotencyKey: "old-default-single" };
+  const created = await call(client, "create_answer", { ...args, templateId: general });
+  const before = await store.getAnswer(created.answer.id);
+  const replay = await call(client, "create_answer", args);
+  assert.equal(replay.replayed, true); assert.equal(replay.answer.id, before.id);
+  for (const changed of [{ ...args, title: "不同內容" }, { ...args, templateId: paper }])
+    assert.equal((await client.callTool({ name: "create_answer", arguments: changed })).isError, true);
+  const plan = await call(client, "start_exam", { title: "舊全卷重試", questions: [{ questionNo: 1 }] });
+  const examArgs = { title: "舊全卷一", examId: plan.examId, questionNo: 1, sections: body, idempotencyKey: "old-default-exam" };
+  const examCreated = await call(client, "create_answer", { ...examArgs, templateId: general });
+  const examBefore = await store.getAnswer(examCreated.answer.id);
+  assert.equal((await call(client, "create_answer", examArgs)).replayed, true);
+  assert.equal((await client.callTool({ name: "create_answer", arguments: { ...examArgs, title: "不同全卷內容" } })).isError, true);
+  assert.deepEqual(await store.getAnswer(before.id), before);
+  assert.deepEqual(await store.getAnswer(examBefore.id), examBefore);
+  const getAnswer = store.getAnswer.bind(store);
+  store.getAnswer = async id => id === before.id ? { ...before, templateId: "missing_replay_template" } : getAnswer(id);
+  const damaged = await client.callTool({ name: "create_answer", arguments: args });
+  assert.equal(damaged.isError, true);
+  assert.match(JSON.stringify(damaged), /TEMPLATE_NOT_FOUND/);
+  assert.ok(JSON.stringify(damaged).includes(before.id), "old omitted-template retry must retain replay diagnostics");
+}));

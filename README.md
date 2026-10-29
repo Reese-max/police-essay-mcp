@@ -4,6 +4,14 @@
 
 它把答案保存成有順序的 sections 與可獨立格式化的 paragraphs，透過固定模板計算中英文字寬與實際行數，再提供縮排、對齊、段落間距、Tab、標題粗體／編號、局部修改、溢出檢查與 DOCX/PDF 固定格線輸出。預設模板是 A4、2 頁、每頁 22 行。
 
+## 新建答案的預設模板
+
+`create_answer` 與 `create_answers`（含 `start_exam` 全卷流程）省略 `templateId` 時，使用 `police_information_essay_166` 原稿紙：A4、兩頁、每頁 22 行、19pt 教育部標準楷書、原底圖與自然字距。必須先設定 `ESSAY_MCP_PAPER_FONT`，字型來源與 SHA 校驗見 [166 工作流](docs/original-paper-workflow.md)；缺少、遭修改或缺字會明確失敗，不會改用一般模板或替代字型。
+
+一般模板及其粗體、縮排等格式仍可明確指定 `templateId: "police_information_essay"`。既有答案、預覽、複製與匯出沿用各答案儲存的模板，不遷移資料。`load_exam_paper` 不帶答案時使用新預設；帶 `answerId` 且省略模板時沿用該答案，明確指定不符模板仍拒絕。既有一般模板資源 URI `essay://templates/police_information_essay` 保持原意。
+
+同一 `idempotencyKey` 的省略模板重試沿用已存答案模板，完整請求雜湊仍會拒絕不同內容或明確改模板。匯出成功仍是 `delivery.status=awaiting_review`，不代表內容、來源或視覺已驗收。
+
 ## 執行
 
 ```powershell
@@ -78,6 +86,8 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 `get_exam_progress` 每題回傳 `not_started`（未建立）、`drafted`（已保存，版面待修正）、`layout_ok`（目前版本版面通過）或 `exported`（目前版本已收入合輯），並回傳合輯 `none`／`current`／`outdated` 與下一步 `create_answer`／`fix_layout`／`export_exam_bundle`／`done`。匯出後修改答案會讓合輯過期。舊答案版面無效時，該題回傳遮蔽路徑的 error 與 drafted，其餘題目仍可讀取。**版面通過僅代表容量符合，內容未經查證。**
 
+交付狀態另以 `delivery` 回傳：合輯尚未匯出、缺少計畫要求的格式或版本過期時，`status` 為 `not_ready`；目前版本及格式均已匯出時為 `awaiting_review`，摘要只宣告「合輯已匯出」。為相容既有客戶端，`nextStep.action=done` 保留為匯出流程終點，不能解讀為驗收通過。`checks.layoutCapacity` 只依目前各題的容量結果回傳 `pending`／`passed`，不表示品質警告已排除。`checks.content`、`source`、`visual` 固定為 `not_checked`，因為目前沒有保存內容、講義頁碼核對或逐頁視覺驗收的證據。待驗收是人工／助理核對階段，不是可呼叫的 MCP 工具；檢查時應逐題核對題意、來源與實際匯出頁面，不能因此重複建立或匯出。此版本尚未提供記錄驗收通過的工具。
+
 `render_exam_overview(examId)` 依題號顯示同一畫板，尚未建立的題目仍列為「未建立」。頂端只有一個考試進度區域（`role="status"`、`aria-live="polite"`），重新載入分頁及寫入後原地讀取最新進度；唯讀模式可以查進度、不能建立計畫或改寫答案。
 
 所有題目版面通過後，直接匯出一次，於同一則訊息提供 **PDF 與 Word 兩個下載連結**，不詢問是否匯出。整卷不提供 TXT；單題 TXT 保留供相容使用。
@@ -91,6 +101,10 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 3. `read_answer` 讀取完整文字；`check_layout` 讀取真實行數與品質警告（孤立標題、英文斷字，僅提醒、不阻擋匯出）。
 4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text`、`edit_text`、`move_section` 或 `renumber_items`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
+
+一般模板新答案另預設 `layoutOptions.avoidPunctuationOnlyLines=true`：自然換行若只剩結尾標點，將前行最後一個字素（可完整容納時優先保留英文整詞）連同標點放入下一行，保留全部文字與字級；明確輸入的獨立標點或分隔線不改動。舊答案省略此旗標時維持既有換行，可用 `update_answer_info` 明確啟用。未啟用且發生自然換行的純標點行會回報 `PUNCTUATION_ONLY_LINE`。166 的量測換行沿用既有實作。
+
+一般模板 PDF 在整行可容納時，會使用實際字形 advance 避免寬英文字母互相覆畫；放不下時保留原欄位位置並警告，不把更多字元推離頁面。實際字形寬度仍可能超出名義欄數，所以匯出 `fontWarning` 會指明合輯頁／行與不重疊排版所需寬度的超出點數。遇到這個警告應明確換行再匯出，不能把 `fits=true` 當成實際字形均在格內，也不會默默縮字或刪字。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
    - `move_section` 把區塊移到另一個區塊之前或之後。
    - 插入、刪除或搬移後，手寫編號（壹、一、（一）、1.、（1））若不再連續，`renumber_items` 會依層級重新編號：標題自成一串，各區塊的段落各自一串，下層遇到上層項目時從 1 重新起算。

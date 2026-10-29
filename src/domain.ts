@@ -172,6 +172,7 @@ export type ParagraphFormatPatch = z.input<typeof paragraphFormatPatchSchema>;
 export const layoutOptionsSchema = z.strictObject({
   wholeLatinWords: z.boolean().optional(),
   keepHeadingWithNext: z.boolean().optional(),
+  avoidPunctuationOnlyLines: z.boolean().optional(),
 });
 export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;
 

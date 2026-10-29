@@ -18,8 +18,8 @@ import { POLICE_ESSAY_WIDGET_HTML } from "../src/widget.js";
 import { originalPaperAvailableWidth, originalPaperMeasure } from "../src/original-paper.js";
 
 const template = templateSchema.parse(JSON.parse(await fs.readFile(new URL("../templates/police_information_essay.json", import.meta.url), "utf8")));
-const enabled = { wholeLatinWords: true, keepHeadingWithNext: true };
-const legacy = { wholeLatinWords: false, keepHeadingWithNext: false };
+const enabled = { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true };
+const legacy = { wholeLatinWords: false, keepHeadingWithNext: false, avoidPunctuationOnlyLines: false };
 
 test("whole Latin words preserve all characters, long words and breaks at spaces", () => {
   const narrow = { ...template, columns: 20 };
@@ -174,7 +174,7 @@ for (const paper of [false, true]) test(`split warnings reach check, bundle and 
   }));
 
 test("create tools default and partially override options; hash includes only supplied options", async () => withClient(async (client, store) => {
-  const args = { title: "預設", sections, idempotencyKey: "layout_hash_01" };
+  const args = { templateId: template.id, title: "預設", sections, idempotencyKey: "layout_hash_01" };
   const created = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...args, responseDetail: "full" } }));
   assert.deepEqual(created.answer.layoutOptions, enabled);
   assert.deepEqual((await store.getRevision(created.answer.id, 1)).layoutOptions, enabled);
@@ -185,19 +185,19 @@ test("create tools default and partially override options; hash includes only su
   const reused = await client.callTool({ name: "create_answer", arguments: { ...args, layoutOptions: {} } });
   assert.equal(reused.isError, true); assert.match(text(reused), /IDEMPOTENCY_KEY_REUSED/);
   const batch = data<{ answers: Array<{ answerId: string }> }>(await client.callTool({ name: "create_answers", arguments: { answers: [
-    { title: "批次預設", sections }, { title: "部分", sections, layoutOptions: { wholeLatinWords: false } },
+    { templateId: template.id, title: "批次預設", sections }, { templateId: template.id, title: "部分", sections, layoutOptions: { wholeLatinWords: false } },
   ] } }));
   assert.deepEqual((await store.getAnswer(batch.answers[0].answerId)).layoutOptions, enabled);
-  assert.deepEqual((await store.getAnswer(batch.answers[1].answerId)).layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true });
+  assert.deepEqual((await store.getAnswer(batch.answers[1].answerId)).layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true });
   const explicit = { ...args, idempotencyKey: "layout_hash_02", layoutOptions: { wholeLatinWords: false } };
   const first = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...explicit, responseDetail: "full" } }));
   const { idempotencyKey: _key, ...request } = explicit;
-  assert.equal((await store.getAnswer(first.answer.id)).createRequestHash, createHash("sha256").update(canonical({ templateId: template.id, ...request })).digest("hex"));
-  assert.deepEqual(first.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true });
+  assert.equal((await store.getAnswer(first.answer.id)).createRequestHash, createHash("sha256").update(canonical({ ...request, templateId: template.id })).digest("hex"));
+  assert.deepEqual(first.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true });
   assert.equal(data<{ replayed: boolean }>(await client.callTool({ name: "create_answer", arguments: explicit })).replayed, true);
   assert.throws(() => answerDocumentSchema.parse({ ...first.answer, layoutOptions: { extra: true } }), /Unrecognized/);
   for (const name of ["create_answer", "update_answer_info"] as const) {
-    const invalid = await client.callTool({ name, arguments: { title: "無效", answerId: first.answer.id, layoutOptions: { extra: true } } });
+    const invalid = await client.callTool({ name, arguments: { templateId: template.id, title: "無效", answerId: first.answer.id, layoutOptions: { extra: true } } });
     assert.equal(invalid.isError, true);
   }
 }));
@@ -229,7 +229,7 @@ test("legacy reads, update toggles, duplicates, previews and revisions use store
   assert.ok(revisions.revisions[0].changes.includes("整字換行：關 → 開"));
   const partial = data<AnswerSnapshot & { changes: string[] }>(await client.callTool({ name: "update_answer_info", arguments: {
     answerId: answer.id, layoutOptions: { wholeLatinWords: false }, responseDetail: "full" } }));
-  assert.deepEqual(partial.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true });
+  assert.deepEqual(partial.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true });
   assert.deepEqual(partial.changes, ["整字換行：開 → 關"]);
   const restored = data<AnswerSnapshot>(await client.callTool({ name: "restore_revision", arguments: { answerId: answer.id, version: 1, expectedVersion: 3, responseDetail: "full" } }));
   assert.deepEqual(restored.answer.layoutOptions, partial.answer.layoutOptions);

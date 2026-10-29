@@ -313,17 +313,29 @@ function drawGridLine(
   y: number,
   columnWidthPt: number,
   availableWidthPt: number,
-): void {
+): number {
   const characters = splitGraphemes(line.text);
-  const positions: Array<{ text: string; x: number }> = [];
+  const positions: Array<{ text: string; x: number; columnX: number }> = [];
   let currentColumn = startColumn;
+  let inkEnd = 0;
   for (const character of characters) {
-    if (character !== "\t") positions.push({ text: character, x: columnWidthPt * (currentColumn - startColumn) });
+    if (character !== "\t") {
+      // A wide Latin glyph can be wider than its nominal half-width column.
+      // Compute the actual advance; use it only if the complete run fits below.
+      const columnX = columnWidthPt * (currentColumn - startColumn);
+      const x = Math.max(columnX, inkEnd);
+      positions.push({ text: character, x, columnX });
+      inkEnd = x + document.widthOfString(character);
+    }
     currentColumn += characterDisplayWidth(character, line.format.tabSize, currentColumn);
   }
   const last = positions.at(-1);
-  if (!last) return;
-  const inkWidth = last.x + document.widthOfString(last.text);
+  if (!last) return 0;
+  const requiredWidth = inkEnd;
+  // When the complete run cannot fit at this font size, preserve its legacy column
+  // positions and warn. Expanding it would push additional glyphs off the page.
+  if (requiredWidth > availableWidthPt) positions.forEach(part => { part.x = part.columnX; });
+  const inkWidth = Math.max(...positions.map(part => part.x + document.widthOfString(part.text)));
   const extra = Math.max(0, availableWidthPt - inkWidth);
   const alignment = line.format.alignment;
   const distributed = alignment === "distributed";
@@ -336,6 +348,7 @@ function drawGridLine(
     document.text(part.text, baseX + part.x + offset, y, { lineBreak: false });
     if (index < positions.length - 1 && (distributed || (justify && part.text === " "))) gaps += 1;
   });
+  return Math.max(0, requiredWidth - availableWidthPt);
 }
 
 function drawPdfPage(
@@ -346,7 +359,9 @@ function drawPdfPage(
   boldFont: unknown,
   italicFont: unknown,
   regularFace: unknown = regularFont,
-): void {
+  outputPage = 1,
+): string[] {
+  const warnings: string[] = [];
   const metrics = gridMetrics(template);
   const left = metrics.leftPt;
   const right = left + metrics.contentWidthPt;
@@ -382,9 +397,11 @@ function drawPdfPage(
       // This profile is measured with the actual font and forbids tabs/alignment changes.
       document.text(line.text, x, y, { lineBreak: false });
     } else {
-      drawGridLine(document, line, indent, x, y, gridWidth, width);
+      const overflow = drawGridLine(document, line, indent, x, y, gridWidth, width);
+      if (overflow > 0.1) warnings.push(`第 ${outputPage} 頁第 ${row + 1} 行實際字形在不重疊下所需寬度超出可用格寬 ${overflow.toFixed(2)} pt；欄數符合不代表實際字形符合，請明確換行後重新匯出。`);
     }
   }
+  return warnings;
 }
 
 export async function exportPdf(
@@ -469,7 +486,8 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
       for (let page = 1; page <= counts[index]; page += 1) {
         document.addPage({ size: "A4", margin: 0 });
         if (page === 1 && bookmark) document.outline.addItem(bookmark);
-        drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont, regularFace);
+        drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont, regularFace,
+          counts.slice(0, index).reduce((sum, value) => sum + value, 0) + page).forEach(warning => allWarnings.add(warning));
       }
       const warnings: string[] = [];
       if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
