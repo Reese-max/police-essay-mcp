@@ -47,9 +47,9 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "*.tools[*].inputSchema,*.tools[*].outputSchema,*.prompts[*].argsSchema: paragraph format and heading style fields",
   reason: "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing." },
 { path: "*.tools[create_answer,load_exam_paper].inputSchema.templateId.default",
-  reason: "User-authorized default for newly created answers and template-only loads is police_information_essay_166. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison." },
+  reason: "User-authorized default for newly created answers and template-only loads is police_information_essay_165. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison." },
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
-  reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
+  reason: "Formatting tools append the 165 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
 export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
@@ -114,15 +114,15 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "export_docx": {
     "before": "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export DOCX at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+    "after": "Export DOCX at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
   },
   "export_pdf": {
     "before": "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export PDF at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+    "after": "Export PDF at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
   },
   "export_text": {
     "before": "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export grid TXT at expectedVersion; rejects overflow unless explicitly allowed (never for 166)."
+    "after": "Export grid TXT at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
   },
   "format_section": {
     "before": "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
@@ -183,7 +183,7 @@ export function withBaseTemplateDefault<T extends { tools: ContractTool[] }>(vie
     if (!["create_answer", "load_exam_paper"].includes(tool.name)) return tool;
     const input = tool.inputSchema as JsonSchema;
     const properties = input.properties as Record<string, JsonSchema>;
-    assert.equal(properties.templateId.default, "police_information_essay_166", `${tool.name} authorized template default`);
+    assert.equal(properties.templateId.default, "police_information_essay_165", `${tool.name} authorized template default`);
     return { ...tool, inputSchema: { ...input, properties: { ...properties,
       templateId: { ...properties.templateId, default: "police_information_essay" } } } };
   }) };
@@ -278,7 +278,7 @@ export async function checkMcpContract() {
   assert.deepEqual(fixture.intentionalDifferences, INTENTIONAL_DIFFERENCES);
   const current = await collectContract();
   // Everything except the declared differences must still equal base.
-  assert.match(PAPER_FORMAT_NOTE, /^ The 166 original-paper template .*left-aligned.*bold.*italic/);
+  assert.match(PAPER_FORMAT_NOTE, /^ The 165 original-paper template .*left-aligned.*bold.*italic/);
   assert.notEqual(ANSWER_SHEET_WIDGET_URI, BASE_WIDGET_URI);
   // Every reference must have moved to the versioned URI, or normalizing would hide a stale one.
   for (const view of ["owner", "reader"] as const) {

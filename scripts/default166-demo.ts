@@ -25,7 +25,7 @@ try {
   // No templateId, no forced page breaks or visual-line breaks, no extra body heading.
   const created = await call("create_answer", { examId: exam.examId, questionNo: 1, title: "參考前兩頁文字", sections: [{ id: "body", text: input.text }], responseDetail: "full" });
   assert.equal(created.answer.templateId, DEFAULT_TEMPLATE_ID);
-  assert.equal(created.answer.templateId, "police_information_essay_166");
+  assert.equal(created.answer.templateId, "police_information_essay_165");
   assert.equal(created.layout.fits, true);
   const before = await call("get_exam_progress", { examId: exam.examId });
   assert.equal(before.delivery.status, "not_ready");

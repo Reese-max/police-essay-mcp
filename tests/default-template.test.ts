@@ -9,7 +9,7 @@ import { createEssayMcpServer, DEFAULT_TEMPLATE_ID } from "../src/server.js";
 import { FileStore } from "../src/storage.js";
 import { withBaseTemplateDefault } from "../scripts/check-mcp-contract.js";
 
-const general = "police_information_essay", paper = "police_information_essay_166";
+const general = "police_information_essay", paper = "police_information_essay_165", legacyPaper = "police_information_essay_166";
 async function withClient(run: (client: Client, store: FileStore) => Promise<void>) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "essay-default-template-"));
   const store = new FileStore({ templateDir: path.resolve("templates"), answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") });
@@ -35,12 +35,58 @@ test("contract normalization guards only the authorized template default", () =>
   assert.throws(() => withBaseTemplateDefault({ tools: [{ ...input.tools[0], inputSchema: { properties: { templateId: { default: general } } } }] }), /authorized template default/);
 });
 
-test("template-only load defaults to 166 and named general resource remains general", async () => withClient(async client => {
+test("template-only load defaults to 165 and named general resource remains general", async () => withClient(async client => {
   assert.equal(DEFAULT_TEMPLATE_ID, paper);
   assert.equal((await call(client, "load_exam_paper")).template.id, paper);
   assert.equal((await call(client, "load_exam_paper", { templateId: general })).template.id, general);
   const resource = await client.readResource({ uri: "essay://templates/police_information_essay" });
   assert.equal(JSON.parse((resource.contents[0] as { text: string }).text).id, general);
+  assert.equal((await call(client, "load_exam_paper", { templateId: legacyPaper })).template.id, legacyPaper);
+  assert.match(client.getInstructions()!, /165 原稿紙模板/);
+  assert.match(client.getInstructions()!, /police_information_essay_166 保留為相容別名/);
+}));
+
+test("165 changes only template identity; the 166 compatibility template keeps every rendering setting", async () => {
+  const store = new FileStore();
+  const current = await store.getTemplate(paper), legacy = await store.getTemplate(legacyPaper);
+  assert.equal(current.name, "165 原稿紙・兩頁申論");
+  assert.equal(legacy.name, "166 原稿紙・兩頁申論");
+  assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
+  assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
+  const templates = await store.listTemplates();
+  assert.deepEqual(templates.map(t => t.id), [general, paper, legacyPaper]);
+});
+
+test("empty creates use 165 without migrating saved 166 answers, revisions or idempotent requests", async () => withClient(async (client, store) => {
+  // Empty sections exercise template selection and persistence without needing the optional paper font.
+  const fresh = await call(client, "create_answer", { title: "新預設", sections: [] });
+  assert.equal(fresh.answer.templateId, paper);
+  await call(client, "create_answers", { answers: [{ title: "批次預設", sections: [] }, { title: "批次明確舊代碼", templateId: legacyPaper, sections: [] }] });
+  assert.deepEqual((await store.listAnswers()).map(a => a.templateId).sort(), [paper, paper, legacyPaper].sort());
+  const plan = await call(client, "start_exam", { title: "全卷預設", questions: [{ questionNo: 1 }, { questionNo: 2 }] });
+  await call(client, "create_answers", { examId: plan.examId, answers: [{ title: "全卷預設一", sections: [] }, { title: "全卷明確一般", templateId: general, sections: [] }] });
+  const exam = await store.getExam(plan.examId);
+  assert.equal((await store.getAnswer(exam.questions[0].answerId!)).templateId, paper);
+  assert.equal((await store.getAnswer(exam.questions[1].answerId!)).templateId, general);
+  const args = { title: "既有166", sections: [], idempotencyKey: "old-166-retry" };
+  const created = await call(client, "create_answer", { ...args, templateId: legacyPaper });
+  const before = await store.getAnswer(created.answer.id);
+  const filename = path.join(store.answerDir, `${before.id}.json`);
+  const bytes = await fs.readFile(filename);
+  const revision = await store.getRevision(before.id, before.version);
+  assert.equal((await call(client, "load_exam_paper", { answerId: before.id })).template.id, legacyPaper);
+  assert.equal((await call(client, "read_answer", { answerId: before.id })).answer.templateId, legacyPaper);
+  assert.equal((await call(client, "reflow_answer", { answerId: before.id })).layout.templateId, legacyPaper);
+  const replay = await call(client, "create_answer", args);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.answer.id, before.id);
+  assert.equal(replay.answer.templateId, legacyPaper);
+  assert.equal((await client.callTool({ name: "create_answer", arguments: { ...args, templateId: paper } })).isError, true);
+  const copied = await call(client, "duplicate_answer", { answerId: before.id });
+  assert.equal(copied.answer.templateId, legacyPaper);
+  assert.deepEqual(await store.getAnswer(before.id), before);
+  assert.deepEqual(await fs.readFile(filename), bytes, "read/replay/copy must not rewrite the saved answer");
+  assert.deepEqual(await store.getRevision(before.id, before.version), revision);
 }));
 
 test("missing paper font rejects omitted-template creation and saves no answer; explicit general still works", async () => withClient(async (client, store) => {
@@ -63,7 +109,7 @@ test("missing paper font rejects omitted-template creation and saves no answer; 
   } finally { if (prior === undefined) delete process.env.ESSAY_MCP_PAPER_FONT; else process.env.ESSAY_MCP_PAPER_FONT = prior; }
 }));
 
-test("single, batch and exam omitted templates use 166; explicit overrides and existing answers survive", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
+test("single, batch and exam omitted templates use 165; explicit overrides and existing answers survive", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
   const first = await call(client, "create_answer", { title: "單題", sections: body });
   assert.equal((await store.getAnswer(first.answer.id)).templateId, paper);
   assert.equal((await call(client, "preview_change", { answerId: first.answer.id, operation: "replace_text", sectionId: "body", newText: "預覽保留原稿紙。" })).after.answer.templateId, paper);

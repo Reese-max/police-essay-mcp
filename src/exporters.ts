@@ -67,7 +67,7 @@ export function embeddedFontTable(document: Document, fontFamily: string, altNam
 export function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
   if (template.paperProfile) {
     validateOriginalPaper(template);
-    if (!report.fits || allowOverflow) throw new Error("166 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
+    if (!report.fits || allowOverflow) throw new Error("165 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
   }
   if (!report.fits && !allowOverflow && template.overflowPolicy !== "report") {
     throw new Error(
@@ -189,7 +189,7 @@ export async function exportDocx(
   return exportDocxBundle([{ report, template }], outputPath, allowOverflow);
 }
 
-/** The single-answer builder also supplies every bundle section, including 166 paper geometry. */
+/** The single-answer builder also supplies every bundle section, including 165 paper geometry. */
 function docxSection({ report, template, bookmark }: ExportPages, pages: number, index: number) {
   // Reject before creating a file or export handle: DOCX cannot contain XML 1.0
   // controls, isolated surrogates or Unicode noncharacters.
@@ -459,7 +459,7 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
           regularFace = font.face;
           document.font(regularFont as never);
         } catch {
-          if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
+          if (template.paperProfile) throw new Error("165 稿紙字型無法載入，停止輸出以避免缺字。");
           fontPath = undefined;
           document.font("Helvetica");
         }

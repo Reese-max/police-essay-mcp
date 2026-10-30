@@ -8,7 +8,7 @@ import { validateOriginalPaper, ORIGINAL_PAPER_FONT_SHA256 } from "./original-pa
 import type { AnswerTemplate } from "./domain.js";
 
 export async function validateRuntimeFont(template: AnswerTemplate, fontPath = process.env.ESSAY_MCP_PAPER_FONT): Promise<void> {
-  if (!fontPath) throw new Error("166 font is missing.");
+  if (!fontPath) throw new Error("165 font is missing.");
   validateOriginalPaper(template, fontPath);
 }
 
@@ -16,7 +16,7 @@ export async function initializeRuntimeFont(storage?: StorageClient, env = proce
   const uri = env.PAPER_FONT_GCS_URI;
   if (!uri) {
     if (env.PAPER_FONT_GENERATION || env.PAPER_FONT_SHA256) throw new Error("PAPER_FONT_GCS_URI is required.");
-    if (env.REQUIRE_PAPER_FONT === "true" && !env.ESSAY_MCP_PAPER_FONT) throw new Error("166 font is missing.");
+    if (env.REQUIRE_PAPER_FONT === "true" && !env.ESSAY_MCP_PAPER_FONT) throw new Error("165 font is missing.");
     return;
   }
   const match = /^gs:\/\/([^/]+)\/(.+)$/.exec(uri);
@@ -43,7 +43,7 @@ export async function initializeRuntimeFont(storage?: StorageClient, env = proce
     await fs.writeFile(fontPath, data, { flag: "wx", mode: 0o400 });
     await fs.chmod(fontPath, 0o444);
     process.env.ESSAY_MCP_PAPER_FONT = fontPath;
-    const template = await new FileStore({ templateDir: env.ESSAY_MCP_TEMPLATE_DIR }).getTemplate("police_information_essay_166");
+    const template = await new FileStore({ templateDir: env.ESSAY_MCP_TEMPLATE_DIR }).getTemplate("police_information_essay_165");
     await validateRuntimeFont(template);
   } catch {
     if (previous === undefined) delete process.env.ESSAY_MCP_PAPER_FONT;

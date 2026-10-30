@@ -14,12 +14,12 @@
 
 本專案把「警察資訊三等申論答案」建模成可讀、可寫、可局部修改、可重新排版與可匯出的 MCP 文件，而不是一段游離文字。
 
-新建答案的預設模板為 `police_information_essay_166`：
+新建答案的預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，不遷移既有答案。代碼與名稱以外的模板設定、底圖資產及內部 `original_166` profile 保持不變：
 
 - A4、2 頁、每頁 22 行，共 44 行上限；不縮字、不自動增加頁數。
 - 19pt 教育部標準楷書 5.1、原稿紙底圖及自然字距；以字型實測寬度換行。
 - 須設定 `ESSAY_MCP_PAPER_FONT` 並通過既有 SHA-256 及缺字校驗，缺少時明確失敗；不替換字型或模板。
-- 166 原有左對齊、無粗體與無 tab 等格式限制維持不變。
+- 165 原有左對齊、無粗體與無 tab 等格式限制維持不變。
 - `create_answer`、`create_answers` 及全卷建立省略模板均適用。明確選擇其他模板仍有效；讀取、預覽、複製、匯出既有答案沿用儲存的 `templateId`，不遷移正式資料。
 - `load_exam_paper` 省略模板且帶答案 ID 時沿用該答案；只有模板的呼叫使用新預設。明確模板與答案不符仍拒絕。
 - 舊預設建立的冪等重試保留已存模板，完整請求雜湊仍防止不同請求重用 key。
@@ -33,10 +33,10 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 1. 答案一定隸屬於一個模板與一組有順序的 sections。
 2. 每個 section 都有穩定 `id`、文字、必要性、採點優先級與可壓縮程度。
 3. 每次讀取、寫入或局部修改，都可以得到同一套 `LayoutReport`。
-4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，166 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
+4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，165 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
 5. `fits=true` 才代表符合模板的頁數／行數限制。
 6. 局部修改使用 `expectedVersion` 時，版本不一致必須拒絕，避免舊內容覆蓋新內容。
-7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，166 原稿紙始終拒絕超頁與 override。
+7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，165 原稿紙始終拒絕超頁與 override。
 
 ## 3. 模板資料結構
 
@@ -198,9 +198,9 @@ Prompts：
 
 答案可儲存 strict `layoutOptions: { wholeLatinWords?: boolean, keepHeadingWithNext?: boolean }`；缺少欄位視為 false，`layoutSections(template, sections, options?)` 的雙參數行為不變。建立工具共用路徑才將新答案的兩個選項預設為 true（部分輸入的省略鍵也為 true）；`createAnswerDocument` 不套用新預設。`update_answer_info` 局部更新選項並另存版本；`duplicate_answer` 原樣複製，`restore_revision` 保留目前答案選項。
 
-一般與 166 換行器在 ASCII 英數字元間斷行時，先向後讀到完整字詞結尾；只有完整字詞能容納於下一行可用寬度，且目前行仍留下至少一個非空白字元時，才將行末英數字移至下一行，否則沿用原斷行。空白不移除或重排，超長字詞仍可斷行；166 共用字型量測並計入緊接字詞的標點攜帶寬度。
+一般與 165 換行器在 ASCII 英數字元間斷行時，先向後讀到完整字詞結尾；只有完整字詞能容納於下一行可用寬度，且目前行仍留下至少一個非空白字元時，才將行末英數字移至下一行，否則沿用原斷行。空白不移除或重排，超長字詞仍可斷行；165 共用字型量測並計入緊接字詞的標點攜帶寬度。
 
-`SPLIT_LATIN_WORD` 以跨越斷點的完整 ASCII 英數字詞（可延續多行）判斷原因：一般模板比較顯示寬度與扣除左右縮排的欄寬，166 比較共用字型量測與非首行可用寬度。能容納一行者建議以 `update_answer_info` 設定 `layoutOptions.wholeLatinWords=true` 或改寫，超長者建議縮短字詞或調整縮排；兩者均不阻擋匯出。
+`SPLIT_LATIN_WORD` 以跨越斷點的完整 ASCII 英數字詞（可延續多行）判斷原因：一般模板比較顯示寬度與扣除左右縮排的欄寬，165 比較共用字型量測與非首行可用寬度。能容納一行者建議以 `update_answer_info` 設定 `layoutOptions.wholeLatinWords=true` 或改寫，超長者建議縮短字詞或調整縮排；兩者均不阻擋匯出。
 
 編頁前若標題末行與同節首個非 spacer 內文行分頁，且標題未在頁首、標題到首行內文可容納一頁，於標題前補空白到下一頁。這些行有 `isSpacer: true, isPadding: true`，歸屬同節，計入總行數、各節行數與溢出；匯出與畫板視為普通空白行，段落 TXT 捨棄 spacer。沒有內文行或標題區塊過長時不補行。
 
@@ -264,7 +264,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 ## 原稿紙畫板整合
 
-`render_answer_sheet` 回傳最新答案、版本、LayoutReport 及 warningCount（該版面的品質警告數）。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
+`render_answer_sheet` 回傳最新答案、版本、LayoutReport 及 warningCount（該版面的品質警告數）。UI 中繼資料提供唯讀狀態；165 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
 
 多題只呼叫一次 `render_exam_overview`：預設 responseDetail=summary，模型端 structuredContent 只回傳目前題目的答案 id／版本及版面統計（totalLines、capacity、fits、overflowLines）、activeAnswerId 與依輸入順序排列的 examAnswers（題號、版本、行數、容量、fits、警告數）。同時回傳目前題目的 warningCount；兩種 render 工具的完整 snapshot（包含 layout.lines 與編輯用 sections）始終放在元件專用 `_meta.snapshot`；重用 responseDetail schema，full 模式也在 structuredContent 回傳完整 snapshot、readOnly（與 _meta.readOnly 相同）及適用的 paperSvgPages。v12 畫板所有自行 render 呼叫均帶 responseDetail=full；讀取順序為結果 _meta.snapshot、full structuredContent、宿主初始輸出的 OpenAI toolResponseMetadata。唯讀狀態依序取結果 _meta.readOnly、structuredContent.readOnly、僅宿主初始輸出的 toolResponseMetadata.readOnly、同答案既有狀態；皆未知時停用編輯。openai:set_globals 只接受同次事件提供且 answerId/version 與 toolOutput 相符的 metadata，不使用殘留全域 metadata；資料不足時只呼叫一次 full render。paperSvgPages 依序取結果 _meta、structuredContent，兩者皆無時僅保留同 answerId/version 已顯示的 SVG，絕不沿用其他答案或版本。逐題驗證並彙整 ANSWER_NOT_FOUND 與 LAYOUT_INVALID <id>：原因（套用與匯出錯誤相同的路徑與堆疊遮蔽），任一失敗皆不顯示部分結果。畫板以分頁切換，左右鍵移動焦點；焦點題目移除時以選取題目作為 Tab 入口。分頁有獨立的無障礙名稱；按下其他分頁透過 render_answer_sheet 載入，重按目前分頁保留草稿。載入若被並行的畫板刷新取代，顯示通知供使用者再次點選，不自動重試；寫入後更新對應分頁統計（包含已切換離開的題目），目前題目只顯示最新已知警告數，顯示清單外答案時隱藏分頁。
 
@@ -272,13 +272,13 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 寫入工具預設 `responseDetail: "summary"`，回傳答案識別資訊、版面統計及各節行數；`"full"` 保留完整快照。明確讀取／排版工具仍回傳完整資料。畫板的初始 toolOutput、openai:set_globals 與 ui/notifications/tool-result 收到摘要時，會以 render_answer_sheet 取得完整快照；失敗顯示通知，過期載入不覆蓋較新的畫面。create_answer.lineTargets.sectionId 必須等於 sections 明確提供的 id。`check_layout.warnings` 與合輯逐題 warnings 偵測 `ORPHAN_HEADING`、`SPLIT_LATIN_WORD`，不修改換行或文字，也不阻擋匯出。
 
-`export_exam_bundle.answers` 接受 1–20 個不重複 answerId，重複時逐個在結構化錯誤 answerId 與訊息列出重複 id，逐項指定 expectedVersion。驗證失敗彙整 `ANSWER_NOT_FOUND`、`VERSION_CONFLICT`、`LAYOUT_OVERFLOW`、`LAYOUT_INVALID`，不建立匯出；版本衝突的答案不再檢查版面；所有格式完成繪製後才建立 handle。成功回傳 files、answers 頁碼範圍與 totalPages；PDF 字型警告保留於 files[].fontWarning 與文字結果，逐題品質警告也列於文字結果（含頁／行）。合輯 PDF/DOCX 沿用單題紙張、固定格線、字型與每頁行數規則，每題從新頁開始；DOCX 以 nextPage section 分隔成員，以段落 pageBreakBefore 分隔成員內頁面，第一格含對應題號與標題的書籤，166 同樣嵌入原稿紙與楷書字型。兩種格式頁數相同，無封面或額外空頁；儲存 manifest 新增 optional relatedAnswerIds（最多 20 個 answerId），關聯全部成員；刪除任一成員會回收合輯並計入 deletedExports，舊 manifest 仍有效。後續 createExportHandle 失敗時，以 deleteExport 盡力回收所有先前 handle；錯誤列出失敗格式及回收失敗的遺留 handle。deleteExport 移除 manifest 與 bytes，已不存在時成功，雲端維持 owner／objectName／generation 檢查。
+`export_exam_bundle.answers` 接受 1–20 個不重複 answerId，重複時逐個在結構化錯誤 answerId 與訊息列出重複 id，逐項指定 expectedVersion。驗證失敗彙整 `ANSWER_NOT_FOUND`、`VERSION_CONFLICT`、`LAYOUT_OVERFLOW`、`LAYOUT_INVALID`，不建立匯出；版本衝突的答案不再檢查版面；所有格式完成繪製後才建立 handle。成功回傳 files、answers 頁碼範圍與 totalPages；PDF 字型警告保留於 files[].fontWarning 與文字結果，逐題品質警告也列於文字結果（含頁／行）。合輯 PDF/DOCX 沿用單題紙張、固定格線、字型與每頁行數規則，每題從新頁開始；DOCX 以 nextPage section 分隔成員，以段落 pageBreakBefore 分隔成員內頁面，第一格含對應題號與標題的書籤，165 同樣嵌入原稿紙與楷書字型。兩種格式頁數相同，無封面或額外空頁；儲存 manifest 新增 optional relatedAnswerIds（最多 20 個 answerId），關聯全部成員；刪除任一成員會回收合輯並計入 deletedExports，舊 manifest 仍有效。後續 createExportHandle 失敗時，以 deleteExport 盡力回收所有先前 handle；錯誤列出失敗格式及回收失敗的遺留 handle。deleteExport 移除 manifest 與 bytes，已不存在時成功，雲端維持 owner／objectName／generation 檢查。
 
 `create_answer.idempotencyKey` 符合 `^[A-Za-z0-9_-]{8,128}$`。id 為 `ans_idem-` 加 SHA-256(key) 前 40 hex；owner 隔離不變。createRequestHash 為 templateId（套用預設）、title、question、exam、questionNo、lineTargets、sections 輸入原貌的排序鍵 JSON SHA-256（只有請求提供 layoutOptions 時才納入該欄位，省略時舊雜湊不變）（optional、64 位小寫 hex；duplicate_answer 不複製）。相同 key／雜湊回傳答案目前版本、replayed=true，不寫入；不同或缺少雜湊回報 IDEMPOTENCY_KEY_REUSED。重送的 TEMPLATE_NOT_FOUND 與 LAYOUT_INVALID 訊息會標明此 key 的既有答案 id；暫時性模板儲存錯誤原樣傳回。create-only 寫入競態後重讀並套用同一規則。無 key 維持原行為。
 
 `create_answers.answers` 為 1–10 個 strict 建立物件（欄位同 create_answer，無 responseDetail）；sections 的公開 schema 保持寬鬆，伺服器共用真實 answerSectionInputSchema 驗證。先檢查全部輸入、模板、唯一 section id／明確 lineTargets id、可計算版面與 key 重用；批次內 key 不可重複。錯誤逐項為「第 N 項 INVALID_INPUT／TEMPLATE_NOT_FOUND／LAYOUT_INVALID／IDEMPOTENCY_KEY_REUSED：原因」，不儲存任何答案。通過後逐項儲存，重送項目不寫入；中途儲存失敗停止並列出已完成 index／id 與失敗項次。相同批次使用原 keys 可安全重試，未給 key 的已建立項目不可直接重送。輸出 answers 含 index（1 起算）、answerId、title、exam?、questionNo?、version、fits、totalLines、capacity、overflowLines、replayed?，不掛載畫板。
 
-單題 `export_answer.textMode` 預設 paper，僅影響 TXT；paragraphs 從 LayoutLine.text 重建顯示標題與各段（去除視覺換行，保留版面編號，不使用填充／對齊空白，捨棄 spacer），每段一行、節間空行。檔名為 *_段落.txt；pages 仍是內容的稿紙頁數，fits／allowOverflow／166 驗證與 paper 相同。read_answer 不宣告 ui.resourceUri 或 openai/outputTemplate；render_answer_sheet／load_exam_paper／create_answer 保留畫板。
+單題 `export_answer.textMode` 預設 paper，僅影響 TXT；paragraphs 從 LayoutLine.text 重建顯示標題與各段（去除視覺換行，保留版面編號，不使用填充／對齊空白，捨棄 spacer），每段一行、節間空行。檔名為 *_段落.txt；pages 仍是內容的稿紙頁數，fits／allowOverflow／165 驗證與 paper 相同。read_answer 不宣告 ui.resourceUri 或 openai/outputTemplate；render_answer_sheet／load_exam_paper／create_answer 保留畫板。
 
 
 ### 匯出錯誤與內部欄位
