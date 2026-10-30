@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { answerReviewSchema } from "./review-schema.js";
 
 export const MAX_ANSWER_BYTES = 700 * 1024;
 
@@ -189,6 +190,7 @@ export const answerDocumentSchema = z.object({
   lineTargets: z.record(z.string(), z.number().int().min(1).max(200)).optional(),
   createRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   layoutOptions: layoutOptionsSchema.optional(),
+  review: answerReviewSchema.optional(),
   version: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

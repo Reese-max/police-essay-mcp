@@ -1,5 +1,15 @@
 # 國考申論答題紙 MCP — 需求規格 v1
 
+## 小問與驗收清單增補
+
+詳見 [小問與驗收紀錄](docs/answer-review.md) 及 MCP JSON Schema 資源 `essay://schemas/review-plan`。
+
+- `set_answer_review({ answerId, expectedVersion, plan })` 是 `essay.write` 工具，必要版本 CAS、完整替換／null 清除，成功遞增答案版本；不改內容或版面。資料儲存在 optional 頂層 `answer.review`，沿用既有 codec、owner 隔離、歷史與文件大小限制。
+- `review_answer({ answerId, expectedVersion? })` 是唯讀 `essay.read` 工具，核對小問與 section id 映射、正文、配分相加關係、來源核對紀錄、掃描頁與實際行數分配。清單須由呼叫者對照原題；無清單為 `not_checked`，缺資訊為 pending，無法推定所有題意已列出。
+- 核對證據含方法（human／model）、核對者、時間、具體筆記及 checked／rejected 結果，均是呼叫者紀錄；版本與完整內容／模板指紋必須同時相符才 current，後續任何版本更新為 stale。`mapped`、`recorded`、`no_structural_issues` 都不是內容／法律正確保證。`semantic` 與 `sourceVerification` 固定 not_checked。
+- `get_exam_progress.questions[].review` 提供狀態、freshness 及待處理數；`delivery.checks.content/source/visual` 保留 not_checked。未改既有 done、匯出阻擋規則、模板預設或 Word 幾何。本增補工具僅提供核對輔助，沒有 LLM、OCR、外部來源擷取或新的付費服務。
+- 起草與匯出指示增加清單核對及未核項揭露。完整 strict plan schema 置於獨立 resource 以維持 tools/list 80,000 bytes 上限；工具仍以此 schema 驗證輸入，既有工具的輸入合約不變。
+
 ## 1. 目標與範圍
 
 本專案把「警察資訊三等申論答案」建模成可讀、可寫、可局部修改、可重新排版與可匯出的 MCP 文件，而不是一段游離文字。
@@ -285,7 +295,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - `create_answer` 與 `create_answers`（最外層及 answers[]）增加可選 examId，最外層與逐題值須一致；exam、questionNo、question 省略時由計畫補入。已連結且仍存在的答案直接回傳既有內容與 replayed=true，不建立新版本；未建立的題目使用依計畫／題號決定的 answerId，併發重送也不重複。key 在 commit 階段以 CAS 預留（批次預驗證不寫入）；儲存失敗時保留同 key 的原請求供重試。內部儲存的 key 請求雜湊只供重送驗證，不輸出給模型或畫板。批次先驗證全部輸入，再逐題儲存；部分 I/O 失敗仍回報已完成項目供續寫。delete_answer 解除所有計畫中的連結並清除已被刪除的 lastBundle，避免重建同 id／版本 1 時誤判已匯出；CloudStore 與答案刪除在同一 transaction 內完成。
 - `get_exam_progress`（essay.read，readOnlyHint=true）接受 `{ examId }`。每次由真實答案、當前版面及 lastBundle 釘選版本推導，不保存可過期的 stage 旗標。輸出 `{ examId, title, questions: [{ questionNo, stage, answerId?, version?, totalLines?, capacity?, overflowLines?, warningCount? }], bundle: { status, exportedAt? }, nextStep: { action, questionNo?, message }, summary }`，text content 同樣為 summary，不輸出百分比。
 - stage：沒有有效答案為 not_started；不符合容量為 drafted；當前版面通過為 layout_ok；當前版本且版面通過、已收入 lastBundle 為 exported。bundle 為 none／current／outdated；任一成員修改、缺失、計畫格式未涵蓋或成員集合不同即 outdated。nextStep 優先建立最前面的缺題，其次修正最前面的版面，再匯出合輯，最後 done。fits 與 layout_ok 不代表內容查證。
-- 另回傳 `delivery: { status, checks: { layoutCapacity, content, source, visual } }`。status 為 not_ready／awaiting_review；只有目前版本與要求格式皆已匯出才是 awaiting_review。layoutCapacity 為 pending／passed，只檢查容量；content、source、visual 固定為 not_checked，因為尚無驗收證據儲存介面。保留既有 nextStep.action 的 done 作為匯出流程終點，摘要改為「合輯已匯出」並明示尚待驗收，不能視為成品品質通過；不因此重複匯出。
+- 另回傳 `delivery: { status, checks: { layoutCapacity, content, source, visual } }`。status 為 not_ready／awaiting_review；只有目前版本與要求格式皆已匯出才是 awaiting_review。layoutCapacity 為 pending／passed，只檢查容量；content、source、visual 固定為 not_checked，只反映軟體可驗證的範圍；呼叫者核對紀錄另由 review 工具提供。保留既有 nextStep.action 的 done 作為匯出流程終點，摘要改為「合輯已匯出」並明示尚待驗收，不能視為成品品質通過；不因此重複匯出。
 - 一般模板的可選 `layoutOptions.avoidPunctuationOnlyLines` 在新答案預設 true，舊答案省略時維持既有換行；僅調整自然換行且只剩結尾標點的行，保留字素、英文整詞（可容納時）、所有文字及字級，不修改明確輸入的換行。未啟用的自然純標點行列為 `PUNCTUATION_ONLY_LINE`。一般 PDF 在整行可容納時使用實際字形 advance 防止覆畫；放不下則保留原欄位位置並透過既有 fontWarning 回報合輯頁、行、不重疊排版所需寬度的超出點數。不縮字、不裁字，也不宣稱已完成視覺驗收。
 - `render_exam_overview` 接受 examId 或 answerIds（二擇一），計畫依題號排序，缺題保留「未建立」分頁，全部缺題也可顯示進度。回傳 progress 與 examAnswers；頂端單一 polite status 區域原地更新，不建立第二個畫板。分頁載入或寫入完成後呼叫 get_exam_progress；保留 OpenAI 與 MCP Apps 的 metadata → full structuredContent → 初始 host metadata 回退，以及未知 readOnly 時停用寫入的規則。
 - `export_exam_bundle` 增加 examId；未提供 answers 時由計畫按題號讀取並釘選目前版本，缺題以 ANSWER_NOT_FOUND 與 questionNo 回報。明確提供 answers 時須與計畫成員及順序一致。成功後 CAS 保存 lastBundle `{ formats, pages: { pdf?, docx? }, members: [{ answerId, version }], exportedAt }`；保存失敗同樣回收 handle，保持全有或全無。formats 未提供時依計畫 formats，沒有計畫則預設 ["pdf", "docx"]。合輯不接受 txt 或 textMode；單題 TXT 相容介面保留。計畫在匯出期間改動時重新讀取並最多嘗試三次 CAS，成員順序及釘選版本須仍一致，否則回收 handle。
