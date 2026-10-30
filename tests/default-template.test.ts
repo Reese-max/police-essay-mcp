@@ -7,6 +7,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createEssayMcpServer, DEFAULT_TEMPLATE_ID } from "../src/server.js";
 import { FileStore } from "../src/storage.js";
+import { CloudStore } from "../src/cloud-storage.js";
+import { MemoryFirestore, MemoryStorage } from "./fakes/cloud-clients.js";
 import { withBaseTemplateDefault } from "../scripts/check-mcp-contract.js";
 
 const general = "police_information_essay", paper = "police_information_essay_165", legacyPaper = "police_information_essay_166";
@@ -50,12 +52,83 @@ test("165 changes only template identity; the 166 compatibility template keeps e
   const store = new FileStore();
   const current = await store.getTemplate(paper), legacy = await store.getTemplate(legacyPaper);
   assert.equal(current.name, "165 原稿紙・兩頁申論");
-  assert.equal(legacy.name, "166 原稿紙・兩頁申論");
+  assert.equal(legacy.name, "165 原稿紙・兩頁申論");
   assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
   assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
   const templates = await store.listTemplates();
   assert.deepEqual(templates.map(t => t.id), [general, paper, legacyPaper]);
 });
+
+test("both file and cloud template lists display 165 for canonical and legacy IDs", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "essay-template-names-"));
+  try {
+    const stores = [new FileStore({ answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") }),
+      new CloudStore({ firestore: new MemoryFirestore().client(), storage: new MemoryStorage().client(), environment: "staging",
+        ownerKey: "a".repeat(64), artifactBucket: "synthetic-artifacts", templateDir: path.resolve("templates") })];
+    for (const store of stores) {
+      const templates = await store.listTemplates();
+      for (const id of [paper, legacyPaper]) {
+        assert.equal(templates.find(t => t.id === id)?.name, "165 原稿紙・兩頁申論");
+        assert.equal((await store.getTemplate(id)).name, "165 原稿紙・兩頁申論");
+      }
+      assert.equal(templates.find(t => t.id === general)?.name, (await store.getTemplate(general)).name);
+    }
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
+test("MCP names, load messages, defaults, tool descriptions and workflow identify 165 through both IDs", async () => withClient(async (client, store) => {
+  const listed = await call(client, "list_templates");
+  for (const id of [paper, legacyPaper]) {
+    assert.equal(listed.templates.find((t: { id: string }) => t.id === id).name, "165 原稿紙・兩頁申論");
+    const loaded = await client.callTool({ name: "load_exam_paper", arguments: { templateId: id } });
+    assert.equal((loaded.structuredContent as any).template.name, "165 原稿紙・兩頁申論");
+    assert.match(JSON.stringify(loaded.content), /已載入「165 原稿紙・兩頁申論」/);
+    assert.doesNotMatch(JSON.stringify(loaded.content), /166 原稿紙/);
+    const created = await call(client, "create_answer", { templateId: id, title: "使用者自訂題名", sections: [] });
+    const before = await store.getAnswer(created.answer.id);
+    const reopened = await call(client, "load_exam_paper", { answerId: before.id });
+    assert.equal(reopened.template.name, "165 原稿紙・兩頁申論");
+    assert.equal(reopened.answer.templateId, id);
+    assert.equal(reopened.answer.title, "使用者自訂題名");
+    assert.deepEqual(await store.getAnswer(before.id), before);
+  }
+  const tools = (await client.listTools()).tools;
+  for (const name of ["create_answer", "load_exam_paper"]) {
+    const tool = tools.find(t => t.name === name)!;
+    assert.equal((tool.inputSchema.properties!.templateId as { default: string }).default, paper);
+  }
+  for (const tool of tools) assert.doesNotMatch(tool.description ?? "", /166/);
+  assert.match(client.getInstructions()!, /165 原稿紙模板/);
+  assert.doesNotMatch(client.getInstructions()!, /166 原稿紙/);
+  const workflow = await client.readResource({ uri: "essay://instructions/workflow" });
+  const text = (workflow.contents[0] as { text: string }).text;
+  assert.match(text, /165 原稿紙模板/);
+  assert.doesNotMatch(text, /166 原稿紙/);
+}));
+
+test("font errors and export failures name 165 even when invoked with the legacy ID", async () => withClient(async (client, store) => {
+  const previous = process.env.ESSAY_MCP_PAPER_FONT;
+  try {
+    delete process.env.ESSAY_MCP_PAPER_FONT;
+    for (const templateId of [paper, legacyPaper]) {
+      const created = await call(client, "create_answer", { templateId, title: "名稱核對", sections: [] });
+      const before = await store.getAnswer(created.answer.id);
+      for (const request of [
+        { name: "create_answer", arguments: { templateId, title: "缺字型", sections: body } },
+        { name: "export_docx", arguments: { answerId: before.id, expectedVersion: before.version } },
+        { name: "export_pdf", arguments: { answerId: before.id, expectedVersion: before.version } },
+      ]) {
+        const result = await client.callTool(request);
+        assert.equal(result.isError, true);
+        assert.match(JSON.stringify(result.content), /165 原稿紙/);
+        assert.doesNotMatch(JSON.stringify(result.content), /166 原稿紙/);
+      }
+      assert.deepEqual(await store.getAnswer(before.id), before);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.ESSAY_MCP_PAPER_FONT; else process.env.ESSAY_MCP_PAPER_FONT = previous;
+  }
+}));
 
 test("empty creates use 165 without migrating saved 166 answers, revisions or idempotent requests", async () => withClient(async (client, store) => {
   // Empty sections exercise template selection and persistence without needing the optional paper font.

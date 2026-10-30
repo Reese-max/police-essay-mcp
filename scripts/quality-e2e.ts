@@ -53,7 +53,7 @@ const inputs = [
 ];
 const manifest: any = { synthetic: true, formalAnswer: false, templateId, runName, fonts: {
   regular: process.env.ESSAY_MCP_PDF_FONT, bold: process.env.ESSAY_MCP_PDF_BOLD_FONT,
-}, files: [], delivery: {}, cases: inputs, notes: ["166 not tested: no configured verified paper font", "External visual review is not persisted by this API"] };
+}, files: [], delivery: {}, cases: inputs, notes: ["165 not tested: no configured verified paper font", "External visual review is not persisted by this API"] };
 manifest.grid = gridMetrics(await store.getTemplate(templateId));
 async function saveBundle(bundle: any, basename: string) {
   const file = bundle.files.find((f: any) => f.format === "pdf");

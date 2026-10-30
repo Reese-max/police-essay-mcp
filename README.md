@@ -180,13 +180,13 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 ## 165 原稿紙模式
 
-預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，既有答案的模板代碼不遷移。此次只改代碼與名稱，底圖、字型、行數、座標及 Word／PDF 幾何完全沿用原設定。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
+預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，既有答案的模板代碼不遷移。兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」。此次只改代碼與名稱，底圖、字型、行數、座標及 Word／PDF 幾何完全沿用原設定。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
 
 此模式須取得教育部標準楷書 5.1 完整未修改字型，設定 `ESSAY_MCP_PAPER_FONT` 為檔案絕對路徑。`export_docx` 與 PDF 一樣只內嵌答案用到的字形（另含 ASCII 與常用全形標點），未安裝此字型的 Word／LibreOffice 也以同一字型、同一換行顯示；在 Word 新增內嵌範圍以外的字時才改用替代字型。字型不隨 repository 分發。字型來源與使用條件見 [原稿紙工作流](docs/original-paper-workflow.md)。
 
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板的 `export_docx`、`export_pdf`、`export_text` 均拒絕超頁及 `allowOverflow: true`。
 
-驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper166-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper166-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
+驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper165-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper165-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
 
 ## 互動畫板
 

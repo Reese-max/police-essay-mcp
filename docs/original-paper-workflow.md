@@ -1,6 +1,6 @@
 # 165 原稿紙工作流
 
-新建答案使用 `police_information_essay_165`（165 原稿紙）；`police_information_essay_166` 保留為相容別名，既有答案不遷移。兩者共用原底圖、字型與幾何設定；內部 `original_166` profile、資產及既有驗收腳本檔名保留。
+新建答案使用 `police_information_essay_165`（165 原稿紙）；`police_information_essay_166` 保留為相容別名，既有答案不遷移。兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」。兩者共用原底圖、字型與幾何設定；內部 `original_166` profile 及資產檔名保留。舊驗收腳本入口仍作相容轉接，新輸出檔名均使用 165。
 
 ## 設定與部署
 
@@ -22,15 +22,15 @@
 
 ## 相容範圍
 
-新模式目前限定靠左、不使用粗斜體、不使用 tab；縮排與段落空行仍會計入行數。既有一般稿紙模式保留原本格式功能。背景是 166 空白稿紙資產，沒有同學答案正文；以 SHA-256 確認資產完整性。
+新模式目前限定靠左、不使用粗斜體、不使用 tab；縮排與段落空行仍會計入行數。既有一般稿紙模式保留原本格式功能。背景沿用歷史 166 空白稿紙資產（目前顯示名稱為 165），沒有同學答案正文；以 SHA-256 確認資產完整性。
 
 ## 可重現的輸出驗收
 
-`node --import tsx scripts/paper166-smoke.ts blocks.json` 會產生同版的 `layout.json`、`answer.docx` 及 `answer.pdf`。以 Word 或 LibreOffice 將 `answer.docx` 轉出 PDF 後，安裝 PyMuPDF，再分別執行：
+`node --import tsx scripts/paper165-smoke.ts blocks.json` 會產生同版的 `layout.json`、`answer.docx` 及 `answer.pdf`。以 Word 或 LibreOffice 將 `answer.docx` 轉出 PDF 後，安裝 PyMuPDF，再分別執行：
 
 ```sh
-python scripts/verify-paper166.py exports/paper166-qa/layout.json exports/paper166-qa/answer.pdf
-python scripts/verify-paper166.py exports/paper166-qa/layout.json /path/to/word-rendered-answer.pdf
+python scripts/verify-paper165.py exports/paper165-qa/layout.json exports/paper165-qa/answer.pdf
+python scripts/verify-paper165.py exports/paper165-qa/layout.json /path/to/word-rendered-answer.pdf
 ```
 
 驗收腳本比對每一行文字、頁數及文字邊界，能抓到只讀 DOCX XML 抓不到的截字與頁面位移。最後仍須開啟兩頁影像目視檢查稿紙與文字。此腳本是部署與交付驗收工具，尚未在每次 MCP export 中自動執行。

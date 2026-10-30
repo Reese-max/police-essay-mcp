@@ -35,7 +35,7 @@ const makePlan = (index: number): ReviewPlan => ({ requirements: inputs[index].s
   prompt: `回答第${i + 1}個合成小問`, sectionIds: [s.id], sourceIds: ["reference"], points: 1 })),
   sources: [{ id: "reference", locator: "fixture://anonymous-reference#1", role: "required" }], scoring: { total: counts[index], mode: "additive" } });
 const manifest: Record<string, unknown> = { synthetic: true, transport: "StreamableHTTP", anonymousLoopback: true, questions: 4, subquestions: 11,
-  paper166: "not_checked: approved MOE font unavailable; explicit general template used", visual: "not_checked" };
+  paper165: "not_checked: approved MOE font unavailable; explicit general template used", visual: "not_checked" };
 try {
   await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`)));
   const schema = await client.readResource({ uri: "essay://schemas/review-plan" });

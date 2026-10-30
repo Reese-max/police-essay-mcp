@@ -1,4 +1,4 @@
-# Deployment still requires real GCP, OAuth and 166 acceptance receipts.
+# Deployment still requires real GCP, OAuth and 165 acceptance receipts.
 ARG NODE_IMAGE=node:24-bookworm-slim
 FROM ${NODE_IMAGE} AS build
 WORKDIR /app

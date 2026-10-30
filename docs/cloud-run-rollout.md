@@ -1,12 +1,14 @@
 # Google Cloud Run 部署與 ChatGPT App 切換計畫（2026-10-14）
 
+> 2026-10-30 名稱核對：下文操作指引使用原始碼目前的 165 名稱；歷史部署狀態保留。本次代碼／名稱變更尚未部署，不代表既有 staging 已更新。
+
 > 狀態（2026-10-16 更新）：**staging 已部署**。`police-essay-mcp-staging` 在 Cloud Run `us-central1` 以 Firestore／GCS 持久化，私有 IAM 階段已完成 runtime 驗收；之後依[擁有者風險決策](#擁有者風險決策)改為無認證公開。既有 ChatGPT App 無法變更 MCP 網址，已另建無認證的替代外掛連到 staging，並在 ChatGPT 實測建立、預覽與插入、畫板、PDF／DOCX 匯出；擁有者決定解除安裝舊 App。production 尚未建立。
 
 ## 部署目的與不變條件
 
 - 保留現有 Police Essay MCP 的 `/mcp`、`/health`、`/readyz`、原始工具名稱、MCP Apps UI、`ui://widget/police-essay-answer-sheet-v12.html`、預覽與 expectedVersion 編輯語義。
-- 保留正常申論紙與 `police_information_essay_166` 兩種流程；不得以相似字型替代 MOE 5.1 字型通過 166 紙驗收。
-- **沿用既有 ChatGPT App**，但先建立獨立 staging。舊 MCP 保持上線；取得並驗證新服務網址、身份驗證及 166 正式輸出後才安排切換。
+- 保留正常申論紙與 `police_information_essay_165` 兩種流程；舊 ID `police_information_essay_166` 仍可讀取既有答案，兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」；不得以相似字型替代 MOE 5.1 字型通過 165 紙驗收。
+- **沿用既有 ChatGPT App**，但先建立獨立 staging。舊 MCP 保持上線；取得並驗證新服務網址、身份驗證及 165 正式輸出後才安排切換。
 - 測試禁止讀取或遷移舊主機的私人答案、舊金鑰、cookie 或檔案；資料遷移另行備份與獲得使用者確認。
 - 不在 repo、Docker image、CI 日誌或外掛封裝存放 token、私有答案或 MOE 字型。
 
@@ -48,7 +50,7 @@ gcloud run services update-traffic police-essay-mcp-staging \
 - 答案上限為正規化 JSON 的 700 KiB；artifact 上限為 16 MiB。答案及完整版本修改紀錄在同一 transaction 提交，歷史版本尚未設定自動刪除。
 - 匯出使用獨立 `/tmp` 目錄；成功及失敗皆清理。輸出契約保留 `path`，它代表已清理的暫存位置；請以 `exportUri` 下載 artifact。24 小時邏輯到期立即拒讀，GCS lifecycle 實體刪除是非同步。
 - 私有字型下載須同時設定 `PAPER_FONT_GCS_URI=gs://...`、`PAPER_FONT_GENERATION` 與 `PAPER_FONT_SHA256=e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98`。下載至 `/tmp/fonts`，驗證既有 MOE hash/family 後才監聽；也可直接設定既有 `ESSAY_MCP_PAPER_FONT`，啟動時驗證。
-- `/readyz` 每次讀取兩模板及已設定的 166 字型；cloud 儲存檢查成功快取 5 秒，依賴檢查 3 秒逾時後回 503。空 artifact bucket 可驗證 list 權限，第一個 owner artifact 出現後也驗證 object get。
+- `/readyz` 每次讀取兩模板及已設定的 165 字型；cloud 儲存檢查成功快取 5 秒，依賴檢查 3 秒逾時後回 503。空 artifact bucket 可驗證 list 權限，第一個 owner artifact 出現後也驗證 object get。
 - Docker 兩階段共用 `NODE_IMAGE`。預設 Node 24 tag；取得建置收據後須以 `--build-arg NODE_IMAGE=node:24-...@sha256:...` 固定已驗證 digest。
 
 ## 分階段
@@ -96,7 +98,7 @@ gcloud run deploy police-essay-mcp-staging \
 ### Phase C — ChatGPT App 切換與完整回退
 
 1. 確認 staging 與正式 Cloud Run HTTPS endpoint、OAuth 認證、完整工具 schema 與舊版本相比無破壞性變更。
-2. 用獨立測試 App/連線測試 MCP initialize、工具 discovery、MCP Apps UI、create/read/preview/write/check/export、artifact bytes、166 雙頁 PDF/DOCX、無 token 拒絕。
+2. 用獨立測試 App/連線測試 MCP initialize、工具 discovery、MCP Apps UI、create/read/preview/write/check/export、artifact bytes、165 雙頁 PDF/DOCX、無 token 拒絕。
 3. 驗收後，依 ChatGPT 的 App 編輯權限更新**現有 App** 連線網址，刷新工具；若現有 App 綁定無法直接編輯，須由 App 管理界面重新連接／建立替代 App，不能透過 Plugin Creator 更改 App binding 來假裝完成。
 4. 原 App 的工具名稱、schema、資源 URI、編輯／唯讀權限分別對照；保留舊服務至少完成一次回歸驗收後再決定下線。
 5. 遇到版面失真、模型工具誤差、登入失敗、儲存版本衝突或 artifact 不可讀，立即停止切換並恢復原連線；不得把新系統產生的答案丟失。
@@ -110,7 +112,7 @@ gcloud run deploy police-essay-mcp-staging \
 | 契約 | initialize、tools/list、resources/list、UI metadata 與舊版相容 |
 | 答案 | 建立、讀取、版本衝突、預覽不寫入、修改及縮減到零後恢復 |
 | 排版 | 2 頁 22 行，每頁實際行位置與溢出拒絕 |
-| 166 | MOE 字型 SHA-256、原稿紙底圖、Word 轉 PDF 後雙頁檢視通過 |
+| 165 | MOE 字型 SHA-256、原稿紙底圖、Word 轉 PDF 後雙頁檢視通過 |
 | 下載 | owner 可用 resource_link 讀到真實 DOCX/PDF bytes；唯讀不能讀 owner artifact |
 | 成本 | 使用量、日誌、Build/Registry、DB/Storage/Secrets 帳單觀測與警示 |
 | 外掛 | 在 ChatGPT 實際點選工具、畫板可互動、工具重新整理無遺失 |
@@ -138,7 +140,7 @@ gcloud run deploy police-essay-mcp-staging \
 
 ## Round B 儲存與本機驗收
 
-ESSAY_ARTIFACT_BUCKET 必須是專用 artifact bucket；infra/gcs-artifacts-lifecycle.json 的 age=1 規則作用於整個 bucket。PAPER_FONT_GCS_URI 必須使用另一個專用字型 bucket，程式在下載前拒絕兩者相同。REQUIRE_PAPER_FONT=true 會在啟動與 readiness 缺少核准字型時 fail closed；預設 false 保留非 166 環境。
+ESSAY_ARTIFACT_BUCKET 必須是專用 artifact bucket；infra/gcs-artifacts-lifecycle.json 的 age=1 規則作用於整個 bucket。PAPER_FONT_GCS_URI 必須使用另一個專用字型 bucket，程式在下載前拒絕兩者相同。REQUIRE_PAPER_FONT=true 會在啟動與 readiness 缺少核准字型時 fail closed；預設 false 保留非 165 環境。
 
 字型成功驗證依 path/mtime/size 快取；模板 readiness 快取 5 秒；逾時不堆疊未完成的 storage probe。Firestore/GCS 失敗只回分類錯誤，內部紀錄只有 requestId/classification。412 save 重試僅在既有 generation 的 size/SHA-256 一致時視為成功，否則針對 generation 補償刪除；補償失敗／generation 未知仍靠 lifecycle 清理，絕不發布 handle。答案/revision 的保留清理尚未新增。
 
