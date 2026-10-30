@@ -1,16 +1,16 @@
 {
   "sourceCommit": "18cb1760160d2849039277c13546f168a0956329",
   "sourceSha256": {
-    "domain.ts": "2b4ac47de46d6d940f0b601b0bd18647201e4b3cefc8ca6c83e11e6c758d548f",
-    "exporters.ts": "bea8c5cba760d4864276508e7172be20c981c1b53740b01a382c278e110f0199",
-    "fontkit.d.ts": "31c61760f6f639af7a1001b134e9776b9b9f6ceef52dbd07f7a649853c65adf1",
-    "index.ts": "9928fbc630bbc54052c81a309d5c17921e128e4fb853fe930da69621d2ff3f95",
-    "layout.ts": "3579fa6194a1bab130fdcb37c41ff94dd4e70530c365af1ede58260a63b01eaa",
+    "domain.ts": "fb80686c7d4fd5aa05848101cb5f532e312e18e876b8929997209debde1c711f",
+    "exporters.ts": "c67d43b60799cbd949f498f313cd1fe73e6a3d21866cde14b3a0c9f883ffaa50",
+    "fontkit.d.ts": "c0516e96412c09e43405519712decbfad7855eac6894abe36c39e0ee3c17b0ee",
+    "index.ts": "f48fd13bb77bf7f7924b0993367615cc7e3627a489bc715e9e44b863e75b1d87",
+    "layout.ts": "d417dec5c39b797aced3a9bf0e5941fd9fa3d22f877caa3577a4fb2a9137428d",
     "metrics.ts": "b2b78caed49e2153b21770da0e6177ad30d06549dbe0c4928b455ac83d2b74f5",
-    "original-paper.ts": "ca8064747129d3c4a3be55b4aac5640414a2bacddf5007cfbeb5d2e07bd3faed",
-    "server.ts": "b9d4641be9d2cc690d76782d3ebb36985415e37850830b77138130b78463dbef",
-    "storage.ts": "f410ecb5d7318b44cb4dbdf3e4d7e64099383e110d9a4dcbc65644fcb2b5d07a",
-    "widget.ts": "5357bfc0a443bcd8ea8d33707734b9cf6b554f3073dd087df75a92f2d95d45e2"
+    "original-paper.ts": "877dcb64e3f6a9395c9137a418a3c765183c2ac74117d4c99135b06985f2a663",
+    "server.ts": "93613de385f1904000a118ada46629417ed94c0cc7e2c743543068c057c52d1f",
+    "storage.ts": "671837a8b6660b9d2e6002542861410b117ee4afdfab56d59f511a7e6fd82ef1",
+    "widget.ts": "2dea636e3a9355b6bdbb20faf7a75beb721f2bc3c378ba9c0ff1e61a74e8adc0"
   },
   "contract": {
     "owner": {
@@ -29302,6 +29302,10 @@
     ]
   },
   "intentionalDifferences": [
+    {
+      "path": "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
+      "reason": "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget."
+    },
     {
       "path": "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
       "reason": "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget."

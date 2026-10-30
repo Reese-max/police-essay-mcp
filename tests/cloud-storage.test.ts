@@ -173,7 +173,7 @@ test("owner isolation and reader artifact denial happen before any GCS download"
   assert.equal(s.storage.downloads, 0);
   const reader = await connect(s.store(), true);
   try {
-    assert.equal((await reader.listTools()).tools.length, 11);
+    assert.equal((await reader.listTools()).tools.length, 12);
     await assert.rejects(reader.readResource({ uri: "essay://exports/" + exported.handle }));
     assert.equal((await reader.callTool({ name: "export_text", arguments: { answerId: doc.id } })).isError, true);
     assert.equal(s.storage.downloads, 0);
@@ -276,14 +276,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 32, reader 11", async () => {
+test("cloud and file expose the same tool contracts: owner 34, reader 12", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 11 : 32);
+      assert.equal(baseline.tools.length, readOnly ? 12 : 34);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());

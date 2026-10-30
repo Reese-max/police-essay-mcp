@@ -4,6 +4,8 @@
 
 它把答案保存成有順序的 sections 與可獨立格式化的 paragraphs，透過固定模板計算中英文字寬與實際行數，再提供縮排、對齊、段落間距、Tab、標題粗體／編號、局部修改、溢出檢查與 DOCX/PDF 固定格線輸出。預設模板是 A4、2 頁、每頁 22 行。
 
+新增 `set_answer_review`／`review_answer` 可保存小問、來源、配分與驗收清單，檢查缺段落、配分矛盾、掃描空白／缺頁及版本過期；缺證據維持待核，不以關鍵字或匯出成功宣稱內容正確。用法與限制見 [小問與驗收紀錄](docs/answer-review.md)，完整 schema 位於 MCP 資源 `essay://schemas/review-plan`。本功能沒有 LLM、來源擷取或自動語義驗證。
+
 ## 新建答案的預設模板
 
 `create_answer` 與 `create_answers`（含 `start_exam` 全卷流程）省略 `templateId` 時，使用 `police_information_essay_166` 原稿紙：A4、兩頁、每頁 22 行、19pt 教育部標準楷書、原底圖與自然字距。必須先設定 `ESSAY_MCP_PAPER_FONT`，字型來源與 SHA 校驗見 [166 工作流](docs/original-paper-workflow.md)；缺少、遭修改或缺字會明確失敗，不會改用一般模板或替代字型。

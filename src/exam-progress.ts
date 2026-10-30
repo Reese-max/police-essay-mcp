@@ -3,6 +3,7 @@ import { isStoreNotFound } from "./storage.js";
 import { layoutSections } from "./layout.js";
 import { publicExportMessage } from "./export-errors.js";
 import { layoutWarnings } from "./planning.js";
+import { reviewAnswer } from "./review.js";
 
 export async function examProgress(store: EssayStore, examId: string) {
   const plan = await store.getExam(examId);
@@ -14,11 +15,13 @@ export async function examProgress(store: EssayStore, examId: string) {
     try {
       const template = await store.getTemplate(answer.templateId);
       const layout = layoutSections(template, answer.sections, answer.layoutOptions);
+      const review = reviewAnswer(answer, template, layout);
       const stage = !layout.fits || layout.overflowLines > 0 ? "drafted" as const
         : plan.lastBundle?.members.some(m => m.answerId === answer.id && m.version === answer.version) ? "exported" as const : "layout_ok" as const;
       return { questionNo: q.questionNo, stage, answerId: answer.id, version: answer.version,
         totalLines: layout.totalLines, capacity: layout.capacity, overflowLines: layout.overflowLines,
-        warningCount: layoutWarnings(layout, template).length };
+        warningCount: layoutWarnings(layout, template).length,
+        review: { status: review.status, freshness: review.freshness, pendingCount: review.issues.length } };
     } catch (error) {
       return { questionNo: q.questionNo, stage: "drafted" as const, answerId: answer.id, version: answer.version,
         error: publicExportMessage(error instanceof Error ? error.message : String(error)).slice(0, 240) };

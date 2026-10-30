@@ -39,6 +39,8 @@ import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
 import { examProgress } from "./exam-progress.js";
+import { reviewPlanSchema } from "./review-schema.js";
+import { reviewAnswer, reviewFingerprint } from "./review.js";
 import { toolScope } from "./oauth.js";
 
 export const DEFAULT_TEMPLATE_ID = "police_information_essay_166";
@@ -663,6 +665,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
 };
 const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "preview_change"]);
 const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
+const REVIEW_INSTRUCTION = "起草前先從原題列出所有必要小問，為每小問指定穩定 id、sectionIds、來源 sourceIds；具體證據須說明用途，定義與分類軸須逐項核對，不可只列名詞。依配分／重要性設定 lineTargets，先補必要小問再刪補充。建立後先讀 essay://schemas/review-plan，再用 set_answer_review(expectedVersion, plan) 保存清單，再 review_answer。配分只有明確可相加才設 additive；包含關係不明用 unknown，不自行改分。來源 locator 不是已核證據，required 與 supplemental 分開；只在實際對照來源後記錄 review 的方法、核對者、時間與具體結論，沒有證據留空。掃描逐頁記錄 content/blank/unreadable/missing，缺頁或空白不能算完整。review_answer 只檢查結構與紀錄狀態，mapped 不代表答對，semantic/sourceVerification=not_checked；review_recorded 也不代表軟體查證。核對清單完整性、語義、來源與逐頁視覺後才記錄各自 review。修改答案後舊紀錄 stale，須重核再保存。匯出前呼叫 review_answer 並處理／揭露待核項；此檢查不改變既有匯出或 done 合約。";
 
 const EDIT_INSTRUCTION = "多題最短流程：start_exam → create_answers(examId) → 修正版面 → render_exam_overview(examId) → export_exam_bundle(examId)。使用者說繼續或前次中斷，先呼叫 get_exam_progress，依 nextStep 接續，將 summary 告知使用者一次；不要重做已完成題目或逐步旁白。fits 僅代表容量符合，絕不可稱答案已查證。匯出成功只代表檔案產出；get_exam_progress 的 done 保留為匯出流程終點，delivery.status=awaiting_review 表示內容、來源與逐頁視覺驗收待完成，不可稱成品已驗收或因此重複匯出。新答案預設整字換行、標題不落頁尾（layoutOptions）；舊答案可用 update_answer_info 開啟，補入的空白行計入行數與容量。單題用 create_answer 一次帶 exam、questionNo、lineTargets（sectionId 必須等於 sections 明確提供的 id）；重試使用相同 idempotencyKey 與請求，重送回傳目前版本，不同請求會拒絕。多題用 create_answers（1–10 題），全部驗證才開始儲存，逐題給不同 key；中途失敗依錯誤列出的已建立項目處理。只修改需要變更的內容。寫入預設回傳摘要，完整文字用 read_answer 或 responseDetail=full。read_answer 只回傳資料，不顯示畫板；單題畫板用 render_answer_sheet；多題只呼叫一次 render_exam_overview，以分頁切換，不要逐題開畫板。修改字句用 edit_text，只送 find/replace；整段改寫用 replace_text，整份重寫才用 write_answer；只改格式用 format_section。修改時帶 expectedVersion，可先用 preview_change 預覽，套用後回報變更清單。check_layout 檢查行數、目標與品質 warnings（僅提醒、不阻擋匯出）；單題用 export_answer(expectedVersion)，多題版面皆通過後必須呼叫一次 export_exam_bundle(examId)，預設輸出 PDF 與 Word；同一則訊息直接提供兩個下載連結，不要詢問是否匯出。可逐題指定 expectedVersion。合輯隨任一成員答案刪除；handle 建立失敗會回收先前 handle，回收失敗會列出遺留 handle。搬移用 move_section，編號不連續用 renumber_items；調整各節目標用 set_line_targets。list_revisions 查歷史，restore_revision 另存還原版本。update_answer_info 修改考試／題號等資訊，duplicate_answer 複製試寫。";
 
@@ -683,7 +686,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     {
       instructions:
-        "新建答案及全卷建立省略 templateId 時使用 police_information_essay_166；須配置已校驗教育部標準楷書，字型缺少時明確失敗。明確選其他模板及既有答案沿用原模板。這是一個固定版面國考申論答題紙 MCP。多題先呼叫 start_exam；單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，單題呼叫 render_answer_sheet；多題只呼叫一次 render_exam_overview 顯示同一畫板的題目分頁。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION,
+        "新建答案及全卷建立省略 templateId 時使用 police_information_essay_166；須配置已校驗教育部標準楷書，字型缺少時明確失敗。明確選其他模板及既有答案沿用原模板。這是一個固定版面國考申論答題紙 MCP。多題先呼叫 start_exam；單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，單題呼叫 render_answer_sheet；多題只呼叫一次 render_exam_overview 顯示同一畫板的題目分頁。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION,
     },
   );
 
@@ -761,6 +764,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           "5. 單題用 export_answer 並帶 expectedVersion；多題用 export_exam_bundle，逐題釘選 expectedVersion，按指定順序合成 PDF 與 Word。只有 fits=true 才可正常匯出；166 原稿紙不允許超頁。全部題目通過後直接匯出，同一則訊息提供兩個下載連結，不要詢問是否匯出。",
           "TXT 的 textMode 預設 paper，paragraphs 去除視覺換行、保留編號並以 _段落.txt 命名；pages 仍計算稿紙頁數。合輯隨任一成員答案刪除；handle 失敗會回收先前 handle，回收失敗會列出遺留 handle。",
           "6. move_section 搬移；renumber_items 修正不連續編號；set_line_targets 調整各節目標；update_answer_info 修改答案資訊；duplicate_answer 複製試寫。",
+          REVIEW_INSTRUCTION,
           "7. list_revisions 查歷史，restore_revision 另存新版本還原；只有使用者明確要求永久刪除時才用 delete_answer，並帶目前 expectedVersion。",
 
         ].join("\n"),
@@ -1282,6 +1286,48 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       };
     },
   );
+
+  server.registerResource("answer-review-plan-schema", "essay://schemas/review-plan", {
+    title: "小問與驗收清單 JSON Schema", mimeType: "application/json",
+    description: "Strict plan schema for set_answer_review; evidence is caller-reported, not server approval.",
+  }, async uri => ({ contents: [{ uri: uri.href, mimeType: "application/json",
+    text: JSON.stringify(z.toJSONSchema(reviewPlanSchema, { io: "input" })) }] }));
+
+  registerTool("review_answer", {
+    title: "檢查小問覆蓋與驗收紀錄",
+    description: "Check mapped subquestions, score totals, source/scan review records and line allocation; never verifies semantic correctness or fetches sources.",
+    inputSchema: { answerId: answerIdSchema, expectedVersion: expectedVersionSchema },
+    outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ answerId, expectedVersion }) => {
+    const current = await loadSnapshot(store, answerId);
+    assertExpectedVersion(current.answer, expectedVersion);
+    const template = await store.getTemplate(current.answer.templateId);
+    const report = reviewAnswer(current.answer, template, current.layout);
+    return { structuredContent: report, content: textContent(report.summary + report.issues.map(i => `\n${i.code}：${i.message}`).join("")) };
+  });
+
+  const setAnswerReviewTool = registerTool("set_answer_review", {
+    title: "保存小問與驗收清單",
+    description: "Replace or clear review plan at required expectedVersion; records caller evidence, not automatic approval. All prior evidence must be rechecked after edits.",
+    // Keep the strict full schema in a resource rather than repeating it in every tools/list.
+    inputSchema: { answerId: answerIdSchema, expectedVersion: z.number().int().positive(),
+      plan: z.record(z.string(), z.unknown()).nullable().describe("Strict ReviewPlan JSON: read essay://schemas/review-plan. null clears the plan.") },
+    outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+  }, async ({ answerId, expectedVersion, plan: inputPlan }) => {
+    const plan = inputPlan === null ? null : reviewPlanSchema.parse(inputPlan);
+    const before = await loadSnapshot(store, answerId);
+    assertExpectedVersion(before.answer, expectedVersion);
+    for (const r of plan?.requirements ?? []) for (const id of r.sectionIds) findSection(before.answer, id);
+    const template = await store.getTemplate(before.answer.templateId);
+    const updated = hypotheticalAnswer({ ...before.answer, review: undefined }, before.answer.sections);
+    if (plan) updated.review = { plan, reviewedVersion: updated.version, fingerprint: reviewFingerprint(updated, template) };
+    if (Buffer.byteLength(JSON.stringify(updated)) > MAX_ANSWER_BYTES) throw new Error("答案超過 700 KiB 文件上限。");
+    await store.saveAnswer(updated, { expectedVersion });
+    const report = reviewAnswer(updated, template, layoutSections(template, updated.sections, updated.layoutOptions));
+    return { structuredContent: report, content: textContent(report.summary + report.issues.map(i => `\n${i.code}：${i.message}`).join("")) };
+  });
 
   const setLineTargetsTool = registerTool(
     "set_line_targets",
@@ -1991,6 +2037,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],
     ["update_answer_info", updateAnswerInfoTool], ["duplicate_answer", duplicateAnswerTool],
+    ["set_answer_review", setAnswerReviewTool],
     ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool], ["export_answer", exportAnswerTool], ["export_exam_bundle", exportExamBundleTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
@@ -2015,6 +2062,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
             `請回答申論題：${question}`,
             scoringPoints ? `採點方向：${scoringPoints}` : "",
             "請先規劃 sections，再呼叫 create_answer 或 write_answer。寫入後務必呼叫 check_layout；若超過44行，依 compressionHints 修改後重試。",
+            REVIEW_INSTRUCTION,
           ].filter(Boolean).join("\n"),
         },
       }],

@@ -10,7 +10,8 @@ import { FileStore } from "../src/storage.js";
 import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
 import { toolScope } from "../src/oauth.js";
 
-export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
+  reason: "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget." }, { path: "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
   reason: "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget." },{ path: "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
   reason: "Optional version binding for legacy exports; strip only expectedVersion before base comparison." },
 { path: "*.tools[render_exam_overview]",
@@ -50,10 +51,10 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[check_layout,create_ans
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
   reason: "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
+export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
-export const ADDED_READ_TOOLS = ["get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
+export const ADDED_READ_TOOLS = ["review_answer", "get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
 /** Base tools that no longer exist; all of them were read-only. */
 export const REMOVED_TOOLS = ["preview_delete_text", "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer"];
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
@@ -287,6 +288,14 @@ export async function checkMcpContract() {
       `${view} does not register ${ANSWER_SHEET_WIDGET_URI}`);
   }
   const comparable = withBaseWidgetUri(current);
+  // Remove only the declared new resource after asserting its exact identity in both surfaces.
+  for (const view of ["owner", "reader"] as const) {
+    const resource = comparable[view].resources.find(r => r.name === "answer-review-plan-schema");
+    assert.deepEqual(resource, { name: "answer-review-plan-schema", title: "小問與驗收清單 JSON Schema",
+      uri: "essay://schemas/review-plan", mimeType: "application/json",
+      description: "Strict plan schema for set_answer_review; evidence is caller-reported, not server approval." });
+    comparable[view].resources = comparable[view].resources.filter(r => r.name !== "answer-review-plan-schema");
+  }
   assert.deepEqual(withoutFormatDefaults(current), current, "format fields must not declare defaults");
   const base = withoutFormatDefaults(fixture.contract) as typeof fixture.contract;
   assert.deepEqual({ owner: withoutOutputSchemas(withoutAddedInputs(withBaseTemplateDefault(withBaseDescriptions(comparable.owner, base.owner.tools))), ADDED_TOOLS), reader: withoutOutputSchemas(withoutAddedInputs(withBaseTemplateDefault(withBaseDescriptions(comparable.reader, base.reader.tools))), ADDED_READ_TOOLS) },
