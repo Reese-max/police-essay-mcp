@@ -1,0 +1,45 @@
+{
+  "id": "police_information_essay_165",
+  "name": "165 原稿紙・兩頁申論",
+  "description": "原稿紙底圖，兩頁各22行，19pt教育部標準楷書。保留文字，不自動刪改；須設定 ESSAY_MCP_PAPER_FONT。只接受靠左、非粗體、非斜體；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，可改用縮排與空行。",
+  "paperSize": "A4",
+  "pages": 2,
+  "linesPerPage": 22,
+  "columns": 38,
+  "overflowPolicy": "reject",
+  "fontFamily": "TW-MOE-Std-Kai",
+  "fontSizePt": 19,
+  "lineHeightPt": 22,
+  "paragraphDefaults": {
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4,
+    "bold": false,
+    "italic": false
+  },
+  "headingDefaults": {
+    "bold": false,
+    "italic": false,
+    "numbered": false,
+    "numbering": "chinese",
+    "separator": "、",
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4
+  },
+  "marginsMm": {
+    "left": 45.974,
+    "right": 35.02377777777777,
+    "top": 42.64633345054665,
+    "bottom": 71.758377330918
+  },
+  "paperProfile": "original_166"
+}

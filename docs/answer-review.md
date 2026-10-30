@@ -19,7 +19,7 @@
 5. 掃描題本以 `scan.expectedPages` 及 `pages: [{ page, status }]` 記錄。沒有列出的頁自動列為 missing；blank、unreadable、missing 均待核。頁碼重複或超出預期範圍拒絕。沒有掃描資料維持 `not_checked`；`content` 是呼叫者紀錄，工具不檢視圖像。
 6. 完成實際對照後才填入小問 `review`、來源 `review`、`scopeReview`、`visualReview`。每筆包含 `{ status: "checked" | "rejected", method: "human" | "model", reviewer, note, checkedAt }`。`note` 說明核對位置、具體結論與未能確認處；`checkedAt` 是 ISO datetime。沒有證據就省略，不填自動通過。視覺紀錄應列出實際檢視的預覽／檔案及所有頁；只匯出成功不能填 checked。
 7. 保存清單後呼叫 `review_answer`，處理或揭露 pending。任何後續答案版本、題目、文字、格式、模板幾何或身分變動都讓舊紀錄 `stale`；重新對照後才能重新保存。清單內容仍保留供續作，不能複製舊核對結論冒充新檢查。
-8. 依既有 `check_layout` → render → export 流程交付；本次不更動匯出阻擋規則、預設 166、Word 幾何或 `nextStep.action: done`。這是輔助核對，不是強制禁止匯出。
+8. 依既有 `check_layout` → render → export 流程交付；本次不更動匯出阻擋規則、預設 165、Word 幾何或 `nextStep.action: done`。這是輔助核對，不是強制禁止匯出。
 
 ## 如何解讀結果
 

@@ -1,5 +1,7 @@
 # 166 PDF/SVG baseline calibration
 
+> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。
+
 ## Evidence and scope
 
 The parent inspected the original reference and the deployed two-page preview using actual Library materializations. Across all 43 text rows the deployed baseline was 1.0428–1.7209pt lower (mean 1.5151pt). The difference is not uniform: the asset has irregular raster-derived row heights, whereas the reference text follows slightly different baseline increments. This does not establish that any PDF font metric is broken.

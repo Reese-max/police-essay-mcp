@@ -8,7 +8,7 @@
 
 ## 新建答案的預設模板
 
-`create_answer` 與 `create_answers`（含 `start_exam` 全卷流程）省略 `templateId` 時，使用 `police_information_essay_166` 原稿紙：A4、兩頁、每頁 22 行、19pt 教育部標準楷書、原底圖與自然字距。必須先設定 `ESSAY_MCP_PAPER_FONT`，字型來源與 SHA 校驗見 [166 工作流](docs/original-paper-workflow.md)；缺少、遭修改或缺字會明確失敗，不會改用一般模板或替代字型。
+`create_answer` 與 `create_answers`（含 `start_exam` 全卷流程）省略 `templateId` 時，使用 `police_information_essay_165` 原稿紙：A4、兩頁、每頁 22 行、19pt 教育部標準楷書、原底圖與自然字距。必須先設定 `ESSAY_MCP_PAPER_FONT`，字型來源與 SHA 校驗見 [165 工作流](docs/original-paper-workflow.md)；缺少、遭修改或缺字會明確失敗，不會改用一般模板或替代字型。
 
 一般模板及其粗體、縮排等格式仍可明確指定 `templateId: "police_information_essay"`。既有答案、預覽、複製與匯出沿用各答案儲存的模板，不遷移資料。`load_exam_paper` 不帶答案時使用新預設；帶 `answerId` 且省略模板時沿用該答案，明確指定不符模板仍拒絕。既有一般模板資源 URI `essay://templates/police_information_essay` 保持原意。
 
@@ -104,7 +104,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 4. 修改前先用 `preview_change` 查看差異：`operation` 填要預覽的修改工具（`write_answer`、`replace_text`、`format_section`、`insert_text`、`delete_text`、`edit_text`、`move_section` 或 `renumber_items`），其餘參數與該工具相同。
 5. 確認預覽後才呼叫對應的寫入工具；所有修改都帶 `expectedVersion`。
 
-一般模板新答案另預設 `layoutOptions.avoidPunctuationOnlyLines=true`：自然換行若只剩結尾標點，將前行最後一個字素（可完整容納時優先保留英文整詞）連同標點放入下一行，保留全部文字與字級；明確輸入的獨立標點或分隔線不改動。舊答案省略此旗標時維持既有換行，可用 `update_answer_info` 明確啟用。未啟用且發生自然換行的純標點行會回報 `PUNCTUATION_ONLY_LINE`。166 的量測換行沿用既有實作。
+一般模板新答案另預設 `layoutOptions.avoidPunctuationOnlyLines=true`：自然換行若只剩結尾標點，將前行最後一個字素（可完整容納時優先保留英文整詞）連同標點放入下一行，保留全部文字與字級；明確輸入的獨立標點或分隔線不改動。舊答案省略此旗標時維持既有換行，可用 `update_answer_info` 明確啟用。未啟用且發生自然換行的純標點行會回報 `PUNCTUATION_ONLY_LINE`。165 的量測換行沿用既有實作。
 
 一般模板 PDF 在整行可容納時，會使用實際字形 advance 避免寬英文字母互相覆畫；放不下時保留原欄位位置並警告，不把更多字元推離頁面。實際字形寬度仍可能超出名義欄數，所以匯出 `fontWarning` 會指明合輯頁／行與不重疊排版所需寬度的超出點數。遇到這個警告應明確換行再匯出，不能把 `fits=true` 當成實際字形均在格內，也不會默默縮字或刪字。
 6. 超出時依 `compressionHints` 使用 `replace_text` 濃縮指定區塊。
@@ -122,9 +122,9 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 `create_answer` 可帶 8–128 字元的 `idempotencyKey`（英數、`_`、`-`）：同 key、同請求重送會回傳原答案目前狀態及 `replayed: true`，不另存版本；同 key 不同請求回報 `IDEMPOTENCY_KEY_REUSED`。key 產生確定的 answerId，建立請求以排序 JSON 的 SHA-256 儲存為 createRequestHash；複製答案不帶此雜湊。`create_answers`（essay.write）一次接受 1–10 題，先驗證全部，再按順序儲存，回傳精簡摘要；每題使用不同 key。驗證錯誤列出項次／代碼，完全不寫入；中途 I/O 失敗列出已建立與失敗項目，相同批次搭配原 keys 可安全重試。
 
-單題 `export_answer` 的 `textMode` 僅影響 TXT：預設 `paper` 保留目前格紙輸出；`paragraphs` 依權威版面去除視覺換行、縮排填充與間距行，保留標題編號、每段一行、節間空行，檔名加 `_段落`。容量／166 規則不變，pages 仍是稿紙頁數。
+單題 `export_answer` 的 `textMode` 僅影響 TXT：預設 `paper` 保留目前格紙輸出；`paragraphs` 依權威版面去除視覺換行、縮排填充與間距行，保留標題編號、每段一行、節間空行，檔名加 `_段落`。容量／165 規則不變，pages 仍是稿紙頁數。
 
-`read_answer` 只回傳資料，不顯示畫板；單題畫板用 `render_answer_sheet`，多題只呼叫一次 `render_exam_overview`，以題目分頁共用一個畫板。 兩種畫板工具預設 `responseDetail: "summary"`，`structuredContent` 僅含目前題目的 id／版本、版面統計與 `warningCount`（多題另含逐題摘要）；完整答案與逐行版面始終放在元件專用 `_meta.snapshot`；`responseDetail: "full"` 也在 `structuredContent` 回傳完整 snapshot 與 `readOnly`，166 模式另含 `paperSvgPages`。v12 畫板自行呼叫 render 工具一律要求 full，依序讀取結果 `_meta.snapshot`、完整 `structuredContent`、宿主初始輸出的 `toolResponseMetadata`，不依賴 `window.openai.callTool` 回傳 `_meta`。唯讀狀態依序取結果 `_meta.readOnly`、`structuredContent.readOnly`、僅宿主初始輸出的 `toolResponseMetadata.readOnly`、同答案既有狀態；皆未知時停用編輯。`openai:set_globals` 僅接受同次事件且答案 id／版本相符的 metadata；摘要缺少可用資料時呼叫一次 full render，避免顯示其他答案或舊版本。SVG 缺少時僅保留同答案同版本已顯示的原稿紙。分頁會更新寫入完成題目的行數與版本，重按目前分頁保留未儲存草稿。多題載入失敗會彙整缺少答案及帶答案 id 的版面錯誤，並遮蔽內部路徑與堆疊。
+`read_answer` 只回傳資料，不顯示畫板；單題畫板用 `render_answer_sheet`，多題只呼叫一次 `render_exam_overview`，以題目分頁共用一個畫板。 兩種畫板工具預設 `responseDetail: "summary"`，`structuredContent` 僅含目前題目的 id／版本、版面統計與 `warningCount`（多題另含逐題摘要）；完整答案與逐行版面始終放在元件專用 `_meta.snapshot`；`responseDetail: "full"` 也在 `structuredContent` 回傳完整 snapshot 與 `readOnly`，165 模式另含 `paperSvgPages`。v12 畫板自行呼叫 render 工具一律要求 full，依序讀取結果 `_meta.snapshot`、完整 `structuredContent`、宿主初始輸出的 `toolResponseMetadata`，不依賴 `window.openai.callTool` 回傳 `_meta`。唯讀狀態依序取結果 `_meta.readOnly`、`structuredContent.readOnly`、僅宿主初始輸出的 `toolResponseMetadata.readOnly`、同答案既有狀態；皆未知時停用編輯。`openai:set_globals` 僅接受同次事件且答案 id／版本相符的 metadata；摘要缺少可用資料時呼叫一次 full render，避免顯示其他答案或舊版本。SVG 缺少時僅保留同答案同版本已顯示的原稿紙。分頁會更新寫入完成題目的行數與版本，重按目前分頁保留未儲存草稿。多題載入失敗會彙整缺少答案及帶答案 id 的版面錯誤，並遮蔽內部路徑與堆疊。
 
 寫入工具預設 `responseDetail: "summary"`，只回傳答案基本資訊、版面統計與各節行數；`responseDetail: "full"` 保留完整答案與逐行版面。`read_answer`、`load_exam_paper`、`reflow_answer`、`check_layout` 仍回傳完整資料；所有工具輸出均排除僅供儲存使用的 `createRequestHash`。畫板收到寫入摘要時會透過 render_answer_sheet 載入完整答案，載入失敗顯示通知，過期回應不會蓋過後來顯示的答案。
 
@@ -132,7 +132,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 ## 正式格式
 
-新答案預設 `layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true }`，避免英數字詞跨行及標題落在頁尾、內文在次頁。整個英數字詞能放入下一行，且原行仍有非空白字元時才搬移（166 另計標點攜帶寬度）；超長字詞或原行僅有空白時沿用原斷行。標題與首行內文合計超過一頁時不搬移。舊答案未設定選項時維持原版面，可用 `update_answer_info` 局部開啟或以 `false` 關閉。為標題補入的空白行（`isSpacer`、`isPadding`）計入總行數、區塊行數與容量；複製沿用來源選項，還原內容保留目前選項。
+新答案預設 `layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true }`，避免英數字詞跨行及標題落在頁尾、內文在次頁。整個英數字詞能放入下一行，且原行仍有非空白字元時才搬移（165 另計標點攜帶寬度）；超長字詞或原行僅有空白時沿用原斷行。標題與首行內文合計超過一頁時不搬移。舊答案未設定選項時維持原版面，可用 `update_answer_info` 局部開啟或以 `false` 關閉。為標題補入的空白行（`isSpacer`、`isPadding`）計入總行數、區塊行數與容量；複製沿用來源選項，還原內容保留目前選項。
 
 `sections[].paragraphs[]` 可讓每個段落使用獨立格式；格式欄位的縮排與 Tab 單位都是顯示欄位：
 
@@ -180,16 +180,16 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 ## 165 原稿紙模式
 
-新增模板 `police_information_essay_166`；既有模板及答案不變。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
+預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，既有答案的模板代碼不遷移。兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」。此次只改代碼與名稱，底圖、字型、行數、座標及 Word／PDF 幾何完全沿用原設定。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。
 
 此模式須取得教育部標準楷書 5.1 完整未修改字型，設定 `ESSAY_MCP_PAPER_FONT` 為檔案絕對路徑。`export_docx` 與 PDF 一樣只內嵌答案用到的字形（另含 ASCII 與常用全形標點），未安裝此字型的 Word／LibreOffice 也以同一字型、同一換行顯示；在 Word 新增內嵌範圍以外的字時才改用替代字型。字型不隨 repository 分發。字型來源與使用條件見 [原稿紙工作流](docs/original-paper-workflow.md)。
 
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板的 `export_docx`、`export_pdf`、`export_text` 均拒絕超頁及 `allowOverflow: true`。
 
-驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper166-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper166-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
+驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper165-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper165-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
 
 ## 互動畫板
 
-呼叫 `render_answer_sheet` 開啟已儲存答案。166 模式的畫板使用原稿紙及字型輪廓，閱讀端不必下載字型；一般模式顯示行數與區塊編輯預覽。可點選一行定位區塊、預覽修改、再套用；`expectedVersion` 保護既有答案。畫板另有：字句修改（找／換成，可指定第幾處或全部取代，可把文字框選取的字帶入）、上移／下移目前區塊、重新編號（先預覽，再按一次確認）、版本紀錄與「還原成這一版」。唯讀連線停用所有修改，只能查看版本紀錄。Word 定稿仍須依原稿紙工作流實際渲染驗收。
+呼叫 `render_answer_sheet` 開啟已儲存答案。165 模式的畫板使用原稿紙及字型輪廓，閱讀端不必下載字型；一般模式顯示行數與區塊編輯預覽。可點選一行定位區塊、預覽修改、再套用；`expectedVersion` 保護既有答案。畫板另有：字句修改（找／換成，可指定第幾處或全部取代，可把文字框選取的字帶入）、上移／下移目前區塊、重新編號（先預覽，再按一次確認）、版本紀錄與「還原成這一版」。唯讀連線停用所有修改，只能查看版本紀錄。Word 定稿仍須依原稿紙工作流實際渲染驗收。
 
 畫板支援 MCP Apps 初始化與宿主工具呼叫，也支援宿主提供的 `window.openai.callTool`。未收到宿主回應時顯示逾時，不會自動重送修改。

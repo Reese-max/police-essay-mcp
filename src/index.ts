@@ -365,7 +365,7 @@ async function startHttp(): Promise<void> {
   try {
     await initializeRuntimeFont();
     if (process.env.ESSAY_MCP_PAPER_FONT || process.env.REQUIRE_PAPER_FONT === "true") {
-      await validateRuntimeFont(await store.getTemplate("police_information_essay_166"));
+      await validateRuntimeFont(await store.getTemplate("police_information_essay_165"));
     }
   } catch { throw new Error("Runtime font initialization failed."); }
   await store.ensureDirectories();
@@ -383,7 +383,7 @@ async function startHttp(): Promise<void> {
 async function startStdio(): Promise<void> {
   const store = await createRuntimeStore();
   if (process.env.REQUIRE_PAPER_FONT === "true") {
-    await validateRuntimeFont(await store.getTemplate("police_information_essay_166"));
+    await validateRuntimeFont(await store.getTemplate("police_information_essay_165"));
   }
   await store.ensureDirectories();
   const server = createEssayMcpServer(store);

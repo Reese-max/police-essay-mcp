@@ -16,23 +16,23 @@ export function originalPaperRenderBaseline(rowIndex: number): number {
 }
 export function originalPaperImage(): Buffer {
   const image = Buffer.from(originalPaper.imageBase64, "base64");
-  if (createHash("sha256").update(image).digest("hex") !== originalPaper.sha256) throw new Error("166 稿紙底圖雜湊不符。");
+  if (createHash("sha256").update(image).digest("hex") !== originalPaper.sha256) throw new Error("165 稿紙底圖雜湊不符。");
   return image;
 }
 export function originalPaperFontPath(): string {
   const fontPath = process.env.ESSAY_MCP_PAPER_FONT;
-  if (!fontPath) throw new Error("166 原稿紙須設定 ESSAY_MCP_PAPER_FONT，指向教育部標準楷書完整字型。");
+  if (!fontPath) throw new Error("165 原稿紙須設定 ESSAY_MCP_PAPER_FONT，指向教育部標準楷書完整字型。");
   return fontPath;
 }
 export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
 let cachedFont: { path: string; mtimeMs: number; size: number; face: ReturnType<typeof fontkit.openSync> } | undefined;
 export function validateOriginalPaperFontFamily(familyName: string): void {
-  if (familyName !== "TW-MOE-Std-Kai") throw new Error("166 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
+  if (familyName !== "TW-MOE-Std-Kai") throw new Error("165 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
 }
 export function validatedOriginalPaperFont(fontPath: string) {
   const { mtimeMs, size } = statSync(fontPath);
   if (cachedFont?.path === fontPath && cachedFont.mtimeMs === mtimeMs && cachedFont.size === size) return cachedFont.face;
-  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) throw new Error("166 font SHA-256 mismatch. 166 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
+  if (createHash("sha256").update(readFileSync(fontPath)).digest("hex") !== ORIGINAL_PAPER_FONT_SHA256) throw new Error("165 font SHA-256 mismatch. 165 原稿紙須使用教育部標準楷書 5.1 完整未修改字型。");
   const opened = fontkit.openSync(fontPath);
   validateOriginalPaperFontFamily(opened.familyName);
   cachedFont = { path: fontPath, mtimeMs, size, face: opened };
@@ -40,7 +40,7 @@ export function validatedOriginalPaperFont(fontPath: string) {
 }
 function font() { return validatedOriginalPaperFont(originalPaperFontPath()); }
 export function validateOriginalPaper(template: AnswerTemplate, fontPath?: string): void {
-  if (template.pages !== 2 || template.linesPerPage !== 22 || template.fontSizePt !== 19 || template.fontFamily !== "TW-MOE-Std-Kai" || template.lineHeightPt !== 22 || Math.abs(template.marginsMm.left * 72 / 25.4 - 130.32) > 0.01 || Math.abs(template.marginsMm.top * 72 / 25.4 - originalPaper.rows[0][0]) > 0.01 || Math.abs(595.28 - template.marginsMm.right * 72 / 25.4 - 496) > 0.01) throw new Error("166 原稿紙的頁數、行數、字級及位置須維持標準設定。");
+  if (template.pages !== 2 || template.linesPerPage !== 22 || template.fontSizePt !== 19 || template.fontFamily !== "TW-MOE-Std-Kai" || template.lineHeightPt !== 22 || Math.abs(template.marginsMm.left * 72 / 25.4 - 130.32) > 0.01 || Math.abs(template.marginsMm.top * 72 / 25.4 - originalPaper.rows[0][0]) > 0.01 || Math.abs(595.28 - template.marginsMm.right * 72 / 25.4 - 496) > 0.01) throw new Error("165 原稿紙的頁數、行數、字級及位置須維持標準設定。");
   originalPaperImage();
   validatedOriginalPaperFont(fontPath ?? originalPaperFontPath());
 }
@@ -60,14 +60,14 @@ export function originalPaperAvailableWidth(format: ParagraphFormat, template: A
 }
 export function wrapOriginalPaper(text: string, format: ParagraphFormat, template: AnswerTemplate, options: LayoutOptions = {}): string[] {
   validateOriginalPaper(template);
-  if (format.bold || format.italic || format.alignment !== "left") throw new Error("166 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
+  if (format.bold || format.italic || format.alignment !== "left") throw new Error("165 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
   const face = font();
   const measure = originalPaperMeasure(template);
   const lines: string[] = [];
   let current = "";
   const available = (lineIndex = lines.length) => originalPaperAvailableWidth(format, template, lineIndex);
   for (const { segment, index } of new Intl.Segmenter("zh-TW", { granularity: "grapheme" }).segment(text)) {
-    if (segment === "\t") throw new Error("166 原稿紙請以明確縮排取代定位字元。");
+    if (segment === "\t") throw new Error("165 原稿紙請以明確縮排取代定位字元。");
     for (const character of Array.from(segment)) if (!face.hasGlyphForCodePoint(character.codePointAt(0)!)) throw new Error(`稿紙字型缺字：${character}`);
     if (measure(current + segment) > available()) {
       if (!current) throw new Error("段落縮排使稿紙可用寬度不足。");
