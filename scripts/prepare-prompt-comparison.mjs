@@ -28,5 +28,8 @@ dual.compressionInput={id:'ans_comparison-case',version:1,templateId:'police_inf
  {id:'test',heading:'二、恢復測試確認副本及程序可用',text:'恢復測試也是十分重要的工作。因備份檔案存在不等於可成功恢復，必須測試副本可用及恢復程序可執行，才可確認恢復準備。此處必須注意，備份與恢復測試不能混為一談。'}],
  note:'Identical current draft supplied to both arms. Redundancy is intentional for the compression exercise. The illustrative overflowLines=3 is not measured; replace it with actual check_layout output in a real run. Per-case target is six lines, template remains 44 lines.'};
 const out=path.resolve(process.argv[3]??'../prompt-review-20261101');await mkdir(out,{recursive:true});
+await writeFile(path.join(out,'old-draft-body.txt'),[planning,review].join('\n'));
+await writeFile(path.join(out,'new-draft-body.txt'),[current.DRAFT_INSTRUCTION,review+'\n'+current.REVIEW_REASONING_INSTRUCTION].join('\n'));
+await writeFile(path.join(out,'teaching-examples.txt'),current.ESSAY_EXAMPLES_RESOURCE);
 await writeFile(path.join(out,'comparison.json'),JSON.stringify({base,modelExecuted:false,scored:false,retrievalValidation:'source-derived construction only; real prompts/get regression prepared but not yet executed',controls:'Same question, materials, per-case line budget. For model A/B also hold model, sampling, source access and revision limits constant; blind-review without claimed score.',cases},null,2));
 console.log(JSON.stringify({cases:cases.length,modelExecuted:false,scored:false,output:path.join(out,'comparison.json')}));
