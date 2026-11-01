@@ -13,7 +13,8 @@ export const COMPRESS_INSTRUCTION = `先 read_answer 取得現行版本、全文
 
 export const REVIEW_REASONING_INSTRUCTION = `複查先回到原題，確認小問與指令動詞的清單完整，再沿各題型路徑核對論證；比較維度要成對、原因需有機制、對策需對原因且可執行、案例需有事實適用，不能以關鍵字出現或mapped當作答對。檢查重要主張是否有依據或機制與題意應用，必要時交代限制；不得要求每段四句或強加案例。區分官方教材與模型推論；沒有配分不捏造，沒有來源不假稱已核。
 每次壓縮或修改後重新檢查漏答、否定與條件、推理及語義；舊review stale時，須實際重核後才以最新expectedVersion保存，不能只刷新版本或複製舊證據。freshness=current只是紀錄對應目前內容；fits與no_structural_issues都不是內容通過。semantic/sourceVerification固定not_checked，review_recorded不是自動評分，不保證高分。
-${TASK_BOUNDARY_INSTRUCTION}`;
+${TASK_BOUNDARY_INSTRUCTION}
+缺口以可行動格式記入對應requirements[].review.note：requirementId、sectionIds、quote（原句與位置）、problem、suggestedRevision、evidenceNeeded。只能記錄呼叫者真正核對的判斷，不自動推論漏答；無法定位就標待定位，不捏造原句或頁碼。未解決缺口用rejected，未核對則省略證據；只有實際核對並解決該項問題後才用checked。修改後仍須重核新鮮度。即使客戶端無prompts/resources，也可呼叫load_exam_paper讀取writingGuide中的三階段指引、格式與五題型教學示例。`;
 
 export const ESSAY_TEACHING_CASES = [
   {id:'explanation', type:'解釋', question:'解釋資料備份的用途與限制。', material:'自製材料：備份保留可恢復副本；恢復需測試。', budgetLines:8, teachingExample:'備份提供可恢復副本。資料損毀後，可用副本回復先前狀態，因此應同時規劃保存與恢復程序。只有產生副本，尚不能證明能成功恢復；必須實測恢復。', checkpoints:['概念與機制','恢復用途','測試限制']},

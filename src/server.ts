@@ -1,4 +1,5 @@
 import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION, REVIEW_REASONING_INSTRUCTION, ESSAY_EXAMPLES_RESOURCE } from "./essay-instructions.js";
+import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -823,6 +824,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         template: templateSummarySchema,
         answer: answerSummarySchema.optional(),
         layout: layoutSummarySchema.optional(),
+        writingGuide: z.unknown().optional(),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: ANSWER_SHEET_UI_META,
@@ -833,8 +835,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
       if (!answerId) {
         return {
-          structuredContent: { template },
-          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。`),
+          structuredContent: { template, writingGuide: writingGuide() },
+          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
         };
       }
       if (!answer) throw new Error("Answer not found");
@@ -843,8 +845,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       }
       const layout = layoutSections(template, answer.sections, answer.layoutOptions);
       return {
-        structuredContent: { template, answer, layout },
-        content: textContent(`已載入答案「${answer.title}」；${summarizeLayout(layout)}`),
+        structuredContent: { template, answer, layout, writingGuide: writingGuide() },
+        content: textContent(`已載入答案「${answer.title}」；${summarizeLayout(layout)}` + WRITING_GUIDE_HINT),
       };
     },
   );
