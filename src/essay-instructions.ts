@@ -1,4 +1,5 @@
 /** Caller instructions only: this MCP does not run a language model or grade answers. */
+export const TASK_BOUNDARY_INSTRUCTION = `先列硬性數量、資源與範圍限制，按可獨立實施的措施或功能逐項計數；同一標題包含多項也分別計數，不得打包規避上限。改善方案要承認既有控制已能發揮的作用，再指出缺口，不因不足就否定原有紀錄或控制的有限用途。保持題示動作、對象、強度與規模，不把分類、提示或抽樣擴張成更強或全面措施；另提更強方案須明標建議及所需授權，不能當成題示事實。技術紀錄只支持可觀察事件或有依據的帳號關聯；區分帳號歸屬、設備使用與實際操作者，不保證已追到本人。`;
 export const DRAFT_INSTRUCTION = `先拆題再起草：逐一列出必要小問、指令動詞（解釋／比較／分析原因／提出並評析對策／案例適用）、指定範圍與限制，建立穩定 requirement id 對應 sectionIds；同一題可混合題型。題目有配分才按明確配分分配篇幅；沒有配分就標示未知，按任務重要性規劃，不捏造分數或把不明包含關係自行相加。
 依題型選論證路徑：解釋題界定概念、構成與作用機制及邊界；比較題先定共同比較維度，逐維度對照並判斷適用條件，不能各說各話；原因題說明原因如何導致結果，區分層次、條件與推測，不能只列因素；對策評析題把每項措施連回原因，交代執行主體、做法、限制與取捨；案例題先辨識爭點、可用規範或原理與關鍵事實，再涵攝、考慮反面可能並下有條件結論。
 重要論點要有可辨識的主張、依據或機制、題意應用，以及確有必要的限制或判斷；依題意選擇組合，不要每段硬套四句，也不硬塞案例。標題直接呈現論點，避免空泛的「重要性／對策」標題。先讓所有必要小問的推理完整，再依實際版面壓縮；不能為湊行數新增套話。
@@ -11,7 +12,8 @@ export const COMPRESS_INSTRUCTION = `先 read_answer 取得現行版本、全文
 修改使舊review stale。完成本次真實核對後才以最新 expectedVersion 重存 set_answer_review，且只記錄確實做過的核對；未查來源或未看成品不能補 checked。再 review_answer 確認 freshness=current並揭露pending；semantic/sourceVerification仍為not_checked，MCP沒有自動驗證語義與來源。`;
 
 export const REVIEW_REASONING_INSTRUCTION = `複查先回到原題，確認小問與指令動詞的清單完整，再沿各題型路徑核對論證；比較維度要成對、原因需有機制、對策需對原因且可執行、案例需有事實適用，不能以關鍵字出現或mapped當作答對。檢查重要主張是否有依據或機制與題意應用，必要時交代限制；不得要求每段四句或強加案例。區分官方教材與模型推論；沒有配分不捏造，沒有來源不假稱已核。
-每次壓縮或修改後重新檢查漏答、否定與條件、推理及語義；舊review stale時，須實際重核後才以最新expectedVersion保存，不能只刷新版本或複製舊證據。freshness=current只是紀錄對應目前內容；fits與no_structural_issues都不是內容通過。semantic/sourceVerification固定not_checked，review_recorded不是自動評分，不保證高分。`;
+每次壓縮或修改後重新檢查漏答、否定與條件、推理及語義；舊review stale時，須實際重核後才以最新expectedVersion保存，不能只刷新版本或複製舊證據。freshness=current只是紀錄對應目前內容；fits與no_structural_issues都不是內容通過。semantic/sourceVerification固定not_checked，review_recorded不是自動評分，不保證高分。
+${TASK_BOUNDARY_INSTRUCTION}`;
 
 export const ESSAY_TEACHING_CASES = [
   {id:'explanation', type:'解釋', question:'解釋資料備份的用途與限制。', material:'自製材料：備份保留可恢復副本；恢復需測試。', budgetLines:8, teachingExample:'備份提供可恢復副本。資料損毀後，可用副本回復先前狀態，因此應同時規劃保存與恢復程序。只有產生副本，尚不能證明能成功恢復；必須實測恢復。', checkpoints:['概念與機制','恢復用途','測試限制']},

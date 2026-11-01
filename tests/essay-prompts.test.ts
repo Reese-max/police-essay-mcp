@@ -6,7 +6,8 @@ import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {layoutSections} from '../src/layout.js';
 import {createAnswerDocument} from '../src/domain.js';
-import {ESSAY_TEACHING_CASES} from '../src/essay-instructions.js';
+import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION} from '../src/essay-instructions.js';
+import {readFile} from 'node:fs/promises';
 
 test('real MCP prompts/get, initialization and workflow expose reasoning and revision instructions',async()=>{
  const server=createEssayMcpServer(new FileStore()),client=new Client({name:'essay-prompt-regression',version:'1'});
@@ -23,6 +24,24 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   assert.ok(client.getInstructions()?.includes('不能以關鍵字出現或mapped當作答對'));
   const resource=await client.readResource({uri:'essay://instructions/workflow'});const workflow=resource.contents.map(c=>'text'in c?c.text:'').join('\n');
   for(const item of ESSAY_TEACHING_CASES)assert.ok(workflow.includes(item.teachingExample));assert.ok(workflow.includes('非官方高分範文'));
+ }finally{await client.close();await server.close();}
+});
+
+test('actual draft/compress and initialization preserve failure-derived constraints without claiming a semantic grader',async()=>{
+ const fixture=JSON.parse(await readFile(new URL(import.meta.url.includes('/dist/')?'../../tests/fixtures/essay-boundary-cases.json':'./fixtures/essay-boundary-cases.json',import.meta.url),'utf8'));
+ const server=createEssayMcpServer(new FileStore()),client=new Client({name:'essay-boundary-regression',version:'1'});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);
+ try{
+  for(const item of fixture.cases){
+   const input=`${item.question}\n材料：${item.material}`;
+   const response=await client.getPrompt({name:'draft_answer',arguments:{question:input}});
+   const text=response.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
+   assert.ok(text.includes(input),'original question and constraints retained');assert.ok(text.includes(TASK_BOUNDARY_INSTRUCTION));
+  }
+  const response=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_boundary-case'}});
+  assert.ok(response.messages.some(m=>m.content.type==='text'&&m.content.text.includes(TASK_BOUNDARY_INSTRUCTION)));
+  assert.ok(client.getInstructions()?.includes(TASK_BOUNDARY_INSTRUCTION));
+  assert.equal(fixture.cases[0].independentActionsInBad.length,3);assert.equal(fixture.cases[0].limits.maxIndependentActions,2);
  }finally{await client.close();await server.close();}
 });
 
