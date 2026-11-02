@@ -28,7 +28,10 @@ const newlineAnswer = () => createAnswerDocument({ templateId: template.id, titl
 
 async function temporary(run: (root: string) => Promise<void>) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "essay-issue-sweep-"));
-  try { await run(root); } finally { await fs.rm(root, { recursive: true, force: true }); }
+  try { await run(root); } finally {
+    if (process.env.KEEP_ISSUE_RENDER_ARTIFACTS === "true") console.log(`ISSUE_RENDER_ARTIFACTS ${root}`);
+    else await fs.rm(root, { recursive: true, force: true });
+  }
 }
 
 async function withClient(run: (client: Client, store: FileStore) => Promise<void>) {
