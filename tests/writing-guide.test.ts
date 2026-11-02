@@ -5,11 +5,13 @@ import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
 import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {writingGuide} from '../src/writing-guide.js';
+import {APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION} from '../src/essay-instructions.js';
 
 test('static guide exposes three stages and five labeled examples without creating model results',()=>{
  const a=writingGuide();assert.deepEqual(Object.keys(a.stages),['draft','compress','review']);assert.equal(a.examples.length,5);
  assert.equal(a.limits.automaticSemanticVerification,false);assert.equal(a.limits.automaticSourceVerification,false);
  assert.equal(a.limits.paperCapacityLines,44);assert.ok(a.saveInstructions.includes('callerNote'));
+ assert.equal(a.version,'essay-guide-20261102.4');assert.equal(a.applicability,APPLICABILITY_INSTRUCTION);assert.equal(a.materialBoundaries,MATERIAL_BOUNDARY_INSTRUCTION);
  a.issueNoteTemplate.sectionIds.push('not-a-real-finding');(a.examples[0] as {teachingExample:string}).teachingExample='altered caller copy';
  assert.equal(writingGuide().issueNoteTemplate.sectionIds.length,1);assert.notEqual(String(writingGuide().examples[0].teachingExample),'altered caller copy');
 });

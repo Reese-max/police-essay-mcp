@@ -6,7 +6,7 @@ import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {layoutSections} from '../src/layout.js';
 import {createAnswerDocument} from '../src/domain.js';
-import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION} from '../src/essay-instructions.js';
+import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION,APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION,REVIEW_REASONING_INSTRUCTION} from '../src/essay-instructions.js';
 import {readFile} from 'node:fs/promises';
 
 test('real MCP prompts/get, initialization and workflow expose reasoning and revision instructions',async()=>{
@@ -21,7 +21,7 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   const r=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_prompt-case',overflowLines:'3'}});const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
   for(const fragment of ['ans_prompt-case','3','套話','否定','每次修改','stale','freshness=current','語義','not_checked'])assert.ok(text.includes(fragment),fragment);
   assert.ok(text.indexOf('先補漏答')<text.indexOf('依序刪除'));
-  assert.ok(client.getInstructions()?.includes('不能以關鍵字出現或mapped當作答對'));
+  assert.ok(client.getInstructions()?.includes('不能以關鍵字出現代替語義核對'));
   const resource=await client.readResource({uri:'essay://instructions/workflow'});const workflow=resource.contents.map(c=>'text'in c?c.text:'').join('\n');
   for(const item of ESSAY_TEACHING_CASES)assert.ok(workflow.includes(item.teachingExample));assert.ok(workflow.includes('非官方高分範文'));
  }finally{await client.close();await server.close();}
@@ -54,4 +54,21 @@ test('prompt changes retain actual 165/166 geometry and 44/45-line overflow beha
   const overflow=layoutSections(t,make(45));assert.equal(overflow.fits,false);assert.equal(overflow.overflowLines,1);reports.push(exact);
  }
  assert.deepEqual(reports[1],{...reports[0],templateId:'police_information_essay_166'});
+});
+
+test('real prompts carry source applicability and material boundaries once, preserving supplied facts',async()=>{
+ const file=import.meta.url.includes('/dist/')?'../../tests/fixtures/source-scope-cases.json':'./fixtures/source-scope-cases.json';
+ const fixture=JSON.parse(await readFile(new URL(file,import.meta.url),'utf8'));
+ const server=createEssayMcpServer(new FileStore()),client=new Client({name:'source-scope-regression',version:'1'});
+ const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);
+ try{
+  for(const item of fixture.cases){
+   const input=`${item.question}\n材料：${item.material}`;const r=await client.getPrompt({name:'draft_answer',arguments:{question:input}});
+   const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');assert.ok(text.includes(input));
+   assert.equal(text.split(APPLICABILITY_INSTRUCTION).length-1,1);assert.equal(text.split(MATERIAL_BOUNDARY_INSTRUCTION).length-1,1);
+   assert.ok(text.endsWith(REVIEW_REASONING_INSTRUCTION));
+  }
+  const r=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_source-scope'}});
+  assert.ok(r.messages.some(m=>m.content.type==='text'&&m.content.text.includes(MATERIAL_BOUNDARY_INSTRUCTION)));
+ }finally{await client.close();await server.close();}
 });
