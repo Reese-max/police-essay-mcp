@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {InMemoryTransport} from '@modelcontextprotocol/sdk/inMemory.js';
+import {CallToolResultSchema} from '@modelcontextprotocol/sdk/types.js';
 import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {writingGuide} from '../src/writing-guide.js';
@@ -24,10 +25,10 @@ test('existing read-only load tool serves guidance without prompts/resources or 
   const tool=(await client.listTools()).tools.find(t=>t.name==='load_exam_paper')!;
   assert.deepEqual(Object.keys(tool.inputSchema.properties??{}).sort(),['answerId','templateId']);
   assert.equal(tool.annotations?.readOnlyHint,true);
-  const r=await client.callTool({name:'load_exam_paper',arguments:{templateId:'police_information_essay'}});
+  const r=CallToolResultSchema.parse(await client.callTool({name:'load_exam_paper',arguments:{templateId:'police_information_essay'}}));
   assert.equal(r.isError,undefined);assert.deepEqual(r.structuredContent?.writingGuide,writingGuide());
   assert.ok(r.content.some(c=>c.type==='text'&&c.text.includes('writingGuide')));
-  const bad=await client.callTool({name:'load_exam_paper',arguments:{templateId:'does-not-exist'}});
+  const bad=CallToolResultSchema.parse(await client.callTool({name:'load_exam_paper',arguments:{templateId:'does-not-exist'}}));
   assert.equal(bad.isError,true);assert.equal(bad.structuredContent?.writingGuide,undefined);
  }finally{store.saveAnswer=save;await client.close();await server.close();}
 });

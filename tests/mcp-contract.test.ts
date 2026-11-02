@@ -6,6 +6,20 @@ import { existsSync } from "node:fs";
 import { checkMcpContract, ADDED_TOOLS, BASE_COMMIT, REMOVED_TOOLS, assertSchemaSubset, withoutAddedInputs, withBaseDescriptions, DESCRIPTION_CHANGES } from "../scripts/check-mcp-contract.js";
 import { generateContractFromBase } from "../scripts/generate-contract-from-base.js";
 import { READ_TOOLS, WRITE_TOOLS, EXPORT_TOOLS, toolScope } from "../src/oauth.js";
+import { withoutWritingGuide } from "../scripts/check-mcp-contract.js";
+
+test("writing guide output normalization is limited to the declared optional addition", () => {
+  const base = { type: "object", properties: { template: { type: "object" } }, required: ["template"], additionalProperties: false };
+  const added = { ...base, properties: { ...base.properties, writingGuide: {} } };
+  assert.deepEqual(withoutWritingGuide(added, "load_exam_paper"), base);
+  assert.ok("writingGuide" in added.properties, "normalization must not mutate the live schema");
+  assert.throws(() => withoutWritingGuide({ ...added, required: ["template", "writingGuide"] }, "load_exam_paper"), /must be optional/);
+  assert.throws(() => withoutWritingGuide({ ...added, properties: { ...added.properties, writingGuide: { type: "string" } } }, "load_exam_paper"), /unconstrained/);
+  assert.throws(() => withoutWritingGuide(base, "load_exam_paper"), /missing declared/);
+  assert.throws(() => assertSchemaSubset(withoutWritingGuide(added, "other_tool"), base, "other"), /not a base field/);
+  const unexpected = { ...added, properties: { ...added.properties, future: {} } };
+  assert.throws(() => assertSchemaSubset(withoutWritingGuide(unexpected, "load_exam_paper"), base, "future"), /not a base field/);
+});
 
 test("MCP contract matches all pre-Round-A fields and scope lists", checkMcpContract);
 const contractBasePath = process.env.MCP_CONTRACT_BASE_PATH ?? path.resolve("../pem-wt-base");
