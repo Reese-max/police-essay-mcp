@@ -11,9 +11,8 @@ import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
 import { toolScope } from "../src/oauth.js";
 
 export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
-  reason: "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget." }, { path: "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
-  reason: "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget." },{ path: "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
-  reason: "Optional version binding for legacy exports; strip only expectedVersion before base comparison." },
+  reason: "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget." }, { path: "*.tools[check_layout,create_answer,delete_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+  reason: "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget." },
 { path: "*.tools[render_exam_overview]",
   reason: "New essay.read canvas tool opens ordered answers in one widget with question tabs and a selected full snapshot." },
 { path: "owner.tools[create_answers]",
@@ -27,15 +26,13 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "oauth.tools[*]._meta.securitySchemes",
   reason: "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base." },
 { path: "*.tools[*].outputSchema",
-  reason: "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema." },
+  reason: "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base." },
 { path: "owner.tools[delete_answer]",
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
-  reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)." },
+  reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read). preview_change advertises only answerId, operation and expectedVersion; top-level passthrough arguments still use the selected write tool schema." },
 { path: "owner.tools[duplicate_answer,export_answer,update_answer_info]",
   reason: "New answer-management tools: rename or file an answer under an exam and question number and duplicate it (essay.write); export several formats at once with readable names (essay.export)." },
-{ path: "*.tools[export_docx,export_pdf,export_text].outputSchema.additionalProperties",
-  reason: "Loosened so the export tools can also return the readable fileName and, when the server has a public URL, a downloadUrl." },
 { path: "owner.tools[move_section,renumber_items,set_line_targets]",
   reason: "New writing tools (essay.write): move a section, renumber written item numbers, and set per-section line targets that check_layout reports against." },
 { path: "*.tools[check_layout].outputSchema.additionalProperties",
@@ -49,14 +46,19 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "*.tools[create_answer,load_exam_paper].inputSchema.templateId.default",
   reason: "User-authorized default for newly created answers and template-only loads is police_information_essay_165. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison." },
 { path: "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
-  reason: "Formatting tools append the 165 paper formatting limits; the base description stays the exact prefix." }];
+  reason: "Formatting tools append the 165 paper formatting limits; the base description stays the exact prefix." },
+{ path: "owner.tools[export_docx,export_pdf,export_text];*.tools[reflow_answer]",
+   reason: "User-approved removals: export_answer retains multi-format exports, version binding, overflow guards and TXT modes. reflow_answer only read a freshly computed snapshot; read_answer/check_layout already recompute layout." },
+{ path: "*.resourceTemplates[export-artifact].description",
+   reason: "Export resource guidance names export_answer and export_exam_bundle instead of the removed legacy tools." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
 export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["review_answer", "get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
-/** Base tools that no longer exist; all of them were read-only. */
-export const REMOVED_TOOLS = ["preview_delete_text", "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer"];
+/** Removed base tools that were visible with essay.read. Legacy exports required essay.export. */
+export const REMOVED_READ_TOOLS = ["preview_delete_text", "preview_format_section", "preview_insert_text", "preview_replace_text", "preview_write_answer", "reflow_answer"];
+export const REMOVED_TOOLS = [...REMOVED_READ_TOOLS, "export_docx", "export_pdf", "export_text"];
 /** Tools whose description is the base description followed by PAPER_FORMAT_NOTE. */
 export const PAPER_NOTE_TOOLS = ["create_answer", "format_section", "insert_text", "replace_text", "write_answer"];
 const BASE_WIDGET_URI = "ui://widget/police-essay-answer-sheet.html";
@@ -112,18 +114,6 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
     "before": "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
     "after": "Delete one section; preview_change can preview first."
   },
-  "export_docx": {
-    "before": "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export DOCX at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
-  },
-  "export_pdf": {
-    "before": "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export PDF at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
-  },
-  "export_text": {
-    "before": "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
-    "after": "Export grid TXT at expectedVersion; rejects overflow unless explicitly allowed (never for 165)."
-  },
   "format_section": {
     "before": "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
     "after": "Change section/paragraph formatting without rewriting content."
@@ -147,10 +137,6 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   "read_answer": {
     "before": "Use this when the user wants the complete structured answer, section metadata, and exact rendered lines.",
     "after": "Read the complete answer and rendered lines; no canvas."
-  },
-  "reflow_answer": {
-    "before": "Use this after content changes when the user wants the authoritative line-by-line wrapping and page assignment; it recalculates from stored sections without asking the model to estimate.",
-    "after": "Recalculate saved content with the authoritative layout engine."
   },
   "render_answer_sheet": {
     "before": "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
@@ -190,12 +176,12 @@ export function withBaseTemplateDefault<T extends { tools: ContractTool[] }>(vie
 }
 /** Remove only declared optional additions; every remaining base input stays strictly compared. */
 export function withoutAddedInputs<T extends { tools: ContractTool[] }>(view: T): T {
-  const writeTools = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "render_answer_sheet", "export_docx", "export_pdf", "export_text"];
+  const writeTools = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "render_answer_sheet"];
   return { ...view, tools: view.tools.map(tool => {
     if (!writeTools.includes(tool.name)) return tool;
     const input = tool.inputSchema as JsonSchema;
     const properties = { ...input.properties as JsonSchema };
-    const added = tool.name.startsWith("export_") ? ["expectedVersion"] : ["responseDetail", ...(tool.name === "create_answer" ? ["exam", "questionNo", "lineTargets", "idempotencyKey", "layoutOptions", "examId"] : [])];
+    const added = ["responseDetail", ...(tool.name === "create_answer" ? ["exam", "questionNo", "lineTargets", "idempotencyKey", "layoutOptions", "examId"] : [])];
     for (const name of added) {
       assert.ok(Object.hasOwn(properties, name), `${tool.name} missing declared addition ${name}`);
       assert.ok(!((input.required ?? []) as string[]).includes(name), `${tool.name}.${name} must be optional`);
@@ -238,7 +224,7 @@ function withBaseWidgetUri<T>(view: T): T {
   return JSON.parse(JSON.stringify(view).replaceAll(JSON.stringify(ANSWER_SHEET_WIDGET_URI), JSON.stringify(BASE_WIDGET_URI)));
 }
 export async function collectContract(factory = createEssayMcpServer, ownerToolCount = 21 - REMOVED_TOOLS.length + ADDED_TOOLS.length,
-  readerToolCount = 12 - REMOVED_TOOLS.length + ADDED_READ_TOOLS.length) {
+  readerToolCount = 12 - REMOVED_READ_TOOLS.length + ADDED_READ_TOOLS.length) {
   const views = [];
   for (const readOnly of [false, true]) {
     const server = factory(new FileStore(), { readOnly });
@@ -288,8 +274,13 @@ export async function checkMcpContract() {
       `${view} does not register ${ANSWER_SHEET_WIDGET_URI}`);
   }
   const comparable = withBaseWidgetUri(current);
-  // Remove only the declared new resource after asserting its exact identity in both surfaces.
+  // Normalize declared resource guidance and remove only the verified new resource.
   for (const view of ["owner", "reader"] as const) {
+    const exportResource = comparable[view].resourceTemplates.find(r => r.name === "export-artifact");
+    const baseExportResource = fixture.contract[view].resourceTemplates.find((r: { name: string }) => r.name === "export-artifact");
+    assert.deepEqual(exportResource, { ...baseExportResource,
+      description: "export_answer / export_exam_bundle 產生的限時檔案；URI 見工具結果的 exportUri。" });
+    Object.assign(exportResource!, baseExportResource);
     const resource = comparable[view].resources.find(r => r.name === "answer-review-plan-schema");
     assert.deepEqual(resource, { name: "answer-review-plan-schema", title: "小問與驗收清單 JSON Schema",
       uri: "essay://schemas/review-plan", mimeType: "application/json",

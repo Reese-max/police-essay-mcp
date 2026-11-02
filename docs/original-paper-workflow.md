@@ -17,7 +17,7 @@
 3. 呼叫 `create_answer`，省略模板即預設 `police_information_essay_165`（也可明確指定）；`create_answers` 與全卷建立同樣適用，舊答案不遷移，明確指定其他模板仍有效；接著 `write_answer` 寫入 sections。讀取工具當前 schema，使用 `expectedVersion` 避免覆蓋較新的修改。
 4. 呼叫 `read_answer`、`check_layout`。系統只換行，不濃縮；若超過 44 行，依壓縮建議提出文字修訂，先用 `preview_change`（`operation: "replace_text"`）預覽，再以 `replace_text` 修改指定 ID，重新檢查。不得為了兩頁悄悄省略採點或縮小字型。
 5. 依題目查核概念、三種技術、兩個案例及至少三項措施是否足夠；人工核對證據來源、法律限制及 AI 幻覺風險。這是內容審查，與版面檢查分開。
-6. 用同一版答案呼叫 `export_docx`、`export_pdf`。稿紙保留原底圖；沒有額外可見姓名、題名、頁碼及字型說明。
+6. 用同一版答案呼叫 `export_answer`（DOCX 與 PDF）。稿紙保留原底圖；沒有額外可見姓名、題名、頁碼及字型說明。
 7. Word 須經 LibreOffice 或 Word 實際轉 PDF，再逐頁檢查：兩頁、各 22 行、文字完整、沒有截字、底圖位置不漂移。PDF 輸出也須核對文字及位置。不得只用 DOCX XML 文字或 `layout.fits` 判定通過。Word/LibreOffice 版本差異仍需要實際渲染驗收。
 
 ## 相容範圍

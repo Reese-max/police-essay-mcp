@@ -62,7 +62,7 @@ gcloud run services update-traffic police-essay-mcp-staging \
 3. 在授權的 Google Cloud 專案建立專用 Service Account，僅開必要 API 與權限；Secret Manager 保存 `MCP_AUTH_TOKEN`，絕不提交金鑰。
 4. 發布 `police-essay-mcp-staging`，區域 `us-central1`、request-based billing、min instances=0、max instances=1、concurrency=1、CPU=1、memory=512Mi、暫定 timeout=60s，**保留 Cloud Run Invoker IAM 驗證，禁止公開**。
 5. 以 `gcloud run services proxy` 或同時提供 `X-Serverless-Authorization` (Google ID token) 與 `Authorization` (MCP owner token) 測試，確認 `/health`、`/readyz`、`/mcp` 無 token 401、有效 token 可 initialize / tools/list / list_templates。
-6. 不要因為 200 health 就認定驗收成功：仍需實際 `create_answer`、`check_layout`、`render_answer_sheet`、`export_docx`、`export_pdf` 與 resource bytes。
+6. 不要因為 200 health 就認定驗收成功：仍需實際 `create_answer`、`check_layout`、`render_answer_sheet`、`export_answer`（DOCX 與 PDF） 與 resource bytes。
 
 #### 授權後使用的 staging 指令模板
 

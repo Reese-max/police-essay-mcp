@@ -115,8 +115,8 @@ test("export_answer names the files after the exam and question, from one versio
       assert.match(text(result), /下載「114年警察特考_第3題_資訊系統可行性評估\.txt」（24 小時內有效）：https:\/\/example\.test\/downloads\//);
       assert.ok((result.content as Array<{ type: string; name?: string }>).some((item) => item.type === "resource_link" && item.name === files[0].fileName));
 
-      const docx = await client.callTool({ name: "export_text", arguments: { answerId: answer.id } });
-      assert.equal((docx.structuredContent as { fileName: string }).fileName, "114年警察特考_第3題_資訊系統可行性評估.txt");
+      const file = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, formats: ["txt"], expectedVersion: 1 } });
+      assert.equal((file.structuredContent as { files: Array<{ fileName: string }> }).files[0].fileName, "114年警察特考_第3題_資訊系統可行性評估.txt");
 
       const long = { ...sample("太長"), sections: [{ id: "body", text: "很長的段落。".repeat(400) }] };
       const tooLong = createAnswerDocument({ templateId: "police_information_essay", title: long.title, sections: long.sections });

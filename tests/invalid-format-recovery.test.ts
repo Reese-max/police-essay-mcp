@@ -121,7 +121,7 @@ for (const { name, format } of invalidCases) {
           await client.callTool({ name: "read_answer", arguments: { answerId: original.id } }));
         assert.equal(reopened.answer.sections[0].text, originalText);
         assert.equal(reopened.layout.fits, true);
-        const exported = await client.callTool({ name: "export_text", arguments: { answerId: original.id } });
+        const exported = await client.callTool({ name: "export_answer", arguments: { answerId: original.id, formats: ["txt"] } });
         assert.notEqual(exported.isError, true, text(exported));
       });
     });

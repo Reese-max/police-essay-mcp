@@ -18,7 +18,7 @@ test("contract provenance is reproduced from the actual pinned base code and git
 test("every existing tool has exactly one explicit scope classification; unknown tools require write", async () => {
   const fixture = JSON.parse(await readFile(path.resolve("tests/fixtures/mcp-contract.json"), "utf8"));
   const classified = [...READ_TOOLS, ...WRITE_TOOLS, ...EXPORT_TOOLS];
-  assert.equal(new Set(classified).size, 34);
+  assert.equal(new Set(classified).size, 30);
   assert.deepEqual([...classified].sort(), [...fixture.contract.owner.tools.map((t: { name: string }) => t.name)
     .filter((name: string) => !REMOVED_TOOLS.includes(name)), ...ADDED_TOOLS].sort());
   for (const [names, scope] of [[READ_TOOLS, "essay.read"], [WRITE_TOOLS, "essay.write"], [EXPORT_TOOLS, "essay.export"]] as const)
@@ -50,15 +50,6 @@ test("optional-input normalization removes only declared additions and rejects r
 });
 
 
-test("legacy version normalization strips only the optional version and keeps other fields", () => {
-  for (const name of ["export_docx", "export_pdf", "export_text"]) {
-    const inputSchema = { type: "object", properties: { answerId: { type: "string" }, expectedVersion: { type: "integer" }, future: { type: "string" } }, required: ["answerId"] };
-    assert.deepEqual(withoutAddedInputs({ tools: [{ name, inputSchema }] }).tools[0].inputSchema.properties,
-      { answerId: { type: "string" }, future: { type: "string" } });
-    assert.throws(() => withoutAddedInputs({ tools: [{ name, inputSchema: { ...inputSchema, required: ["answerId", "expectedVersion"] } }] }), /must be optional/);
-    assert.throws(() => withoutAddedInputs({ tools: [{ name, inputSchema: { ...inputSchema, properties: { answerId: { type: "string" } } } }] }), /missing declared addition/);
-  }
-});
 
 test("description normalization rejects live and baseline regressions independently", () => {
   const change = DESCRIPTION_CHANGES.read_answer;

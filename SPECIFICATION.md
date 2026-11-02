@@ -166,20 +166,16 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `update_answer_info` | 修改標題、題目、考試名稱與題號 | 是 |
 | `duplicate_answer` | 複製答案為新的一份（版本與紀錄重新開始） | 是 |
 | `export_answer` | 以 expectedVersion 釘選版本，一次輸出多種格式，檔名用考試、題號與標題 | 是，建立檔案 |
-| `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
 | `export_exam_bundle` | 逐題必要 expectedVersion，先驗證全部，再依順序合成 PDF 與 Word（DOCX）；PDF 含書籤，回傳頁碼範圍 | 是，建立檔案 |
 | `check_layout` | 回傳每頁使用量、剩餘量、溢出量、濃縮提示與品質警告 | 否 |
 | `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |
 | `start_exam` | 建立 1–20 題考試計畫，支援 idempotencyKey，essay.write | 是 |
 | `get_exam_progress` | 讀取逐題真實進度、合輯版本與續寫 nextStep，essay.read | 否 |
 | `render_exam_overview` | examId 或 1–20 個不重複 answerIds 共用一個題目分頁畫板；缺題保留未建立，essay.read | 否 |
-| `export_docx` | 產生 A4 固定格線 Word；可選 expectedVersion | 是，建立檔案 |
-| `export_pdf` | 產生 A4 固定格線 PDF；可選 expectedVersion | 是，建立檔案 |
-| `export_text` | 產生依實際換行與分頁的純文字；可選 expectedVersion | 是，建立檔案 |
 
-修改時以 `expectedVersion` 防止覆蓋新版本（`restore_revision`、`delete_answer` 必填）。內容修改成功後 `version + 1`；建立或複製為版本 1。寫入預設回傳摘要，指定 `responseDetail: "full"` 才回傳完整 authoritative snapshot。
+修改時以 `expectedVersion` 防止覆蓋新版本（`restore_revision`、`delete_answer` 必填）。內容修改成功後 `version + 1`；建立或複製為版本 1。版面在讀取／寫入時依儲存內容重新計算，不另行保存。寫入預設回傳摘要，指定 `responseDetail: "full"` 才回傳完整 authoritative snapshot。
 
-`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
+`preview_change` 的輸入 schema 僅宣告 `answerId`、`operation`、`expectedVersion`；被預覽工具的參數仍放在頂層，由該工具的 schema 驗證，未知參數會拒絕。`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
 
 ## 6. Resources 與 Prompts
 
@@ -247,7 +243,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - 建立與插入輸入可只提供 `paragraphs`，不必複製一份相同的 `text`。
 - 標題可依模板或 section 設定自動粗體與中文／阿拉伯數字編號。
 - 版本衝突會被拒絕，不會靜默覆蓋。
-- `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
+- `export_answer` 可選 DOCX、PDF、TXT 產生檔案；溢出時預設拒絕。
 - 可透過 `MCP_TRANSPORT=stdio` 接本機 MCP client，也可透過 `http://localhost:8787/mcp` 使用 Streamable HTTP。
 - Server 提供 tools、resources、prompts，且工具 schema 與安全標記明確。
 - `render_answer_sheet` 透過 `_meta.ui.resourceUri` 掛載畫板；畫板優先使用元件專用 `_meta.snapshot` 顯示逐行版面，其次使用 full `structuredContent`，並透過 MCP bridge 呼叫版面檢查與預覽／套用修改。
@@ -285,7 +281,7 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 `export_answer`、`export_exam_bundle` 執行失敗回傳 `isError: true`，`structuredContent.errors` 為 `{ code, answerId?, questionNo?, format?, retryable, message }[]`；題號取自已知儲存答案。代碼為 ANSWER_NOT_FOUND、VERSION_CONFLICT、LAYOUT_OVERFLOW、LAYOUT_INVALID、EXPORT_FAILED。驗證失敗 retryable=false；匯出／儲存失敗用 EXPORT_FAILED，僅 Node ETIMEDOUT、ECONNRESET、ECONNREFUSED、EAI_AGAIN、EBUSY、EMFILE、ENFILE、EPIPE 或儲存／HTTP 狀態 408、429、500、502、503、504 為 retryable=true；雲端保留內部 cause，Firestore gRPC 4/8/13/14 對應 408/429/500/503。未知、字型、內容、確定性 renderer 錯誤均不可重試。structuredContent.errors[].message 與文字結果的 Windows/POSIX/file:// 絕對路徑遮蔽為 <path>，移除內部堆疊；部分成功的 failed[].error 同樣處理。單題部分格式成功仍回傳成功 files 與原有 failed，另附失敗格式的 errors，不設 isError；合輯維持全有或全無。SDK client 也會驗證錯誤 structuredContent，因此 outputSchema 以 anyOf 接受原有成功必填欄位或 errors。
 
-舊 export_docx／export_pdf／export_text 可選填 expectedVersion，透過相同 assertExportVersion 在排版或匯出前拒絕過期版本，沿用 VERSION_CONFLICT 文字。PDF 合輯在同一 document 內依字型路徑與 face 共用已註冊字型，不逐題重複開啟及內嵌。createRequestHash 僅保留於儲存，所有工具輸出（完整回應、預覽與元件 metadata 也包括在內）均移除。
+export_answer 可選填 expectedVersion，透過 assertExportVersion 在排版或匯出前拒絕過期版本，回傳 VERSION_CONFLICT。PDF 合輯在同一 document 內依字型路徑與 face 共用已註冊字型，不逐題重複開啟及內嵌。createRequestHash 僅保留於儲存，所有工具輸出（完整回應、預覽與元件 metadata 也包括在內）均移除。
 
 
 ## 考試計畫、進度與斷點續寫
