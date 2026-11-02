@@ -12,4 +12,6 @@ Integrated local typecheck/build passed. The integrated Windows full suite ran 3
 
 Actual native-PDF and LibreOffice-converted pages from the preserved Unicode/distribution tests were rendered and viewed, including the deliberately blank second sheets; no visible missing characters, clipping or overlap was observed. These general-template regression fixtures are not presented as the user's ideal 165 sample.
 
+All four separate wide-ASCII PDFs were subsequently rendered and viewed (eight pages). Text is complete; the extreme consecutive m/W variants visibly extend slightly past the right grid boundary. The existing #32 assertion verifies text preservation, not grid containment. This warning is retained, not hidden by a weaker assertion or described as flawless visual acceptance. Exporters/layout/metrics have no diff against integrated main, and this release deliberately preserves their geometry. The issue is distinct from the 165 template and requires separate layout work.
+
 The existing prompt-effect evidence remains limited (one win and three ties in the later comparison); this release does not guarantee higher scores. semantic/sourceVerification remain not_checked and callerNote is caller-reported evidence, not software semantic approval.
