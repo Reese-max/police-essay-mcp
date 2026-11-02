@@ -1,3 +1,17 @@
+# MOE follow-up verification
+
+The following later result supersedes the earlier 27-unexecuted snapshot. The exact existing font C:/Users/Administrator/work/private-fonts/edukai-5.1_20251208.ttf exists (15,820,064 bytes) and SHA256 equals e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98. No font copied, replaced, modified or distributed.
+
+Full npm test rerun with this process-only ESSAY_MCP_PAPER_FONT, existing LibreOffice on PATH, and the same pinned baseline/codec checkouts: 360 tests, 353 pass, 0 fail, 7 skip, 0 cancelled. All 20 previously font-blocked tests and the Tab rendering test now executed successfully. Raw evidence: ../prompt-review-20261101/full-tests-moe-20261102.tap. No source/layout/schema/dependency change was needed.
+
+Remaining: 6 Linux-specific Noto/render tests plus 1 real Firestore emulator test. Existing Firebase emulator caches and Cloud SDK platform directory had no Firestore emulator. Read-only docker image ls in the default execution context failed with permission denied connecting to npipe:////./pipe/dockerDesktopLinuxEngine; no image inventory obtained and no container created. Do not interpret this as proof that no images exist: the Docker packaging regression within the approved full-test context still passed. No retry, WSL fallback, security change, credential access or download was attempted.
+
+Minimum next step: separately authorize only read-only Docker inventory in a permitted execution context, then determine whether an already-present Linux verification/emulator image can run the missing seven tests offline. If absent, obtain explicit approval for a bounded test-only Linux/emulator environment with the required Noto TTC fonts, Poppler, Python, LibreOffice, Node and emulator; no production credentials or data, and no unapproved image/package download. Current single offline-test approval is not treated as permission for installing new prerequisites.
+
+Actual MCP draft common body was checked to match the captured real response suffix byte-for-byte; five-type guide was extracted from its structuredContent, not reconstructed. Readable export: ../prompt-review-20261101/readable-draft-and-guide-20261102.txt. No model execution or score claimed. Earlier execution history below retained.
+
+---
+
 # 提示詞本機完整驗證紀錄
 
 基準為3d536c067a56bb6ab3ce8200d1bf2f9ff5b58253。本輪經使用者明確同意後，在原隔離工作區執行離線安裝與測試，沒有推送、合併或部署。Node 24.19.0、Python 3.12.14、Windows LibreOffice 26.8.0.3。lockfile SHA256為a5866c1be21538f593654e5da778cad37f7b3e1b8f191f821201dd9dfa32036f，未更動依賴或執行生命週期腳本。
