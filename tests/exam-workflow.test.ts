@@ -99,7 +99,7 @@ test("stale export_answer never creates a handle", async () => withClient(async 
   const answer = sample("釘選版本"); await store.saveAnswer(answer);
   const before = await artifactNames(store);
   const result = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, expectedVersion: 2, formats: ["txt"] } });
-  assert.equal(result.isError, true); assert.match(text(result), /^VERSION_CONFLICT/);
+  assert.equal(result.isError, true); assert.match(text(result), /VERSION_CONFLICT/);
   assert.match(text(result), /目前版本 1，預期 2.*read_answer\/check_layout/);
   assert.deepEqual(await artifactNames(store), before);
 }));
@@ -304,6 +304,26 @@ test("166 bundle shares its single PDF font and two-page policy", { skip: !proce
   const invalid = await client.callTool({ name: "export_exam_bundle", arguments: { answers: [{ answerId: answer.id, expectedVersion: 1 }], allowOverflow: true } });
   assert.equal(invalid.isError, true); assert.match(text(invalid), /兩頁44行/);
   assert.deepEqual(await artifactNames(store), before);
+}));
+
+test("export_answer never extends 165 paper, including its legacy template alias", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async () => withClient(async (client, store) => {
+  for (const templateId of ["police_information_essay_165", "police_information_essay_166"]) {
+    for (const lines of [1, 45]) {
+      const answer = createAnswerDocument({ templateId, title: "原稿紙容量", sections: [{ text: Array(lines).fill("甲").join("\n") }] });
+      await store.saveAnswer(answer);
+      const before = await artifactNames(store);
+      for (const format of ["docx", "pdf", "txt"]) {
+        for (const allowOverflow of lines === 1 ? [true] : [false, true]) {
+          const result = await client.callTool({ name: "export_answer", arguments: {
+            answerId: answer.id, expectedVersion: 1, formats: [format], allowOverflow,
+          } });
+          assert.equal(result.isError, true);
+          assert.match(text(result), allowOverflow ? /兩頁44行/ : /超出版面/);
+          assert.deepEqual(await artifactNames(store), before);
+        }
+      }
+    }
+  }
 }));
 
 test("idempotent create preserves raw canonical request, replays current state and never copies its hash", async () => withClient(async (client, store) => {
@@ -799,18 +819,18 @@ test("export storage failures are retryable; partial single exports retain files
   }
 }));
 
-test("each legacy export rejects stale versions before layout or output; omitted versions still export", async () => withClient(async (client, store) => {
-  const answer = sample("legacy version"); await store.saveAnswer(answer);
+test("export_answer rejects stale versions before layout or output; omitted versions still export", async () => withClient(async (client, store) => {
+  const answer = sample("version binding"); await store.saveAnswer(answer);
   const getTemplate = store.getTemplate.bind(store); let reads = 0;
   store.getTemplate = async id => { reads++; return getTemplate(id); };
-  for (const name of ["export_docx", "export_pdf", "export_text"]) {
-    const result = await client.callTool({ name, arguments: { answerId: answer.id, expectedVersion: 2 } });
+  for (const format of ["docx", "pdf", "txt"]) {
+    const result = await client.callTool({ name: "export_answer", arguments: { answerId: answer.id, expectedVersion: 2, formats: [format] } });
     assert.equal(result.isError, true); assert.match(text(result), /^VERSION_CONFLICT/);
     assert.match(text(result), /目前版本 1，預期 2.*read_answer\/check_layout/);
   }
   assert.equal(reads, 0); assert.deepEqual(await artifactNames(store), []);
-  for (const expectedVersion of [undefined, 1]) assert.equal((await client.callTool({ name: "export_text",
-    arguments: { answerId: answer.id, ...(expectedVersion ? { expectedVersion } : {}) } })).isError, undefined);
+  for (const expectedVersion of [undefined, 1]) assert.equal((await client.callTool({ name: "export_answer",
+    arguments: { answerId: answer.id, formats: ["txt"], ...(expectedVersion ? { expectedVersion } : {}) } })).isError, undefined);
 }));
 
 test("render tool model summaries contain no lines or sections; component metadata has the authoritative snapshot", async () => withClient(async (client, store) => {
@@ -834,7 +854,7 @@ test("storage-only createRequestHash is absent from all full tool snapshots, inc
   const id = data<AnswerSnapshot>(created).answer.id;
   assert.ok((await store.getAnswer(id)).createRequestHash);
   const requests = [
-    ["read_answer", { answerId: id }], ["reflow_answer", { answerId: id }], ["render_answer_sheet", { answerId: id }],
+    ["read_answer", { answerId: id }], ["check_layout", { answerId: id }], ["render_answer_sheet", { answerId: id }],
     ["render_exam_overview", { answerIds: [id] }], ["preview_change", { answerId: id, operation: "replace_text", sectionId: "body", newText: "new" }],
     ["replace_text", { answerId: id, sectionId: "body", newText: "new", expectedVersion: 1, responseDetail: "full" }],
   ] as const;

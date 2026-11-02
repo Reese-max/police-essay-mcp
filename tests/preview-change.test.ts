@@ -140,9 +140,19 @@ test("preview_change explains arguments that do not fit the previewed tool and s
     assert.equal(result.isError, true);
 
     // Arguments no tool takes are reported too, not silently dropped.
-    result = await preview({ operation: "delete_text", sectionId: "intro", newTitle: "x" });
+    for (const field of ["newTitle", "sectionID", "toString"]) {
+      result = await preview({ operation: "delete_text", sectionId: "intro", [field]: "x" });
+      assert.equal(result.isError, true);
+      assert.ok(text(result).includes(`delete_text 不使用 ${field}`));
+    }
+
+    result = await preview({ operation: "write_answer", sections: [{ text: 42 }] });
     assert.equal(result.isError, true);
-    assert.match(text(result), /newTitle/);
+    assert.match(text(result), /write_answer 的參數不正確：sections/);
+
+    result = await preview({ operation: "format_section", sectionId: "body", paragraphFormat: { leftIndent: -1 } });
+    assert.equal(result.isError, true);
+    assert.match(text(result), /format_section 的參數不正確：paragraphFormat/);
 
     assert.deepEqual(plain(await store.getAnswer(answer.id)), plain(answer));
   });

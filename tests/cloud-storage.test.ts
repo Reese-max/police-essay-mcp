@@ -173,9 +173,9 @@ test("owner isolation and reader artifact denial happen before any GCS download"
   assert.equal(s.storage.downloads, 0);
   const reader = await connect(s.store(), true);
   try {
-    assert.equal((await reader.listTools()).tools.length, 12);
+    assert.equal((await reader.listTools()).tools.length, 11);
     await assert.rejects(reader.readResource({ uri: "essay://exports/" + exported.handle }));
-    assert.equal((await reader.callTool({ name: "export_text", arguments: { answerId: doc.id } })).isError, true);
+    assert.equal((await reader.callTool({ name: "export_answer", arguments: { answerId: doc.id, formats: ["txt"] } })).isError, true);
     assert.equal(s.storage.downloads, 0);
   } finally { await reader.close(); }
 });
@@ -250,7 +250,7 @@ test("document and artifact size limits reject explicitly before writes or uploa
   assert.equal(s.storage.uploads, 0);
 });
 
-test("all previews, render and reflow preserve persisted cloud content, revisions and version", async () => {
+test("all previews, render and read preserve persisted cloud content, revisions and version", async () => {
   const s = setup();
   const doc = answer();
   await s.store().saveAnswer(doc);
@@ -268,7 +268,7 @@ test("all previews, render and reflow preserve persisted cloud content, revision
       assert.equal(result.isError, undefined, JSON.stringify(result));
       assert.equal((result.structuredContent as { applied: boolean }).applied, false);
     }
-    for (const name of ["render_answer_sheet", "reflow_answer", "check_layout"]) {
+    for (const name of ["render_answer_sheet", "read_answer", "check_layout"]) {
       assert.equal((await client.callTool({ name, arguments: { answerId: doc.id } })).isError, undefined);
     }
     assert.equal(JSON.stringify([...s.firestore.documents]), before);
@@ -276,14 +276,14 @@ test("all previews, render and reflow preserve persisted cloud content, revision
   } finally { await client.close(); }
 });
 
-test("cloud and file expose the same tool contracts: owner 34, reader 12", async () => {
+test("cloud and file expose the same tool contracts: owner 30, reader 11", async () => {
   const s = setup();
   for (const readOnly of [false, true]) {
     const file = await connect(new FileStore(), readOnly);
     const cloud = await connect(s.store(), readOnly);
     try {
       const baseline = await file.listTools();
-      assert.equal(baseline.tools.length, readOnly ? 12 : 34);
+      assert.equal(baseline.tools.length, readOnly ? 11 : 30);
       assert.deepEqual(await cloud.listTools(), baseline);
       assert.deepEqual(await cloud.listResources(), await file.listResources());
       assert.deepEqual(await cloud.listResourceTemplates(), await file.listResourceTemplates());
@@ -297,20 +297,26 @@ test("same-name parallel exports retain individual bytes and clean successful an
   const docs = [answer("A"), answer("B")];
   docs.forEach((doc, i) => { doc.sections[0].text = "SYNTHETIC_EXPORT_" + i; doc.sections[0].paragraphs![0].text = doc.sections[0].text; });
   await Promise.all(docs.map(doc => s.store().saveAnswer(doc)));
-  const client = await connect(s.store());
+  const store = s.store(), temporaryPaths: string[] = [];
+  const resolveExportPath = store.resolveExportPath.bind(store);
+  store.resolveExportPath = (_filename, format) => resolveExportPath("shared", format);
+  const createExportHandle = store.createExportHandle.bind(store);
+  store.createExportHandle = async (...args) => { temporaryPaths.push(args[0]); return createExportHandle(...args); };
+  const client = await connect(store);
   try {
     const outputs = await Promise.all(docs.map(doc => client.callTool({
-      name: "export_text", arguments: { answerId: doc.id, filename: "shared" },
+      name: "export_answer", arguments: { answerId: doc.id, formats: ["txt"] },
     })));
     for (let i = 0; i < outputs.length; i++) {
       assert.equal(outputs[i].isError, undefined);
-      const result = outputs[i].structuredContent as { path: string; exportUri: string };
-      await assert.rejects(fs.stat(path.dirname(result.path)), /ENOENT/);
+      const result = (outputs[i].structuredContent as { files: Array<{ exportUri: string }> }).files[0];
       const resource = await client.readResource({ uri: result.exportUri });
       const text = Buffer.from((resource.contents[0] as { blob: string }).blob, "base64").toString();
       assert.ok(text.includes("SYNTHETIC_EXPORT_" + i));
       assert.ok(!text.includes("SYNTHETIC_EXPORT_" + (1 - i)));
     }
+    assert.equal(temporaryPaths.length, 2);
+    for (const outputPath of temporaryPaths) await assert.rejects(fs.stat(path.dirname(outputPath)), /ENOENT/);
     let failedPath = "";
     await assert.rejects(withTemporaryExport("shared.txt", async outputPath => {
       failedPath = outputPath;
@@ -319,7 +325,7 @@ test("same-name parallel exports retain individual bytes and clean successful an
     }), /render failure/);
     await assert.rejects(fs.stat(path.dirname(failedPath)), /ENOENT/);
     s.firestore.failManifest = true;
-    assert.equal((await client.callTool({ name: "export_text", arguments: { answerId: docs[0].id, filename: "shared" } })).isError, true);
+    assert.equal((await client.callTool({ name: "export_answer", arguments: { answerId: docs[0].id, formats: ["txt"] } })).isError, true);
   } finally { await client.close(); }
 });
 

@@ -11,7 +11,6 @@ import {
   layoutOptionsSchema,
   answerParagraphSchema,
   answerSectionInputSchema,
-  answerSectionSchema as storedSectionSchema,
   applyTextEdits,
   createAnswerDocument,
   assertExpectedVersion,
@@ -58,7 +57,6 @@ const answerSummarySchema = answerDocumentSchema.pick({ id: true, templateId: tr
 const layoutSummarySchema = layoutReportSchema.pick({
   capacity: true, totalLines: true, pagesUsed: true, overflowLines: true, remainingLines: true, fits: true, status: true,
 }).loose();
-const sectionSummarySchema = storedSectionSchema.pick({ id: true, heading: true, order: true }).loose();
 const templateSummarySchema = templateSchema.pick({ id: true, name: true, pages: true, linesPerPage: true, paperProfile: true }).loose();
 
 const snapshotOutputSchema = z.object({
@@ -73,10 +71,9 @@ const layoutOutputSchema = z.object({
   layout: layoutSummarySchema,
 }).loose();
 
-const sectionOutputSchema = z.object({
-  section: sectionSummarySchema,
-  answer: answerSummarySchema,
-  layout: layoutSummarySchema,
+const writeOutputSchema = z.object({
+  answer: answerDocumentSchema.pick({ id: true, title: true, version: true }).loose(),
+  layout: layoutReportSchema.pick({ fits: true, totalLines: true }).loose(),
 }).loose();
 
 const replacementContentSchema = z.object({
@@ -338,25 +335,12 @@ const previewArgumentSchemas = {
   renumber_items: z.object({ sectionId: sectionIdSchema.optional() }),
 } satisfies Record<PreviewOperation, z.ZodObject>;
 
-// Output schemas of the tools added after the base contract stay minimal to fit the tools/list
-// budget; before/after snapshots and the remaining answer/layout fields pass through untyped.
-const compactSnapshotShape = {
-  answer: z.object({ id: answerIdSchema, version: z.number().int().positive() }).loose(),
-  layout: layoutReportSchema.pick({ totalLines: true, overflowLines: true, fits: true }).loose(),
-};
-
 const changePreviewOutputSchema = z.object({
   operation: z.enum(PREVIEW_OPERATIONS),
   answerId: answerIdSchema,
   baseVersion: z.number().int().positive(),
   applied: z.literal(false),
   summary: z.array(z.string()),
-}).loose();
-
-const editOutputSchema = z.object({
-  ...compactSnapshotShape,
-  replacements: z.number().int().positive(),
-  changes: z.array(z.string()),
 }).loose();
 
 const revisionListOutputSchema = z.object({
@@ -366,20 +350,6 @@ const revisionListOutputSchema = z.object({
   revisions: z.array(z.object({ version: z.number().int().positive(), changes: z.array(z.string()) }).loose()),
   olderVersions: z.number().int().nonnegative(),
 });
-
-// Loose: the export tools also return the readable fileName and, when configured, a downloadUrl.
-const exportOutputSchema = z.object({
-  answerId: answerIdSchema,
-  version: z.number().int().positive(),
-  format: z.enum(["docx", "pdf", "txt"]),
-  path: z.string(),
-  exportUri: z.string(),
-  exportExpiresAt: z.string(),
-  pages: z.number().int().positive(),
-  layout: layoutSummarySchema,
-  font: z.string().optional(),
-  fontWarning: z.string().optional(),
-}).loose();
 
 const ANSWER_SHEET_UI_META = {
   ui: { resourceUri: ANSWER_SHEET_WIDGET_URI, visibility: ["model", "app"] },
@@ -563,7 +533,7 @@ function skippedNote(skipped: string[]): string {
 
 /** Checks preview_change arguments against the previewed tool, naming the fields that tool expects. */
 function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperation, schema: Schema, args: Record<string, unknown>): z.infer<Schema> {
-  const stray = Object.keys(args).filter((key) => args[key] !== undefined && !(key in schema.shape));
+  const stray = Object.keys(args).filter((key) => args[key] !== undefined && !Object.hasOwn(schema.shape, key));
   if (stray.length) throw new Error(`${operation} 不使用 ${stray.join("、")}；它的參數是 ${Object.keys(schema.shape).join("、")}。`);
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
@@ -648,13 +618,9 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   load_exam_paper: "Load template geometry and formatting rules.",
   list_templates: "List available answer-sheet templates.",
   list_answers: "List saved answers grouped by exam, ordered by question number.",
-  reflow_answer: "Recalculate saved content with the authoritative layout engine.",
   update_answer_info: "Edit title, exam, question number, question or layout options.",
   duplicate_answer: "Copy content, formatting and targets into an independent version-1 answer.",
-  export_docx: "Export DOCX at expectedVersion; rejects overflow unless explicitly allowed (never for 165).",
-  export_pdf: "Export PDF at expectedVersion; rejects overflow unless explicitly allowed (never for 165).",
-  export_text: "Export grid TXT at expectedVersion; rejects overflow unless explicitly allowed (never for 165).",
-  export_answer: "Export pinned answers as Word and PDF by default; legacy TXT remains available.",
+  export_answer: "Export pinned answers as Word and PDF by default; TXT is also available.",
   export_exam_bundle: "Export all planned questions via examId or ordered pinned answers as PDF and Word by default; all-or-nothing. Give both links without asking to export.",
   move_section: "Move a section before or after another section.",
   renumber_items: "Renumber written heading/paragraph numbers by hierarchy.",
@@ -780,7 +746,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     new ResourceTemplate("essay://exports/{handle}", { list: undefined }),
     {
       title: "已匯出的申論檔案",
-      description: "export_docx / export_pdf / export_text 產生的限時檔案；URI 見工具結果的 exportUri。",
+      description: "export_answer / export_exam_bundle 產生的限時檔案；URI 見工具結果的 exportUri。",
     },
     async (uri, variables) => {
       if (options.readOnly || (options.scopes && !options.scopes.includes("essay.export"))) throw new Error("Export artifact not found.");
@@ -913,7 +879,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         templateId: rawCreateInput(createFields.templateId).optional(),
         sections: rawCreateInput(createRequestSchema.shape.sections).default([]),
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ...ANSWER_SHEET_UI_META,
@@ -1021,7 +987,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         sections: z.array(answerSectionInputSchema).max(100),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "寫入並計算版面…",
@@ -1049,7 +1015,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       }),
-      outputSchema: sectionOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -1084,7 +1050,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       }),
-      outputSchema: sectionOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "更新段落格式並重排…",
@@ -1122,7 +1088,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         section: answerSectionInputSchema,
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "插入段落並重排…",
@@ -1152,7 +1118,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "刪除段落並重排…",
@@ -1181,21 +1147,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "預覽修改",
       description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId), edit_text (edits), move_section (sectionId, beforeSectionId or afterSectionId) or renumber_items (sectionId).",
-      // Every previewed tool's arguments, all optional here; previewedSections checks them per operation.
-      // Strict, so a misspelled or invented argument is reported instead of silently dropped.
+      // Keep top-level arguments intact; previewedSections validates the selected tool's schema.
       inputSchema: z.object({
         answerId: answerIdSchema,
         operation: z.enum(PREVIEW_OPERATIONS),
         expectedVersion: expectedVersionSchema,
-        sections: previewArgumentSchemas.write_answer.shape.sections.optional(),
-        sectionId: sectionIdSchema.optional(),
-        ...replacementContentSchema.shape,
-        ...formattingPayloadSchema.shape,
-        afterSectionId: sectionIdSchema.optional(),
-        beforeSectionId: sectionIdSchema.optional(),
-        section: answerSectionInputSchema.optional(),
-        edits: textEditsSchema.optional(),
-      }).strict(),
+      }).loose().describe("Same top-level arguments as the selected write tool; validated against that tool's schema."),
       outputSchema: changePreviewOutputSchema,
       _meta: { ui: { visibility: ["model", "app"] } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -1216,7 +1173,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "修改字句",
       description: "Use this when the user wants to change, add or delete specific words or sentences without resending whole sections. Each edit replaces the exact text `find` (heading or paragraph) with `replace`: to insert, keep the anchor text in `replace`; empty `replace` deletes (an emptied paragraph is removed); a newline splits the paragraph. A `find` occurring more than once needs `occurrence` (1-based) or `replaceAll`; `sectionId` limits the search. All edits apply as one new version or none do; the result lists each change with its page and line.",
       inputSchema: { ...textEditsInput, responseDetail: responseDetailSchema },
-      outputSchema: editOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -1246,7 +1203,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "搬移申論區塊",
       description: "Use this when the user wants a section moved to another position: give beforeSectionId or afterSectionId (one of them). Only the order changes; the result lists the new order and the layout effect.",
       inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, ...previewArgumentSchemas.move_section.shape, expectedVersion: expectedVersionSchema },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }).loose(),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: { ui: { visibility: ["model", "app"] } },
     },
@@ -1271,7 +1228,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "重新編號",
       description: "Use this after items or sections were inserted, deleted or moved and their written numbers (壹、 一、 （一） 1. （1）) are no longer consecutive. Headings are numbered as one list and each section's paragraphs as their own, each level restarting under a higher one; sectionId limits it to that section's paragraphs. Preview with preview_change first.",
       inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
-      outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), skipped: z.array(z.string()), changes: z.array(z.string()) }).loose(),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
       _meta: { ui: { visibility: ["model", "app"] } },
     },
@@ -1451,7 +1408,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         version: z.number().int().positive(),
         expectedVersion: z.number().int().positive(),
       },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }).loose(),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -1527,21 +1484,6 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         },
         content: textContent(`已永久刪除「${deleted.answer.title}」（${answerId}，版本 ${deleted.answer.version}）；一併刪除 ${deleted.revisions} 筆修改紀錄與 ${deleted.exports} 個匯出檔。`),
       };
-    },
-  );
-
-  registerTool(
-    "reflow_answer",
-    {
-      title: "重新排版申論答案",
-      description: "Use this after content changes when the user wants the authoritative line-by-line wrapping and page assignment; it recalculates from stored sections without asking the model to estimate.",
-      inputSchema: { answerId: answerIdSchema },
-      outputSchema: snapshotOutputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    },
-    async ({ answerId }) => {
-      const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已重新排版；${summarizeLayout(current.layout)}`) };
     },
   );
 
@@ -1660,74 +1602,6 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       return { output, artifact, exportUri: `essay://exports/${artifact.handle}`, fileName, downloadUrl };
     });
   }
-
-  function registerExportTool(name: "export_docx" | "export_text" | "export_pdf", format: ExportFormat, base: {
-    title: string; description: string; invoking: string; invoked: string;
-  }) {
-    return registerTool(
-      name,
-      {
-        title: base.title,
-        description: base.description,
-        inputSchema: {
-          answerId: answerIdSchema,
-          expectedVersion: expectedVersionSchema,
-          filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
-          allowOverflow: z.boolean().default(false),
-        },
-        outputSchema: exportOutputSchema,
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-        _meta: {
-          "openai/toolInvocation/invoking": base.invoking,
-          "openai/toolInvocation/invoked": base.invoked,
-        },
-      },
-      async ({ answerId, expectedVersion, filename, allowOverflow }) => {
-        const answer = await store.getAnswer(answerId);
-        assertExportVersion(answer, expectedVersion);
-        const current = snapshot(answer, await store.getTemplate(answer.templateId));
-        const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, filename, allowOverflow);
-        return {
-          structuredContent: {
-            answerId,
-            version: current.answer.version,
-            ...output,
-            exportUri,
-            exportExpiresAt: artifact.expiresAt,
-            layout: current.layout,
-            fileName,
-            ...(downloadUrl ? { downloadUrl } : {}),
-          },
-          content: [
-            ...textContent(`已輸出${exporters[format].label}：${output.path}；${summarizeLayout(current.layout)}`
-              + (downloadUrl ? `\n下載「${fileName}」（24 小時內有效）：${downloadUrl}` : "")),
-            exportArtifactLink(fileName, exportUri, artifact.mimeType),
-          ],
-        };
-      },
-    );
-  }
-
-  const exportDocxTool = registerExportTool("export_docx", "docx", {
-    title: "輸出申論 Word",
-    description: "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定格線 Word…",
-    invoked: "Word 已產生。",
-  });
-
-  const exportTextTool = registerExportTool("export_text", "txt", {
-    title: "輸出申論純文字",
-    description: "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定換行純文字…",
-    invoked: "純文字已產生。",
-  });
-
-  const exportPdfTool = registerExportTool("export_pdf", "pdf", {
-    title: "輸出申論 PDF",
-    description: "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定格線 PDF…",
-    invoked: "PDF 已產生。",
-  });
 
   const exportAnswerTool = registerTool(
     "export_answer",
@@ -1990,7 +1864,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         layoutOptions: layoutOptionsSchema.optional().describe("Partial update; false turns an option off."),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }).loose(),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     },
     async ({ responseDetail, answerId, title, exam, questionNo, question, layoutOptions, expectedVersion }) => {
@@ -2017,7 +1891,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "複製申論答案",
       description: "Use this when the user wants to try another version of an answer without touching the original: copies the current content, formats, exam, question number and line targets into a new answer (version 1, own history).",
       inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, title: z.string().min(1).max(300).optional() },
-      outputSchema: z.object(compactSnapshotShape).loose(),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     },
     async ({ responseDetail, answerId, title }) => {
@@ -2042,7 +1916,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],
     ["update_answer_info", updateAnswerInfoTool], ["duplicate_answer", duplicateAnswerTool],
     ["set_answer_review", setAnswerReviewTool],
-    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool], ["export_answer", exportAnswerTool], ["export_exam_bundle", exportExamBundleTool],
+    ["export_answer", exportAnswerTool], ["export_exam_bundle", exportExamBundleTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }

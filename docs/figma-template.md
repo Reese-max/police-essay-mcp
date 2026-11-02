@@ -35,7 +35,7 @@
 | 答題內容與區段 | `create_answer`、`write_answer` |
 | 段落格式化 | `format_section`；支援 `firstLineIndent`、`leftIndent`、`rightIndent`、`alignment`、`spaceBeforeLines`、`spaceAfterLines`、`tabSize` |
 | 版面檢查 | `check_layout`；以實際模板行數作為判定來源 |
-| 匯出 | `export_docx`、`export_pdf`、`export_text` |
+| 匯出 | `export_answer`（DOCX、PDF、TXT） |
 | 內容濃縮 | `replace_text`；依 `compressionHints` 修正指定區塊 |
 
 ## 字型與實作界線

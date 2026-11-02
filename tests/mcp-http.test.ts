@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
@@ -300,13 +300,14 @@ test("MCP round-trip enforces authentication, CORS, and chunked body limits", as
     assert.equal(checkedContent.layout.fits, true);
 
     const exported = await client.callTool({
-      name: "export_text",
-      arguments: { answerId: createdSnapshot.answer.id, filename: "round-trip.txt" },
+      name: "export_answer",
+      arguments: { answerId: createdSnapshot.answer.id, formats: ["txt"] },
     });
     assert.equal(exported.isError, undefined);
-    const exportedContent = exported.structuredContent as { path: string; pages: number };
-    assert.equal(exportedContent.pages, 2);
-    await assert.rejects(stat(exportedContent.path), /ENOENT/);
+    const file = (exported.structuredContent as { files: Array<{ exportUri: string; pages: number }> }).files[0];
+    assert.equal(file.pages, 2);
+    const resource = await client.readResource({ uri: file.exportUri });
+    assert.match(Buffer.from((resource.contents[0] as { blob: string }).blob, "base64").toString("utf8"), /\f/);
   } finally {
     await client?.close().catch(() => undefined);
     await stopServer(runtime.child);
@@ -386,7 +387,7 @@ test("concurrent exports sharing a filename retain each answer's immutable artif
       const texts = [`EXPORT_A_${pair}`, `EXPORT_B_${pair}`];
       const created = await Promise.all(clients.map((client, index) => client.callTool({
         name: "create_answer",
-        arguments: { templateId: "police_information_essay", title: `export-${index}-${pair}`,
+        arguments: { templateId: "police_information_essay", title: `shared-export-${pair}`,
           sections: [{ id: "intro", heading: "前言", text: texts[index] }] },
       })));
       const answerIds = created.map(result => {
@@ -394,17 +395,18 @@ test("concurrent exports sharing a filename retain each answer's immutable artif
         return (result.structuredContent as { answer: { id: string } }).answer.id;
       });
       const exported = await Promise.all(clients.map((client, index) => client.callTool({
-        name: "export_text", arguments: { answerId: answerIds[index], filename: `shared-export-${pair}` },
+        name: "export_answer", arguments: { answerId: answerIds[index], formats: ["txt"] },
       })));
       const uris: string[] = [];
       for (let index = 0; index < exported.length; index++) {
         const result = exported[index];
         assert.equal(result.isError, undefined, JSON.stringify(result));
-        const structured = result.structuredContent as { answerId: string; version: number; exportUri: string };
+        const structured = result.structuredContent as { answerId: string; version: number; files: Array<{ exportUri: string; fileName: string }> };
         assert.equal(structured.answerId, answerIds[index]);
         assert.equal(structured.version, 1);
-        uris.push(structured.exportUri);
-        const resource = await clients[index].readResource({ uri: structured.exportUri });
+        uris.push(structured.files[0].exportUri);
+        assert.equal(structured.files[0].fileName, `shared-export-${pair}.txt`);
+        const resource = await clients[index].readResource({ uri: structured.files[0].exportUri });
         const artifact = resource.contents[0] as { mimeType: string; blob: string };
         assert.equal(artifact.mimeType, "text/plain");
         const text = Buffer.from(artifact.blob, "base64").toString("utf8");
@@ -451,27 +453,23 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
 
     for (const format of ["docx", "pdf", "txt"] as const) {
       const exported = await owner.callTool({
-        name: format === "txt" ? "export_text" : `export_${format}`,
-        arguments: { answerId, filename: `artifact-round-trip-${format}` },
+        name: "export_answer",
+        arguments: { answerId, formats: [format] },
       });
       assert.equal(exported.isError, undefined, JSON.stringify(exported));
-      const structured = exported.structuredContent as {
-        answerId: string;
-        version: number;
-        format: string;
-        path: string;
-        exportUri: string;
-        exportExpiresAt: string;
-      };
-      assert.equal(structured.answerId, answerId);
-      assert.equal(structured.version, 1);
+      const exportedContent = exported.structuredContent as { answerId: string; version: number; files: Array<{
+        format: string; fileName: string; exportUri: string; exportExpiresAt: string;
+      }> };
+      assert.equal(exportedContent.answerId, answerId);
+      assert.equal(exportedContent.version, 1);
+      const structured = exportedContent.files[0];
       assert.equal(structured.format, format);
       const expiresIn = Date.parse(structured.exportExpiresAt) - Date.now();
       assert.ok(expiresIn > 23 * 60 * 60 * 1000 && expiresIn <= 24 * 60 * 60 * 1000);
 
       const handle = structured.exportUri.slice("essay://exports/".length);
       assert.match(handle, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-      assert.ok(!structured.exportUri.includes(`artifact-round-trip-${format}`));
+      assert.ok(!structured.exportUri.includes(structured.fileName));
       uris.push(structured.exportUri);
 
       const blocks = (exported.content ?? []) as Array<{ type: string; uri?: string; mimeType?: string }>;
@@ -487,7 +485,6 @@ test("export artifacts are owner-only opaque resources with bytes, MIME, and exp
       assert.equal(artifact.mimeType, expectedMime[format]);
       const encoded = artifact.blob;
       assert.ok(encoded);
-      await assert.rejects(readFile(structured.path), /ENOENT/);
       const manifest = JSON.parse(await readFile(path.join(runtime.root, "exports", ".artifacts", handle + ".json"), "utf8"));
       const persisted = await readFile(path.join(runtime.root, "exports", ".artifacts", manifest.artifactFilename));
       assert.equal(Buffer.from(encoded, "base64").equals(persisted), true);

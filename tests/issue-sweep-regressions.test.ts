@@ -82,7 +82,7 @@ test("#30 XML-invalid text fails before writing a DOCX or reporting export succe
   await withClient(async (client) => {
     const created = await client.callTool({ name: "create_answer", arguments: { templateId: template.id, title: "非法字元", sections: [{ id: "body", text: "甲\u0000乙丙" }] } });
     const id = (created.structuredContent as { answer: { id: string } }).answer.id;
-    const result = await client.callTool({ name: "export_docx", arguments: { answerId: id } });
+    const result = await client.callTool({ name: "export_answer", arguments: { answerId: id, formats: ["docx"] } });
     assert.equal(result.isError, true);
     assert.doesNotMatch(textResult(result), /已輸出 Word/);
   });
