@@ -29,6 +29,8 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
   reason: "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base." },
 { path: "owner.tools[delete_answer]",
   reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
+{ path: "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",
+  reason: "Owner-only essay.write deletion requires the current plan version and no existing linked answers; progress exposes that version and remaining artifacts expire via lifecycle." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
   reason: "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read). preview_change advertises only answerId, operation and expectedVersion; top-level passthrough arguments still use the selected write tool schema." },
 { path: "owner.tools[duplicate_answer,export_answer,update_answer_info]",
@@ -52,7 +54,7 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "*.resourceTemplates[export-artifact].description",
    reason: "Export resource guidance names export_answer and export_exam_bundle instead of the removed legacy tools." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
+export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "delete_exam", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["review_answer", "get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
@@ -317,6 +319,11 @@ export async function checkMcpContract() {
   assert.deepEqual(deleteAnswer.annotations, { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false });
   assert.deepEqual([...deleteAnswer.inputSchema.required].sort(), ["answerId", "expectedVersion"]);
   assert.ok(!current.reader.tools.some(tool => tool.name === "delete_answer"));
+  const deleteExam = current.owner.tools.find(tool => tool.name === "delete_exam")!;
+  assert.deepEqual(deleteExam.annotations, deleteAnswer.annotations);
+  assert.deepEqual([...deleteExam.inputSchema.required!].sort(), ["examId", "expectedVersion"]);
+  assert.deepEqual(Object.keys(deleteExam.inputSchema.properties!).sort(), ["examId", "expectedVersion"]);
+  assert.ok(!current.reader.tools.some(tool => tool.name === "delete_exam"));
   assert.deepEqual(oauthToolLists(fixture.contract), fixture.oauthTools);
   for (const [name, scopes] of Object.entries({ read: ["essay.read"], readWrite: ["essay.read", "essay.write"],
     readExport: ["essay.read", "essay.export"], all: ["essay.read", "essay.write", "essay.export"] })) {

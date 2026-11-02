@@ -868,6 +868,29 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     return { structuredContent: progress, content: textContent(progress.summary) };
   });
 
+  const deleteExamTool = registerTool("delete_exam", {
+    title: "刪除考試計畫", description: "Permanently delete an exam plan after deleting its answers; use get_exam_progress.version as expectedVersion; remaining artifacts expire via lifecycle.",
+    inputSchema: { examId: examIdSchema, expectedVersion: z.number().int().positive() },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
+  }, async ({ examId, expectedVersion }) => {
+    try {
+      const plan = await store.getExam(examId);
+      if (plan.version !== expectedVersion) throw new Error("考試計畫版本衝突；請呼叫 get_exam_progress 取得目前 version 後重試。");
+      for (const question of plan.questions) {
+        if (!question.answerId) continue;
+        try { await store.getAnswer(question.answerId); }
+        catch (error) { if (isStoreNotFound(error)) continue; throw error; }
+        throw new Error(`第${question.questionNo}題仍有答案 ${question.answerId}；請先用 delete_answer 刪除答案，再呼叫 get_exam_progress 取得目前 version 後重試。`);
+      }
+      await store.deleteExam(examId, { expectedVersion });
+      return { structuredContent: { examId, version: plan.version }, content: textContent("考試計畫已永久刪除。") };
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new Error("找不到考試計畫；可能已刪除，請確認 examId。");
+      if (isStoreConflict(error)) throw new Error("考試計畫版本衝突；請呼叫 get_exam_progress 取得目前 version 後重試。");
+      throw error;
+    }
+  });
+
   const createAnswerTool = registerTool(
     "create_answer",
     {
@@ -1910,7 +1933,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
   );
 
   for (const [name, tool] of [
-    ["start_exam", startExamTool], ["create_answer", createAnswerTool], ["create_answers", createAnswersTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
+    ["start_exam", startExamTool], ["delete_exam", deleteExamTool], ["create_answer", createAnswerTool], ["create_answers", createAnswersTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],

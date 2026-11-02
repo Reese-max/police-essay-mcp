@@ -5,7 +5,10 @@ import { answerDocumentSchema } from "../src/domain.js";
 import { decodeAnswer, encodeAnswer } from "../src/answer-codec.js";
 
 // Local JSON only. Prints a preview; never writes files or contacts a service.
-if (process.argv.length !== 3) throw new Error("Usage: node --import tsx scripts/audit-answer-compat.ts local-fixture.json");
+if (process.argv.length !== 3) {
+  console.error("Usage: node --import tsx scripts/audit-answer-compat.ts local-fixture.json");
+  process.exit(2);
+}
 const raw = JSON.parse(await readFile(process.argv[2], "utf8"));
 const answer = decodeAnswer(raw);
 const preview = encodeAnswer(answer, raw);

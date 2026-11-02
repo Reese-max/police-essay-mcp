@@ -29343,6 +29343,10 @@
       "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
     },
     {
+      "path": "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",
+      "reason": "Owner-only essay.write deletion requires the current plan version and no existing linked answers; progress exposes that version and remaining artifacts expire via lifecycle."
+    },
+    {
       "path": "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
       "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read). preview_change advertises only answerId, operation and expectedVersion; top-level passthrough arguments still use the selected write tool schema."
     },
