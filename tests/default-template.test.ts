@@ -115,8 +115,8 @@ test("font errors and export failures name 165 even when invoked with the legacy
       const before = await store.getAnswer(created.answer.id);
       for (const request of [
         { name: "create_answer", arguments: { templateId, title: "缺字型", sections: body } },
-        { name: "export_docx", arguments: { answerId: before.id, expectedVersion: before.version } },
-        { name: "export_pdf", arguments: { answerId: before.id, expectedVersion: before.version } },
+        { name: "export_answer", arguments: { answerId: before.id, expectedVersion: before.version, formats: ["docx"] } },
+        { name: "export_answer", arguments: { answerId: before.id, expectedVersion: before.version, formats: ["pdf"] } },
       ]) {
         const result = await client.callTool(request);
         assert.equal(result.isError, true);
@@ -149,7 +149,7 @@ test("empty creates use 165 without migrating saved 166 answers, revisions or id
   const revision = await store.getRevision(before.id, before.version);
   assert.equal((await call(client, "load_exam_paper", { answerId: before.id })).template.id, legacyPaper);
   assert.equal((await call(client, "read_answer", { answerId: before.id })).answer.templateId, legacyPaper);
-  assert.equal((await call(client, "reflow_answer", { answerId: before.id })).layout.templateId, legacyPaper);
+  assert.equal((await call(client, "read_answer", { answerId: before.id })).layout.templateId, legacyPaper);
   const replay = await call(client, "create_answer", args);
   assert.equal(replay.replayed, true);
   assert.equal(replay.answer.id, before.id);
@@ -200,7 +200,7 @@ test("single, batch and exam omitted templates use 165; explicit overrides and e
   await call(client, "preview_change", { answerId: before.id, operation: "replace_text", sectionId: "body", newText: "預覽內容。" });
   const copied = await call(client, "duplicate_answer", { answerId: before.id });
   assert.equal((await store.getAnswer(copied.answer.id)).templateId, general);
-  await call(client, "export_text", { answerId: before.id });
+  await call(client, "export_answer", { answerId: before.id, formats: ["txt"] });
   assert.deepEqual(await store.getAnswer(before.id), before);
   assert.equal((await call(client, "get_exam_progress", { examId: plan.examId })).delivery.status, "not_ready");
 }));

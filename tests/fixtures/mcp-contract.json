@@ -29307,12 +29307,8 @@
       "reason": "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget."
     },
     {
-      "path": "*.tools[check_layout,create_answer,delete_text,export_docx,export_pdf,export_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,reflow_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+      "path": "*.tools[check_layout,create_answer,delete_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
       "reason": "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget."
-    },
-    {
-      "path": "owner.tools[export_docx,export_pdf,export_text].inputSchema.expectedVersion",
-      "reason": "Optional version binding for legacy exports; strip only expectedVersion before base comparison."
     },
     {
       "path": "*.tools[render_exam_overview]",
@@ -29340,7 +29336,7 @@
     },
     {
       "path": "*.tools[*].outputSchema",
-      "reason": "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema."
+      "reason": "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base."
     },
     {
       "path": "owner.tools[delete_answer]",
@@ -29348,15 +29344,11 @@
     },
     {
       "path": "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
-      "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)."
+      "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read). preview_change advertises only answerId, operation and expectedVersion; top-level passthrough arguments still use the selected write tool schema."
     },
     {
       "path": "owner.tools[duplicate_answer,export_answer,update_answer_info]",
       "reason": "New answer-management tools: rename or file an answer under an exam and question number and duplicate it (essay.write); export several formats at once with readable names (essay.export)."
-    },
-    {
-      "path": "*.tools[export_docx,export_pdf,export_text].outputSchema.additionalProperties",
-      "reason": "Loosened so the export tools can also return the readable fileName and, when the server has a public URL, a downloadUrl."
     },
     {
       "path": "owner.tools[move_section,renumber_items,set_line_targets]",
@@ -29385,6 +29377,14 @@
     {
       "path": "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
       "reason": "Formatting tools append the 165 paper formatting limits; the base description stays the exact prefix."
+    },
+    {
+      "path": "owner.tools[export_docx,export_pdf,export_text];*.tools[reflow_answer]",
+      "reason": "User-approved removals: export_answer retains multi-format exports, version binding, overflow guards and TXT modes. reflow_answer only read a freshly computed snapshot; read_answer/check_layout already recompute layout."
+    },
+    {
+      "path": "*.resourceTemplates[export-artifact].description",
+      "reason": "Export resource guidance names export_answer and export_exam_bundle instead of the removed legacy tools."
     }
   ]
 }

@@ -205,7 +205,7 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     const toolNames = (await reader.listTools()).tools.map((tool) => tool.name);
     for (const name of ["list_answers", "read_answer", "check_layout"]) assert.ok(toolNames.includes(name));
     for (const name of ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "edit_text", "restore_revision",
-      "export_docx", "export_text", "export_pdf"]) {
+      "export_answer", "export_exam_bundle"]) {
       assert.ok(!toolNames.includes(name), `${name} exposed to read credential`);
     }
     const listed = await reader.callTool({ name: "list_answers", arguments: {} });
@@ -220,7 +220,7 @@ test("owner and read credentials enforce the HTTP boundary before storage", asyn
     for (const [name, args] of [
       ["write_answer", { answerId: answer.answer.id, sections: [], expectedVersion: 1 }],
       ["delete_text", { answerId: answer.answer.id, sectionId: "intro", expectedVersion: 1 }],
-      ["export_text", { answerId: answer.answer.id, filename: "denied.txt" }],
+      ["export_answer", { answerId: answer.answer.id, formats: ["txt"] }],
     ] as const) {
       const denied = await reader.callTool({ name, arguments: args });
       assert.equal(denied.isError, true, `${name} should be denied`);
@@ -283,7 +283,7 @@ test("LAN-path requests without owner credentials get a Bearer-challenged 401 be
 
     reader = await connectClient(runtime.port, readToken, undefined, remoteHost);
     const toolNames = (await reader.listTools()).tools.map((tool) => tool.name);
-    for (const name of ["create_answer", "write_answer", "delete_text", "export_text"]) {
+    for (const name of ["create_answer", "write_answer", "delete_text", "export_answer"]) {
       assert.ok(!toolNames.includes(name), `${name} exposed to remote read credential`);
     }
   } finally {
@@ -462,10 +462,10 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     client = await connectClient(runtime.port);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(toolNames, [
-      "check_layout", "create_answer", "create_answers", "delete_answer", "delete_text", "duplicate_answer", "edit_text", "export_answer", "export_docx", "export_exam_bundle", "export_pdf",
-      "export_text", "format_section", "get_exam_progress",
+      "check_layout", "create_answer", "create_answers", "delete_answer", "delete_text", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle",
+      "format_section", "get_exam_progress",
       "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "move_section", "preview_change", "read_answer",
-      "reflow_answer", "render_answer_sheet", "render_exam_overview", "renumber_items", "replace_text", "restore_revision", "review_answer", "set_answer_review", "set_line_targets", "start_exam", "update_answer_info", "write_answer",
+      "render_answer_sheet", "render_exam_overview", "renumber_items", "replace_text", "restore_revision", "review_answer", "set_answer_review", "set_line_targets", "start_exam", "update_answer_info", "write_answer",
     ]);
     const created = await client.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "Anonymous remote", sections: [{ id: "intro", text: "Opt-in" }] } });
     assert.equal(created.isError, undefined);
@@ -473,9 +473,9 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
     const written = await client.callTool({ name: "write_answer", arguments: { answerId, expectedVersion: 1, sections: [{ id: "intro", text: "Anonymous edit" }] } });
     assert.equal((written.structuredContent as { answer: { version: number } }).answer.version, 2);
-    const exported = await client.callTool({ name: "export_text", arguments: { answerId } });
+    const exported = await client.callTool({ name: "export_answer", arguments: { answerId, formats: ["txt"] } });
     assert.equal(exported.isError, undefined);
-    const exportUri = (exported.structuredContent as { exportUri: string }).exportUri;
+    const exportUri = (exported.structuredContent as { files: Array<{ exportUri: string }> }).files[0].exportUri;
     const resource = await client.readResource({ uri: exportUri });
     const content = resource.contents[0] as { text?: string; blob?: string };
     assert.match(content.text ?? Buffer.from(content.blob ?? "", "base64").toString("utf8"), /Anonymous edit/u);
