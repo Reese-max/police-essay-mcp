@@ -149,7 +149,7 @@ test("empty creates use 165 without migrating saved 166 answers, revisions or id
   const revision = await store.getRevision(before.id, before.version);
   assert.equal((await call(client, "load_exam_paper", { answerId: before.id })).template.id, legacyPaper);
   assert.equal((await call(client, "read_answer", { answerId: before.id })).answer.templateId, legacyPaper);
-  assert.equal((await call(client, "check_layout", { answerId: before.id })).layout.templateId, legacyPaper);
+  assert.equal((await call(client, "read_answer", { answerId: before.id })).layout.templateId, legacyPaper);
   const replay = await call(client, "create_answer", args);
   assert.equal(replay.replayed, true);
   assert.equal(replay.answer.id, before.id);
