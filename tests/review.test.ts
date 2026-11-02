@@ -115,6 +115,26 @@ test("edits, version changes, identity and template changes invalidate every rep
   assert.equal(reviewAnswer(answer, changedTemplate, layoutSections(changedTemplate, answer.sections)).freshness, "stale");
 });
 
+test("caller findings are returned verbatim with attribution and remain stale after edits", () => {
+  const p = plan();
+  const note = JSON.stringify({ requirementId: "r1", sectionIds: ["a"],
+    quote: { sectionId: "a", text: "A definition and a concrete example.", location: "paragraph 1" },
+    problem: "Caller reports an incomplete explanation", suggestedRevision: "Clarify the mechanism after checking the fixture",
+    evidenceNeeded: ["fixture source comparison"] });
+  p.requirements[0].review = { ...evidence, status: "rejected", note };
+  const answer = reviewed(sample(), p); const result = report(answer);
+  assert.equal(result.requirements[0].callerNote, note);
+  assert.equal(result.requirements[0].judgmentSource, "caller_reported");
+  assert.equal(result.requirements[0].reportedReview, "rejected");
+  assert.equal(result.semantic, "not_checked"); assert.equal(result.sourceVerification, "not_checked");
+  const stale = report({ ...answer, title: "changed" });
+  assert.equal(stale.freshness, "stale"); assert.equal(stale.requirements[0].callerNote, note);
+  assert.equal(stale.requirements[0].reportedReview, "stale");
+  delete p.requirements[0].review;
+  assert.equal(report(reviewed(sample(), p)).requirements[0].callerNote, undefined);
+  assert.equal(report(sample()).requirements.length, 0);
+});
+
 test("line allocation is reported from actual layout, without inventing an optimal score ratio", () => {
   const answer = sample(); answer.lineTargets = { a: 1, b: 3 };
   assert.equal(report(reviewed(answer)).allocation.status, "needs_review");

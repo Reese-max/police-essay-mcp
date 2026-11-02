@@ -72,6 +72,17 @@ export function stableJson(value: unknown): string {
 }
 type JsonSchema = Record<string, unknown>;
 type ContractTool = { name: string; outputSchema?: JsonSchema; _meta?: Record<string, unknown> } & Record<string, unknown>;
+/** Only load_exam_paper adds an optional, unconstrained caller-guidance field.
+ * Keep the pinned base and the general subset validator strict for all other fields. */
+export function withoutWritingGuide(schema: JsonSchema, toolName: string): JsonSchema {
+  if (toolName !== "load_exam_paper") return schema;
+  const properties = schema.properties as JsonSchema;
+  assert.ok(properties && "writingGuide" in properties, "load_exam_paper missing declared writingGuide addition");
+  assert.deepEqual(properties.writingGuide, {}, "writingGuide must remain an unconstrained output");
+  assert.ok(!((schema.required ?? []) as string[]).includes("writingGuide"), "writingGuide must be optional");
+  const { writingGuide: _guide, ...baseProperties } = properties;
+  return { ...schema, properties: baseProperties };
+}
 /**
  * A compact schema may drop object fields (and must then allow them via additionalProperties),
  * but every field it keeps carries the base field's keywords unchanged.
@@ -295,7 +306,7 @@ export async function checkMcpContract() {
     for (const baseTool of base[view].tools as ContractTool[]) {
       if (REMOVED_TOOLS.includes(baseTool.name)) continue;
       const tool = (current[view].tools as ContractTool[]).find(item => item.name === baseTool.name)!;
-      assertSchemaSubset(tool.outputSchema, baseTool.outputSchema, `${view}.${baseTool.name}.outputSchema`);
+      assertSchemaSubset(withoutWritingGuide(tool.outputSchema!, tool.name), baseTool.outputSchema, `${view}.${baseTool.name}.outputSchema`);
     }
   }
   const toolsListBytes = Buffer.byteLength(JSON.stringify(current.owner.tools));

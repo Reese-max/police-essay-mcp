@@ -45,7 +45,8 @@ export function reviewAnswer(answer: AnswerDocument, template: AnswerTemplate, l
       issue("SOURCE_LINK_MISSING", `${r.id} 尚未指定核對來源。`, { requirementId: r.id });
     return { requirementId: r.id, prompt: r.prompt, required: r.required !== false, sectionIds: r.sectionIds, sourceIds: r.sourceIds ?? [],
       coverage, lines: r.sectionIds.reduce((sum, id) => sum + (counts.get(id) ?? 0), 0),
-      semantic: "not_checked" as const, reportedReview: reported(r.review) };
+      semantic: "not_checked" as const, reportedReview: reported(r.review),
+      ...(r.review ? { callerNote: r.review.note, judgmentSource: "caller_reported" as const } : {}) };
   });
   const shared = new Map<string, string[]>();
   for (const r of plan?.requirements ?? []) for (const sectionId of r.sectionIds) {

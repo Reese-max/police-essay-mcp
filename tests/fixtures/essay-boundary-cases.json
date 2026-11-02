@@ -1,0 +1,35 @@
+{
+  "provenance": "Failure-derived synthetic regression cases; not the original blind-test questions or model outputs. Human semantic review required; no keyword grader.",
+  "cases": [
+    {
+      "id": "independent_action_count",
+      "question": "在不增人力的限制下，提出最多兩項改善借用流程的措施。",
+      "material": "現有人員處理借還；題目沒有授權增加人力或採購。",
+      "limits": {"maxIndependentActions": 2, "extraStaff": 0},
+      "knownBad": "一、流程整合：新增逐件簽核、購置自動櫃、另辦定期教育訓練。",
+      "independentActionsInBad": ["新增逐件簽核", "購置自動櫃", "定期教育訓練"],
+      "reviewExpectation": "三項獨立措施不能因放在一標題就算一項；採購授權亦未提供。須逐項計數並核對人力與授權，不是換標題即可通過。"
+    },
+    {
+      "id": "existing_control_limited_value",
+      "question": "評析現有清冊的作用與缺口，提出改善方向。",
+      "material": "清冊保留每月盤點結果，能供事後核對；未涵蓋兩次盤點間的即時異動。",
+      "knownBad": "清冊無法即時掌握異動，所以原有資料完全沒有用途，應全部棄用。",
+      "reviewExpectation": "承認事後盤點與核對用途，再指出即時性缺口；不得把有限能力推成完全無效。"
+    },
+    {
+      "id": "preserve_action_strength",
+      "question": "說明異常提示如何協助後續處理。",
+      "material": "偵測異常後先提示負責人，是否限制使用仍需進一步核實；題目沒有自動停用授權。",
+      "knownBad": "偵測異常後立即全面停用所有相關功能。",
+      "reviewExpectation": "保留先提示、再核實的順序與處置強度；不得擅自改為全面強制措施。較強方案只能明示為另需授權的建議，不能改寫題示行為。"
+    },
+    {
+      "id": "account_is_not_operator",
+      "question": "說明帳號登入紀錄能支持何種調查判斷。",
+      "material": "紀錄顯示某帳號於特定時間由一設備登入，尚未確認當時實際操作的人。",
+      "knownBad": "登入紀錄已證實帳號本人就是當時操作者。",
+      "reviewExpectation": "可支持登入事件與帳號、設備的關聯；帳號歸屬與實際操作者須分別確認，不能保證追到本人。"
+    }
+  ]
+}
