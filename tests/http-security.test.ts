@@ -462,7 +462,7 @@ test("anonymous remote requires explicit opt-in, refuses tokens and OAuth, and s
     client = await connectClient(runtime.port);
     const toolNames = (await client.listTools()).tools.map((tool) => tool.name).sort();
     assert.deepEqual(toolNames, [
-      "check_layout", "create_answer", "create_answers", "delete_answer", "delete_text", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle",
+      "check_layout", "create_answer", "create_answers", "delete_answer", "delete_exam", "delete_text", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle",
       "format_section", "get_exam_progress",
       "insert_text", "list_answers", "list_revisions", "list_templates", "load_exam_paper", "move_section", "preview_change", "read_answer",
       "render_answer_sheet", "render_exam_overview", "renumber_items", "replace_text", "restore_revision", "review_answer", "set_answer_review", "set_line_targets", "start_exam", "update_answer_info", "write_answer",

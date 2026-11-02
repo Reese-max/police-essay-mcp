@@ -3,7 +3,10 @@ Usage: python scripts/verify-paper165.py layout.json rendered.pdf
 Run on both native PDF and Word/LibreOffice-converted PDF before delivery.
 """
 import json, pathlib, sys
-import fitz
+try:
+    import fitz
+except ImportError:
+    sys.exit("Missing PyMuPDF; install it with: pip install pymupdf")
 layout = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
 asset = json.loads((pathlib.Path(__file__).resolve().parents[1] / 'assets/paper_166.asset.json').read_text())
 compact = lambda s: ''.join(s.split())

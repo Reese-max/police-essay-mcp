@@ -65,12 +65,27 @@ npm start
 
 ## 驗證
 
+Python 原稿紙檢查腳本 `scripts/verify-paper165.py` 與相容入口 `scripts/verify-paper166.py` 需要 Python 3 與 PyMuPDF，先執行 `pip install pymupdf`。
+
 ```powershell
 npm run check
 npm test
 ```
 
 若要接 ChatGPT Developer Mode，先確認連接器能對每次 `/mcp` GET／POST／DELETE 請求提供 owner Bearer credential，或由可信 access gateway 驗證使用者後代送 credential。確認 HTTPS tunnel 本身的存取控制，再使用 tunnel URL 加上 `/mcp` 建立 app。若連接器無法提供這項驗證，請勿公開 tunnel；可改用本機 stdio。唯一例外是擁有者明確接受風險並啟用 `MCP_ALLOW_ANONYMOUS_REMOTE=true`，此時 app 以無認證連線，任何知道網址的人都能讀寫全部答案。工具描述或 resource URI 更新後，需在 ChatGPT 中重新整理 app。
+
+## 部署後端對端驗收
+
+先對尚未承接流量的標記修訂版本（no-traffic tagged revision）執行，再切換流量。腳本僅建立並清除合成答案及其匯出檔；全卷腳本另建立並刪除一份考試計畫，合輯副本下載至 outDir。不修改既有答案。
+
+將 owner token 放入環境變數 `E2E_OWNER_TOKEN`，避免出現在命令列；亦保留最後一個位置參數傳入 token 的相容用法。
+
+```powershell
+npx tsx scripts/http-e2e.ts <baseUrl>
+npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir>
+```
+
+這些腳本會存取實際服務，不包含在 `npm test`（只收集 `tests/**/*.test.ts`）中。
 
 ## 安全與部署
 

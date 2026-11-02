@@ -37,6 +37,34 @@ const draft = (examId: string, questionNo: number, lines = 1) => ({ templateId: 
   sections: [{ id: "body", text: Array.from({ length: lines }, () => "論述。").join("\n") }] });
 
 for (const cloud of [false, true]) {
+  test(`${cloud ? "CloudStore" : "FileStore"} delete_exam requires current version and deleted answers`, async () => fixture(cloud, async store => {
+    const h = await connect(store); const c = h.client;
+    try {
+      const id = data(await call(c, "start_exam", { title: "清理", questions: [{ questionNo: 1 }] })).examId;
+      const progress = () => call(c, "get_exam_progress", { examId: id }).then(data);
+      assert.equal((await progress()).version, 1);
+      const answer = data(await call(c, "create_answer", draft(id, 1))).answer;
+      const linkedVersion = (await progress()).version;
+      const blocked = await call(c, "delete_exam", { examId: id, expectedVersion: linkedVersion });
+      assert.equal(blocked.isError, true); assert.match(text(blocked), /delete_answer.*get_exam_progress/);
+      assert.equal((await store.getAnswer(answer.id)).version, answer.version);
+      assert.equal((await store.getExam(id)).version, linkedVersion);
+      data(await call(c, "delete_answer", { answerId: answer.id, expectedVersion: answer.version }));
+      const stale = await call(c, "delete_exam", { examId: id, expectedVersion: linkedVersion });
+      assert.equal(stale.isError, true); assert.match(text(stale), /版本衝突.*get_exam_progress/);
+      const version = (await progress()).version;
+      const deleted = data(await call(c, "delete_exam", { examId: id, expectedVersion: version }));
+      assert.deepEqual(deleted, { examId: id, version });
+      await assert.rejects(store.getExam(id), isStoreNotFound);
+      const missing = await call(c, "delete_exam", { examId: id, expectedVersion: version });
+      assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
+      // A stale link to an already missing answer must not prevent plan cleanup.
+      await store.saveExam({ ...exam(), questions: [{ questionNo: 1, answerId: answer.id }] });
+      data(await call(c, "delete_exam", { examId: exam().id, expectedVersion: 1 }));
+      assert.deepEqual(await store.listExams(), []);
+    } finally { await h.close(); }
+  }));
+
   test(`${cloud ? "CloudStore" : "FileStore"} plan CRUD, validation, size and CAS; scope mirrors answers`, async () => fixture(cloud, async (store, other, reader) => {
     const plan = exam(); await store.saveExam(plan);
     assert.deepEqual(await store.getExam(plan.id), plan); assert.equal((await store.listExams()).length, 1);
@@ -206,6 +234,8 @@ test("read-only and OAuth scope surfaces allow progress and deny plan creation",
       assert.equal(progress.annotations?.readOnlyHint, true);
       assert.deepEqual((progress._meta?.ui as any)?.visibility, ["model", "app"]);
       assert.equal(Boolean(tools.find(t => t.name === "start_exam")), options.scopes?.includes("essay.write") ?? false);
+      assert.equal(Boolean(tools.find(t => t.name === "delete_exam")), options.scopes?.includes("essay.write") ?? false);
+      if (!options.scopes?.includes("essay.write")) assert.equal((await call(h.client, "delete_exam", { examId: exam().id, expectedVersion: 1 })).isError, true);
       if (options.scopes) assert.deepEqual(progress._meta?.securitySchemes, [{ type: "oauth2", scopes: ["essay.read"] }]);
       data(await call(h.client, "get_exam_progress", { examId: exam().id }));
       const overview = data(await call(h.client, "render_exam_overview", { examId: exam().id, responseDetail: "full" })); assert.equal(overview.examAnswers[0].title, "未建立");
@@ -373,9 +403,10 @@ test("FileStore deletion retries unlink before touching history and skips corrup
 test("cross-owner exam IDs are indistinguishable from unknown IDs for all exam entry points", async () => fixture(true, async (store, other) => {
   await store.saveExam(exam()); const h = await connect(other);
   try {
-    for (const name of ["create_answer", "create_answers", "export_exam_bundle", "render_exam_overview", "get_exam_progress"]) {
+    for (const name of ["create_answer", "create_answers", "delete_exam", "export_exam_bundle", "render_exam_overview", "get_exam_progress"]) {
       const args = (id: string) => name === "create_answer" ? draft(id, 1)
-        : name === "create_answers" ? { examId: id, answers: [{ title: "draft" }] } : { examId: id };
+        : name === "create_answers" ? { examId: id, answers: [{ title: "draft" }] }
+        : name === "delete_exam" ? { examId: id, expectedVersion: 1 } : { examId: id };
       const foreign = await call(h.client, name, args(exam().id)), unknown = await call(h.client, name, args("exam_unknown"));
       assert.equal(foreign.isError, true, name); assert.equal(unknown.isError, true, name);
       assert.deepEqual(foreign, unknown, name); assert.doesNotMatch(text(foreign), /警察特考/);
