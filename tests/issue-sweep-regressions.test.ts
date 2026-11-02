@@ -90,11 +90,11 @@ test("#30 XML-invalid text fails before writing a DOCX or reporting export succe
 
 test("#32 PDF keeps every character on a full-width ASCII line", { skip: !pdfReady }, async () => {
   await temporary(async root => {
-    for (const source of ["m".repeat(42), "W".repeat(42), "@".repeat(40), "中文m".repeat(8)]) {
+    for (const [index, source] of ["m".repeat(42), "W".repeat(42), "@".repeat(40), "中文m".repeat(8)].entries()) {
       const answer = createAnswerDocument({ templateId: template.id, title: "滿行", sections: [{ id: "body", text: source }] });
       const report = layoutSections(template, answer.sections);
       assert.equal(report.fits, true);
-      const pdf = path.join(root, "full.pdf"); await exportPdf(report, template, pdf);
+      const pdf = path.join(root, `full-${index + 1}.pdf`); await exportPdf(report, template, pdf);
       const output = execFileSync("pdftotext", ["-raw", pdf, "-"], { encoding: "utf8" }).replace(/\s+/gu, "");
       assert.equal(output, source);
     }
