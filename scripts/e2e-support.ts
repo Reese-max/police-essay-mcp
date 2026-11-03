@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import JSZip from 'jszip';
 import { JSDOM } from 'jsdom';
+import {renameReplacing} from '../src/storage.js';
 export type Rpc = (name: string, args: Record<string, unknown>) => Promise<any>;
 const hash = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 40);
 const text = (r: any) => (r.content ?? []).filter((c: any) => c.type === 'text').map((c: any) => c.text ?? '').join('\n');
@@ -99,7 +100,21 @@ export class Scope {
         this.file = path.join(directory, `receipt-${mode}-${runId}.json`);
         this.receipt = { ...this.identity, base, armed: false, events: [], cleanup: 'not_started' };
     }
-    async save() { await fs.writeFile(this.file, JSON.stringify(this.receipt, null, 2)); }
+    async save() {
+        const temporary = `${this.file}.tmp-${randomUUID()}`;
+        let collision = false;
+        try {
+            try { await fs.writeFile(temporary, JSON.stringify(this.receipt, null, 2), {flag:'wx'}); }
+            catch (error) { collision = (error as NodeJS.ErrnoException).code === 'EEXIST'; throw error; }
+            const handle = await fs.open(temporary, 'r+');
+            try { await handle.sync(); } finally { await handle.close(); }
+            // Same-directory replacement preserves the last-good receipt until publication.
+            // Reuse the existing bounded Windows lock retries; never unlink the destination.
+            await renameReplacing(temporary, this.file);
+        } finally {
+            if (!collision) await fs.rm(temporary, {force:true});
+        }
+    }
     async recover(rpc: Rpc) {
         assert.ok(process.env.E2E_RUN_ID, 'cleanup-only requires explicit E2E_RUN_ID');
         const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
