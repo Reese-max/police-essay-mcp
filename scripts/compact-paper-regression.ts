@@ -16,7 +16,7 @@ const cases=ESSAY_TEACHING_CASES.filter(c=>c.id!=='dual_compression');
 const manifest:any={synthetic:true,notOfficialAnswer:true,automaticRewrite:false,cases:[],exports:[]};
 try{
  for(const c of cases){
-  const before=await call('create_answer',{title:'合成舊式-'+c.id,sections:[{id:c.id,heading:c.type,text:'\n'+c.teachingExample+'\n'}]});
+  const before=await call('create_answer',{title:'合成舊式-'+c.id,layoutOptions:{compactPaper:false},sections:[{id:c.id,heading:c.type,text:'\n'+c.teachingExample+'\n'}]});
   const after=await call('create_answer',{title:'合成緊湊-'+c.id,sections:[{id:c.id,text:c.type+'：'+c.teachingExample}]});
   const answer=(await call('read_answer',{answerId:after.answer.id})).answer;
   manifest.cases.push({id:c.id,before:before.layout.totalLines,after:after.layout.totalLines,text:answer.sections[0].text});
@@ -25,7 +25,7 @@ try{
  const beforeSections=cases.map((c,i)=>({id:c.id,heading:['壹','貳','參','肆','伍'][i]+'、'+c.type,text:c.teachingExample+'\n'}));
  const afterSections=beforeSections.map(s=>({id:s.id,text:s.heading+'：'+s.text.trim()}));
  for(const [label,sections] of [['before',beforeSections],['after',afterSections]] as const){
-  const created=await call('create_answer',{title:'五題型合成排版-'+label,sections});assert.equal(created.layout.fits,true);
+  const created=await call('create_answer',{title:'五題型合成排版-'+label,sections,layoutOptions:{compactPaper:false}});assert.equal(created.layout.fits,true);
   const full=await call('read_answer',{answerId:created.answer.id});
   if(label==='after')assert.ok(full.layout.lines.every((l:any)=>l.text.trim()&&!l.isSpacer&&!l.isHeading&&!l.isPadding));
   const ex=await call('export_answer',{answerId:created.answer.id,expectedVersion:1,formats:['pdf','docx']});assert.equal(ex.failed.length,0);

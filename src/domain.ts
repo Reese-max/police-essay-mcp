@@ -174,6 +174,7 @@ export const layoutOptionsSchema = z.strictObject({
   wholeLatinWords: z.boolean().optional(),
   keepHeadingWithNext: z.boolean().optional(),
   avoidPunctuationOnlyLines: z.boolean().optional(),
+  compactPaper: z.boolean().optional().describe('165/166 only: remove unformatted blank paragraphs and join short headings with their first body paragraph; false preserves standalone headings and blanks.'),
 });
 export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;
 

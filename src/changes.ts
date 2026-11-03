@@ -21,6 +21,11 @@ function label(section: AnswerSection): string {
 function locate(layout: LayoutReport, sectionId: string, paragraphIndex?: number): string {
   const lines = layout.lines.filter((line) => line.sectionId === sectionId && !line.isSpacer
     && (paragraphIndex === undefined || line.paragraphIndex === paragraphIndex));
+  if (lines.length === 0 && paragraphIndex === 0) {
+    // A compact short heading shares its first body line instead of paragraph zero.
+    const first = layout.lines.find(line => line.sectionId === sectionId && !line.isSpacer && line.text.trim());
+    return first ? locate({ ...layout, lines: [first] }, sectionId) : "";
+  }
   if (lines.length === 0) return "";
   const first = lines[0];
   const last = lines[lines.length - 1];
