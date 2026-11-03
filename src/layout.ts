@@ -14,7 +14,7 @@ import {
   type LayoutReport,
 } from "./domain.js";
 
-import { wrapOriginalPaper } from "./original-paper.js";
+import { wrapOriginalPaper, originalPaperMeasure, originalPaperAvailableWidth } from "./original-paper.js";
 
 const COMBINING_MARKS = /\p{Mark}/u;
 const ZERO_WIDTH_CHARACTERS = /[\u200b-\u200d\ufe0e\ufe0f]/u;
@@ -343,6 +343,36 @@ function compressionHints(
   return sorted;
 }
 
+/** Render-only view. Absent options preserve historical answers and explicit formats win. */
+function compactPaperSection(template: AnswerTemplate, section: AnswerSection, options: LayoutOptions): AnswerSection & { sourceParagraphIndexes?: number[] } {
+  if (!template.paperProfile || !options.compactPaper) return section;
+  const special = (format: object | undefined, defaults: object) => Object.entries(format ?? {})
+    .some(([key, value]) => value !== undefined && value !== (defaults as Record<string, unknown>)[key]);
+  const bodyDefaults = { ...DEFAULT_PARAGRAPH_FORMAT, ...template.paragraphDefaults };
+  const headingDefaults = { ...DEFAULT_HEADING_STYLE, ...template.headingDefaults };
+  if (special(section.headingStyle, headingDefaults) || special(section.paragraphFormat, bodyDefaults)
+    || section.paragraphs?.some(p => special(p.format, bodyDefaults))) return section;
+  const retained = sectionParagraphs(section).map((paragraph, index) => ({ paragraph, sourceIndex: index + 1 }))
+    .filter(p => p.paragraph.text.trim() !== '');
+  const paragraphs = retained.map(p => ({ ...p.paragraph }));
+  // Empty bodies remain visible to review; do not hide an empty answer or invent prose.
+  if (!paragraphs.length) return section;
+  let heading = section.heading;
+  if (heading?.trim() === '') heading = undefined;
+  if (heading && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
+    const prefix = heading + (/[：:]$/u.test(heading) ? '' : '：');
+    const spaces = paragraphs[0].text.match(/^\s*/u)![0];
+    const firstBody = spaces + (splitGraphemes(paragraphs[0].text.slice(spaces.length))[0] ?? '');
+    // Reserve room for a real body grapheme using the same font/Word width as wrapping.
+    if (originalPaperMeasure(template)(prefix + firstBody)
+      <= originalPaperAvailableWidth(paragraphFormatSchema.parse(bodyDefaults), template, 0)) {
+      paragraphs[0].text = prefix + paragraphs[0].text;
+      heading = undefined;
+    }
+  }
+  return { ...section, heading, paragraphs, sourceParagraphIndexes: retained.map(p => p.sourceIndex) };
+}
+
 export function layoutSections(
   template: AnswerTemplate,
   sections: AnswerSection[],
@@ -352,7 +382,8 @@ export function layoutSections(
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
 
-  for (const section of [...sections].sort((a, b) => a.order - b.order)) {
+  for (const storedSection of [...sections].sort((a, b) => a.order - b.order)) {
+    const section = compactPaperSection(template, storedSection, options);
     const sectionStart = lines.length;
     const headingStyle = mergeHeadingStyle(template, section);
     if (section.heading) {
@@ -373,7 +404,7 @@ export function layoutSections(
       addParagraph(
         lines,
         section.id,
-        index + 1,
+        section.sourceParagraphIndexes?.[index] ?? index + 1,
         paragraph.text,
         mergeParagraphFormat(template, section, paragraph.format),
         {},

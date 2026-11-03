@@ -1,18 +1,24 @@
 # 165/166 新稿的緊湊段落
 
+結構化版新增 `layoutOptions.compactPaper`：MCP 新建165/166預設true。無特殊格式時，短heading與首段合併渲染，移除空文字段；長標題保留自然獨立折行，空正文不隱藏。原始heading/text/paragraphs仍保存，不做資料清洗；`compactPaper:false`可保留獨立標題及空段。歷史答案沒有此旗標時維持原樣，general即使帶true也不套用。顯式非預設段距、縮排、強調或heading格式優先，整節保持原格式；明設0／left等預設值不會誤認為特殊意圖。
+
+此版與下述原先「只改指引」的驗證不同，必須另跑 `scripts/structured-paper-regression.ts`，其before/after傳入完全相同的heading＋text，只有緊湊旗標不同。儲存透過既有layoutExtensions封裝保留舊strict-reader可讀性；舊版忽略新選項的版面效果，不能宣稱回退版本仍有相同排版。
+
+短標題先以顯示寬度 `columns-2` 篩選，再以正式字型與相同Word預留寬度確認「標題＋冒號＋第一個正文grapheme」放得下；沒有位置就保留獨立標題，實際文字仍自然折行。緊湊是可逆的渲染選項，不會從儲存原文刪字。編輯時從read_answer取得原始heading／text，分別修改；不要把合併後的整行當作原始text或跨欄位find。舊答案只有在明確以update_answer_info帶expectedVersion開啟compactPaper後才改變呈現。原模板不支援的格式仍按原規則拒絕，不因緊湊而偷偷換字型或取消格式。
+
 新稿的短標題可與首句同段，例如：
 
 ```json
 {"id":"intro","text":"壹、前言：依職務需求配置權限，並保留複核程序。"}
 ```
 
-不要同時另設 `heading`，因為它依既有契約獨占一行。正文以單一換行分段，不放首尾空行或空白段；不需段距就不要指定 `spaceBeforeLines`／`spaceAfterLines`。不同小問仍各有可辨識編號與穩定 section id，不為省行刪除必要論證。
+此手動同列範例的text已含標題，不要再重複指定heading。結構化新稿可改傳獨立heading與不含標題的text，由compactPaper渲染同列；需要獨立標題則明設false。正文以單一換行分段，不放首尾空行或空白段；不需段距就不要指定 `spaceBeforeLines`／`spaceAfterLines`。不同小問仍各有可辨識編號與穩定 section id，不為省行刪除必要論證。
 
 `read_answer`／`render_answer_sheet` 有逐行資料；配合 `check_layout` 的總行數核對。空文字段、顯式段距和 `keepHeadingWithNext` 跨頁補位是不同來源；短尾行不是空行。模板預設段前、段後都是零，本輪未發現引擎自行在一般段落間多插一空行的證據。
 
-這是呼叫者指引，沒有新增自動轉換或模型。`draft_answer`、`compress_answer` 的實際 `prompts/get`、共用複查指令，以及原生客戶端可讀的 `load_exam_paper.writingGuide.paperLayout` 都能取得規則與同列範例。指引版本 `essay-guide-20261103.1`。生成者仍須採用規則、寫入後核算，不能把提示詞修改等同每次模型都會遵守。
+指引本身不呼叫模型；結構化緊湊由共用版面引擎執行。`draft_answer`、`compress_answer` 的實際 `prompts/get`、共用複查指令，以及原生客戶端可讀的 `load_exam_paper.writingGuide.paperLayout` 都能取得規則與同列範例。指引版本 `essay-guide-20261103.2`。生成者仍須採用規則、寫入後核算，不能把提示詞修改等同每次模型都會遵守。
 
-沒有改模板、字型、格線、版面引擎、儲存 schema、既有 API 或舊答案。使用者明確要求的獨立標題／留白及其他模板保持原樣；不為省一行全域自動合併段落。
+沒有改模板、字型、格線或舊答案。結構化版本增加可選版面旗標及渲染分支；原先指引版沒有引擎改動。新建預設以外不全域自動合併段落。
 
 ## 重複驗證
 
