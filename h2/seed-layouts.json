@@ -22,9 +22,9 @@
     "answers": 1,
     "templateId": "police_information_essay_165",
     "fits": false,
-    "totalLines": 88,
+    "totalLines": 59,
     "capacity": 44,
-    "intent": "far over: two capacities"
+    "intent": "over by 15: four distinct sections, one restated point each"
   },
   {
     "seed": "paper165",
@@ -94,9 +94,9 @@
     "answers": 1,
     "templateId": "police_information_essay_165",
     "fits": false,
-    "totalLines": 46,
+    "totalLines": 45,
     "capacity": 44,
-    "intent": "tight: two lines over"
+    "intent": "tight: one line over, distinct content"
   },
   {
     "seed": "t-resume-exam",

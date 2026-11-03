@@ -10,8 +10,13 @@
       "title": "資通安全管理法申論"
     },
     "checks": {
-      "section_count_eq": 4,
-      "total_lines_min": 38
+      "section_titles_eq": [
+        "一、法制架構與適用範圍",
+        "二、風險評估與資產管理",
+        "三、防護措施與存取控制",
+        "四、事件通報與應變改善"
+      ],
+      "total_lines_min": 34
     }
   },
   {

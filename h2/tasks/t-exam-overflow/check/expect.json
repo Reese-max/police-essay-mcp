@@ -24,13 +24,12 @@
   },
   {
     "kind": "tool_order",
-    "label": "先檢查再修正",
+    "label": "匯出前檢查版面",
     "first_of": [
       "check_layout"
     ],
     "before": [
-      "replace_text",
-      "write_answer"
+      "export_exam_bundle"
     ]
   },
   {

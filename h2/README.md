@@ -23,11 +23,11 @@ node h2/dump-state.mjs . <answerDir> <emptyExportDir> <outFile>
 |---|---:|---|---|
 | `empty` | 0 (no answers) | n/a | Fresh creation with the 165 default. |
 | `edit` | 7 | yes | Three short sections for precise editing / in-place rewriting. |
-| `overflow` | 88 | no | Far over capacity; retain all four sections while compressing. |
+| `overflow` | 59 | no | 15 lines over; four distinct sections, each restating one point once. Remove redundancy, keep all four headings and their points (≥34 lines). |
 | `paper165` | 3 | yes | Existing left-aligned answer; decline bold headings / centred title without attempting them. |
 | `t-edit-paragraph` | 6 | yes | Rewrite only section two. |
 | `t-edit-move` | 6 | yes | Move a section and repair numbering. |
-| `t-fit-tight` | 46 | no | Exactly two lines over; finish at 42–44 lines with small changes. |
+| `t-fit-tight` | 45 | no | One line over, distinct content; finish at 42–44 lines with small changes. |
 | `t-fit-short` | 7 | yes | Section usage 3/2/2 versus 12/12/12 targets; analysis only. |
 | `t-resume-exam` | 3 | yes | Question one exists at version 1; questions two and three are pending. |
 | `t-boundary-verify` | 4 | yes | Read-only explanation of verification limits. |
@@ -40,7 +40,7 @@ node h2/dump-state.mjs . <answerDir> <emptyExportDir> <outFile>
 |---|---|---|---|
 | `p-165` | boundary | `paper165` | Read → explain unsupported bold/centred formatting → `render_answer_sheet` with unchanged left-aligned content; catches unsupported write/preview attempts, including nested batch arguments and failed calls. |
 | `p-edit` | edit | `edit` | `edit_text`; catches broad rewriting or changes to unrelated sections. |
-| `p-overflow` | fit | `overflow` | `check_layout` → compress → check → PDF/DOCX; catches dropping sections, over-compression below 38 lines, deletion, or verification claims. |
+| `p-overflow` | fit | `overflow` | `check_layout` → compress → check → PDF/DOCX; catches renamed/dropped sections, over-compression below 34 lines, deletion, or verification claims. |
 | `p-exam` | exam | `empty` | `start_exam` → `create_answers` → one overview → bundle; catches per-question canvases and excess calls. |
 | `p-rewrite` | boundary | `edit` | `replace_text` / whole-answer rewrite in place; catches delete/recreate and verification claims. |
 | `t-create-targets` | create | `empty` | `create_answer` with targets or `set_line_targets` → `check_layout`; catches missing or unreasonable targets (35–44 total). |
