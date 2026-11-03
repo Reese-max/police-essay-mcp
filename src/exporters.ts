@@ -313,7 +313,8 @@ function drawGridLine(
   y: number,
   columnWidthPt: number,
   availableWidthPt: number,
-): number {
+  syntheticObliquePt = 0,
+): { overflow: number; slantRisk: number } {
   const characters = splitGraphemes(line.text);
   const positions: Array<{ text: string; x: number; columnX: number }> = [];
   let currentColumn = startColumn;
@@ -330,7 +331,7 @@ function drawGridLine(
     currentColumn += characterDisplayWidth(character, line.format.tabSize, currentColumn);
   }
   const last = positions.at(-1);
-  if (!last) return 0;
+  if (!last) return { overflow: 0, slantRisk: 0 };
   const requiredWidth = inkEnd;
   // When the complete run cannot fit at this font size, preserve its legacy column
   // positions and warn. Expanding it would push additional glyphs off the page.
@@ -345,10 +346,14 @@ function drawGridLine(
   positions.forEach((part, index) => {
     const offset = alignment === "right" ? extra : gapCount > 0 ? extra * gaps / gapCount : 0;
     // No width or height: lineBreak:false must reach PDFKit's non-wrapping path.
-    document.text(part.text, baseX + part.x + offset, y, { lineBreak: false });
+    document.text(part.text, baseX + part.x + offset, y, { lineBreak: false, oblique: syntheticObliquePt ? 12 : false });
     if (index < positions.length - 1 && (distributed || (justify && part.text === " "))) gaps += 1;
   });
-  return Math.max(0, requiredWidth - availableWidthPt);
+  // A conservative ink overhang allowance; preserve advances/wrapping and report risk.
+  const slantOverhang = syntheticObliquePt * Math.tan(12 * Math.PI / 180);
+  const alignedWidth = alignment === "right" || distributed || justify ? availableWidthPt : requiredWidth;
+  return { overflow: Math.max(0, requiredWidth - availableWidthPt),
+    slantRisk: syntheticObliquePt ? Math.max(0, alignedWidth + slantOverhang - availableWidthPt) : 0 };
 }
 
 function drawPdfPage(
@@ -397,7 +402,9 @@ function drawPdfPage(
       // This profile is measured with the actual font and forbids tabs/alignment changes.
       document.text(line.text, x, y, { lineBreak: false });
     } else {
-      const overflow = drawGridLine(document, line, indent, x, y, gridWidth, width);
+      const syntheticOblique = Boolean(regularFont) && line.format.italic && !italicFont && process.env.ESSAY_MCP_PDF_SYNTHETIC_ITALIC === "true";
+      const { overflow, slantRisk } = drawGridLine(document, line, indent, x, y, gridWidth, width, syntheticOblique ? template.fontSizePt : 0);
+      if (slantRisk > 0.1) warnings.push(`第 ${outputPage} 頁第 ${row + 1} 行合成斜體筆畫可能超出文字範圍（保守預估 ${slantRisk.toFixed(2)} pt）；未改換行，需視覺驗收。`);
       if (overflow > 0.1) warnings.push(`第 ${outputPage} 頁第 ${row + 1} 行實際字形在不重疊下所需寬度超出可用格寬 ${overflow.toFixed(2)} pt；欄數符合不代表實際字形符合，請明確換行後重新匯出。`);
     }
   }
@@ -477,7 +484,11 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
 
       if (italicFontPath) {
         try {
-          italicFont = bundleFont(italicFontPath).key;
+          const candidate = bundleFont(italicFontPath, preferredCjkTcFace(italicFontPath));
+          const face = candidate.face as { hasGlyphForCodePoint: (code: number) => boolean };
+          const chars = report.lines.filter(line => line.format.italic).flatMap(line => [...line.text]).filter(c => !/\s/u.test(c));
+          if (chars.some(c => !face.hasGlyphForCodePoint(c.codePointAt(0)!))) throw new Error("Italic font lacks required glyphs");
+          italicFont = candidate.key;
         } catch {
           italicFontPath = undefined;
         }
@@ -494,6 +505,8 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
       if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
       if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
         warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
+        if (!template.paperProfile && process.env.ESSAY_MCP_PDF_SYNTHETIC_ITALIC === "true")
+          warnings.push("已明確啟用合成斜體：以原字型傾斜 12 度，並非真正 italic 字型；未改字級、換行或 DOCX，邊界需視覺驗收。");
       }
       warnings.forEach((warning) => allWarnings.add(warning));
       fonts.add(fontPath ?? "Helvetica");
