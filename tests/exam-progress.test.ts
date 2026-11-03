@@ -451,6 +451,10 @@ for (const cloud of [false, true]) {
       assert.deepEqual(many.exams.map((e: any) => e.examId), ["exam_new", "exam_old"]);
       assert.equal(many.examId, undefined); assert.match(many.summary, /exam_new/);
       assert.equal(data(await call(h.client, "get_exam_progress", { examId: "exam_old" })).examId, "exam_old");
+      for (let i = 10; i < 20; i++) await store.saveExam({ ...exam(), id: `exam_bulk${i}`, title: `考試${i}`, updatedAt: `2026-03-${i}T00:00:00.000Z` });
+      const capped = data(await call(h.client, "get_exam_progress", {}));
+      assert.equal(capped.total, 12); assert.equal(capped.exams.length, 10);
+      assert.equal(capped.exams[0].examId, "exam_bulk19"); assert.match(capped.summary, /共 12 份.*最新 10 份/);
     } finally { await h.close(); }
   }));
 }

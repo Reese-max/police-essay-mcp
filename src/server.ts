@@ -868,11 +868,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const plans = [...await store.listExams()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
       if (plans.length === 1) examId = plans[0].id;
       else {
-        const exams = plans.map(p => ({ examId: p.id, title: p.title, questionCount: p.questions.length, updatedAt: p.updatedAt }));
-        const summary = exams.length ? [`找到 ${exams.length} 份考試計畫（新到舊），請以 examId 再呼叫一次：`,
+        const exams = plans.slice(0, 10).map(p => ({ examId: p.id, title: p.title, questionCount: p.questions.length, updatedAt: p.updatedAt }));
+        const summary = exams.length ? [`共 ${plans.length} 份考試計畫，列出最新 ${exams.length} 份（新到舊），請以 examId 再呼叫一次：`,
           ...exams.map(e => `・${e.title}（${e.examId}，${e.questionCount} 題，更新於 ${e.updatedAt}）`)].join("\n")
           : "目前沒有考試計畫；請改用 list_answers 查看已存答案。";
-        return { structuredContent: { exams, summary }, content: textContent(summary) };
+        return { structuredContent: { exams, total: plans.length, summary }, content: textContent(summary) };
       }
     }
     const progress = await examProgress(store, examId);
