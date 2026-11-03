@@ -122,7 +122,8 @@ finally{
         for(const p of await store.listExams()){assert.equal(p.title,marker);await reject('delete_exam',{examId:p.id,expectedVersion:p.version+100},'version_conflict');await call('delete_exam',{examId:p.id,expectedVersion:p.version});}
         assert.equal((await store.listAnswers()).length,0);assert.equal((await store.listExams()).length,0);log.cleanup='passed';
         log.exportCleanup=[];
-        for(const uri of log.exportUris??[]){await assert.rejects(client.readResource({uri}));log.exportCleanup.push({uri,status:'passed'});}
+        for(const uri of log.exportUris??[]){await assert.rejects(client.readResource({uri}),/Export artifact not found/);log.exportCleanup.push({uri,status:'passed'});}
+        assert.equal((await call('list_answers')).answers.length,0,'MCP must remain reachable after resource revocation');
     }catch(e){log.cleanup='failed';log.cleanupError=String(e);failure??=e;}
     log.matrix=(log.tools??[]).map((t:any)=>({name:t.name,success:passed.has(t.name)?'passed':log.cases.some((c:any)=>c.name===t.name&&c.kind==='success'&&c.status==='failed')?'failed':'not_tested',negative:log.cases.filter((c:any)=>c.name===t.name&&c.kind!=='success')}));
     if(log.matrix.some((r:any)=>r.success!=='passed'))failure??=Error('not all advertised tools have positive acceptance evidence');
