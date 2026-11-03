@@ -435,3 +435,26 @@ test("CloudStore skips corrupt plans in listing and transactional answer deletio
     assert.equal(firestore.documents.get(corruptPath)?.value.questions, "corrupt");
   } finally { await h.close(); }
 });
+
+for (const cloud of [false, true]) {
+  test(`${cloud ? "CloudStore" : "FileStore"} get_exam_progress without examId finds saved exams`, async () => fixture(cloud, async store => {
+    const h = await connect(store);
+    try {
+      const none = data(await call(h.client, "get_exam_progress", {}));
+      assert.deepEqual(none.exams, []); assert.match(none.summary, /沒有考試計畫/);
+      await store.saveExam({ ...exam(), id: "exam_old", title: "舊考試", questions: [{ questionNo: 1, question: "資通安全風險如何管理？" }], updatedAt: "2026-01-01T00:00:00.000Z" });
+      const one = data(await call(h.client, "get_exam_progress", {}));
+      assert.equal(one.examId, "exam_old"); assert.equal(one.nextStep.action, "create_answer");
+      assert.equal(one.questions[0].question, "資通安全風險如何管理？"); assert.match(one.summary, /計畫中的題目：第1題「資通安全風險如何管理？」/);
+      await store.saveExam({ ...exam(), id: "exam_new", title: "新考試", updatedAt: "2026-02-01T00:00:00.000Z" });
+      const many = data(await call(h.client, "get_exam_progress", {}));
+      assert.deepEqual(many.exams.map((e: any) => e.examId), ["exam_new", "exam_old"]);
+      assert.equal(many.examId, undefined); assert.match(many.summary, /exam_new/);
+      assert.equal(data(await call(h.client, "get_exam_progress", { examId: "exam_old" })).examId, "exam_old");
+      for (let i = 10; i < 20; i++) await store.saveExam({ ...exam(), id: `exam_bulk${i}`, title: `考試${i}`, updatedAt: `2026-03-${i}T00:00:00.000Z` });
+      const capped = data(await call(h.client, "get_exam_progress", {}));
+      assert.equal(capped.total, 12); assert.equal(capped.exams.length, 10);
+      assert.equal(capped.exams[0].examId, "exam_bulk19"); assert.match(capped.summary, /共 12 份.*最新 10 份/);
+    } finally { await h.close(); }
+  }));
+}
