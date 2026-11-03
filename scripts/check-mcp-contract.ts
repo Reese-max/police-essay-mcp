@@ -121,7 +121,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "create_answer": {
     "before": "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
-    "after": "Create an editable answer. examId resumes existing planned questions; use idempotencyKey for retries."
+    "after": "Create an editable answer. Omit templateId for the default 165 paper; pass one only when the user picks a paper. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4. examId resumes existing planned questions; use idempotencyKey for retries."
   },
   "delete_text": {
     "before": "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
@@ -129,7 +129,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "format_section": {
     "before": "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
-    "after": "Change section/paragraph formatting without rewriting content."
+    "after": "Change section/paragraph formatting without rewriting content. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4."
   },
   "insert_text": {
     "before": "Use this when the user wants to add a new section at a precise position in an existing answer; the complete answer is reflowed afterward.",
@@ -141,7 +141,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "list_templates": {
     "before": "Use this when the user wants to inspect available essay answer-sheet templates before creating an answer.",
-    "after": "List available answer-sheet templates."
+    "after": "List templates only when choosing a non-default paper (ids are paper specs, not subject tags); omitting templateId selects the 165 original paper."
   },
   "load_exam_paper": {
     "before": "Use this when the user wants to load a template or reopen an existing essay answer with its calculated grid layout.",
@@ -153,15 +153,15 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "render_answer_sheet": {
     "before": "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
-    "after": "Show one answer canvas with authoritative layout and editing controls."
+    "after": "Show one answer canvas with authoritative layout and editing controls; the client renders it, so the default result's line usage and status suffice — omit responseDetail=full unless per-line data is needed."
   },
   "replace_text": {
     "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
-    "after": "Replace one section's text or paragraphs, preserving other sections."
+    "after": "Replace one section's text or paragraphs; its heading and all other sections stay untouched."
   },
   "write_answer": {
     "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
-    "after": "Replace all sections; expectedVersion protects edits. Prefer edit_text for phrases."
+    "after": "Replace all sections; expectedVersion protects edits. Prefer edit_text for phrases. When compressing to fit capacity, keep existing headings, numbering and each question's block; merge only verbatim-identical or same-point restatements."
   }
 };
 export function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T, baseline: ContractTool[]): T {
