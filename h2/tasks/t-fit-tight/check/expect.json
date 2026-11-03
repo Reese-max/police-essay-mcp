@@ -1,0 +1,62 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "保留原答案",
+    "eq": 1
+  },
+  {
+    "kind": "all_fit",
+    "label": "符合容量"
+  },
+  {
+    "kind": "answer_where",
+    "label": "修正後接近容量",
+    "match": {
+      "title": "數位鑑識流程"
+    },
+    "checks": {
+      "section_count_eq": 4,
+      "total_lines_min": 42,
+      "total_lines_max": 44
+    }
+  },
+  {
+    "kind": "tool_called",
+    "label": "檢查版面",
+    "tool": "check_layout",
+    "min": 1
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未刪除答案",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "文字微調帶版本",
+    "tools": [
+      "edit_text",
+      "replace_text",
+      "format_section"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "小幅修正",
+    "n": 10
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "不整份重寫以修正兩行超頁",
+    "tool": "write_answer"
+  }
+]

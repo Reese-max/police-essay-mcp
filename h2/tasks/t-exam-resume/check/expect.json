@@ -1,0 +1,43 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "既有答案保留並補齊",
+    "eq": 3
+  },
+  {
+    "kind": "exams_count",
+    "label": "沿用既有計畫",
+    "eq": 1
+  },
+  {
+    "kind": "first_tool",
+    "label": "先讀取進度",
+    "tool": "get_exam_progress"
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "不重建考試計畫",
+    "tool": "start_exam"
+  },
+  {
+    "kind": "tool_called",
+    "label": "建立未作答答案",
+    "tool": "create_answers",
+    "min": 1
+  },
+  {
+    "kind": "tool_called",
+    "label": "匯出合輯",
+    "tool": "export_exam_bundle",
+    "min": 1,
+    "max": 2
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

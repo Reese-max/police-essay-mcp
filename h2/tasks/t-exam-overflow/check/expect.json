@@ -1,0 +1,80 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "完成三題",
+    "eq": 3
+  },
+  {
+    "kind": "all_fit",
+    "label": "三題皆合版"
+  },
+  {
+    "kind": "tool_called",
+    "label": "逐題檢查",
+    "tool": "check_layout",
+    "min": 3
+  },
+  {
+    "kind": "tool_called_any",
+    "label": "修正超頁答案",
+    "tools": [
+      "replace_text",
+      "write_answer"
+    ]
+  },
+  {
+    "kind": "tool_order",
+    "label": "匯出前檢查版面",
+    "first_of": [
+      "check_layout"
+    ],
+    "before": [
+      "export_exam_bundle"
+    ]
+  },
+  {
+    "kind": "tool_order",
+    "label": "修正後才匯出",
+    "first_of": [
+      "replace_text",
+      "write_answer"
+    ],
+    "before": [
+      "export_exam_bundle"
+    ]
+  },
+  {
+    "kind": "tool_called",
+    "label": "匯出合輯",
+    "tool": "export_exam_bundle",
+    "min": 1,
+    "max": 2
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未刪除答案",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "修正內容帶版本",
+    "tools": [
+      "replace_text",
+      "write_answer"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "呼叫有界",
+    "n": 18
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

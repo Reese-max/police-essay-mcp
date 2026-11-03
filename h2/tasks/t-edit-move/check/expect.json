@@ -1,0 +1,56 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "原答案保留",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "搬移並連續編號",
+    "match": {
+      "title": "個資事故應變順序"
+    },
+    "checks": {
+      "version_min": 2,
+      "section_titles_eq": [
+        "一、控制",
+        "二、通報",
+        "三、檢討"
+      ]
+    }
+  },
+  {
+    "kind": "tool_called",
+    "label": "搬移章節",
+    "tool": "move_section",
+    "min": 1
+  },
+  {
+    "kind": "tool_called",
+    "label": "重新編號",
+    "tool": "renumber_items",
+    "min": 1
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "寫入帶版本",
+    "tools": [
+      "move_section",
+      "renumber_items"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "呼叫精簡",
+    "n": 10
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

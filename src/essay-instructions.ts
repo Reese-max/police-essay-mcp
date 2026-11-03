@@ -8,15 +8,15 @@ export const DRAFT_INSTRUCTION = `先審題擬綱：逐小問列指令動詞、�
 重要主張有依據或機制、題意應用及必要限制，不每段硬套四句或硬塞案例。標題呈現論點；先完成必要論證再壓縮，不為湊行數加套話。禁止捏造法條、研究、數字、頁碼或官方採點；不自稱90分或保證高分。
 以sections及lineTargets規劃，create_answer或write_answer寫入後check_layout；超出實際目標或模板容量時取得compress_answer提示詞。參考essay://instructions/workflow或load_exam_paper.writingGuide的自製示例，不照抄結論；未取得資源不可假稱已讀。`;
 export const COMPRESS_INSTRUCTION = `先read_answer取得全文與版本，按原題逐小問核對；先補漏答與斷裂推理，再壓縮。check_layout、lineTargets、compressionHints及required/priority/compressible只是編輯線索，不取代題意。
-依序刪除套話、重複前言結論、同義反覆與離題補充，再合併重複主張、縮句。保護必要要件、否定與例外、比較維度、推理、原因對策對應、事實涵攝及必要限制，不只留名詞或犧牲另一小問。
-每次修改帶expectedVersion，對照前後重查小問、指令動詞、事實/推論界線及語義，再check_layout。不能為塞入工具容量而改字級或版面；必要內容無法兼顧時揭露缺口與取捨。fits=true不代表內容通過。
+依序刪除套話、重複前言結論、同義反覆與離題補充，再合併重複主張、縮句。判斷重複以要點為準：逐字相同或換句話說同一點才併；用字相近但要件、條件或對象不同者分別保留。壓縮保留原有標題、編號與各小問對應區塊，不重新命名或重組結構。保護必要要件、否定與例外、比較維度、推理、原因對策對應、事實涵攝及必要限制，不只留名詞或犧牲另一小問。
+每次修改帶expectedVersion，對照前後重查小問、指令動詞、事實/推論界線及語義，再check_layout。容量是上限不是配額：壓到fits=true即停止刪減，不為填滿版面擴寫；使用者另設的節次目標與審查仍須照常處理；不能為塞入工具容量而改字級或版面；必要內容無法兼顧時揭露缺口與取捨。fits=true不代表內容通過。
 修改使review stale；實際重核後以最新expectedVersion重存set_answer_review，再review_answer確認freshness=current及pending，不複製舊checked。`;
 export const REVIEW_REASONING_INSTRUCTION = `${APPLICABILITY_INSTRUCTION}
 ${COMPACT_PAPER_INSTRUCTION}
 ${MATERIAL_BOUNDARY_INSTRUCTION}
 ${TASK_BOUNDARY_INSTRUCTION}
-依原題核對小問/動詞是否完整、標題及核心篇幅是否對題；比較成對、原因有機制、對策可執行、案例有事實要件連結。來源以sourceIds對應小問；配分只有明確可相加才設additive，包含關係不明用unknown。mapped、fits、no_structural_issues不是內容通過；不能以關鍵字出現代替語義核對。
-區分已核官方材料、其他資料與模型推論；未取原文標未核，舊教材法律例不能當現法，不捏造法條或官方採點。required/supplemental來源分開，locator不等於核證；掃描逐頁標content/blank/unreadable/missing，缺頁或空白不算完整。
+先查答案是否存有原題——有題才依原題核對小問/動詞是否完整、標題及核心篇幅是否對題；無題可對時明說完整性無從判定，只逐主張核對、不足處標為依題材的條件判斷。比較成對、原因有機制、對策可執行、案例有事實要件連結。來源以sourceIds對應小問；配分只有明確可相加才設additive，包含關係不明用unknown。mapped、fits、no_structural_issues不是內容通過；不能以關鍵字出現代替語義核對。
+區分已核官方材料、其他資料與模型推論；未取原文標未核，舊教材法律例不能當現法，不捏造法條或官方採點；條號款目以實際取回的原文為據，未核到條號只引法規名稱。required/supplemental來源分開，locator不等於核證；掃描逐頁標content/blank/unreadable/missing，缺頁或空白不算完整。
 讀essay://schemas/review-plan，將對應requirementId、sectionIds、quote原句/位置、problem、suggestedRevision、evidenceNeeded放入既有review.note；只能保存呼叫者真正核對的判斷，無法定位標待定位。清單完整性、語義、來源與逐頁視覺須各自實際核對才記錄review。未解決用rejected，未核則省略；實際解決才checked，並記method/reviewer/checkedAt與具體note。修改後須重新核對，再以最新expectedVersion保存set_answer_review並呼叫review_answer，不只刷新版本或複製舊證據。
 freshness=current只是紀錄對應現況；semantic/sourceVerification=not_checked，review_recorded不是軟體查證或評分，不保證高分。匯出前處理或揭露pending，既有done合約不變。無prompts/resources的客戶端可由load_exam_paper讀取writingGuide。`;
 
