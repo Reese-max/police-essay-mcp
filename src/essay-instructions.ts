@@ -1,4 +1,5 @@
 /** Caller instructions only; no model, source lookup or automatic grading. */
+export const COMPACT_PAPER_INSTRUCTION = `165/166稿紙新稿預設緊湊排版：不為前言、本文、結論等功能標籤另占一行；必要短標題與首句同段，例如「壹、前言：依題示情況……」。sections[].heading會獨占一行；要同列就省略heading，把標題及首句一起放sections[].text或paragraphs[].text，不在兩者間插入換行。段落只以單一換行分隔，不加空白段、首尾空行或非必要spaceBeforeLines/spaceAfterLines；長標題自然折行不是空白。小題編號及獨立論點仍須清楚，不把不同小問壓成一段。先以read_answer或render_answer_sheet取得逐行資料，配合check_layout核對空文字、isSpacer及isPadding，區分輸入空段、段距與keepHeadingWithNext跨頁補位，不能把每個短尾行當錯。只對本次新稿或明確同意的修改採用；既有答案、明確留白／獨立標題偏好與其他模板保持原設定，不自動重寫。PDF與DOCX都須依同一版答案核對，不能靠縮字級、刪論證或改格線填頁。`;
 export const APPLICABILITY_INSTRUCTION = `先區分三層：本次考試與作答方式真正適用的硬性規定、教學建議、工具容量。先確認規定適用範圍，未提供就標待核；線上閱卷紙本規則不能套用所有考試。兩頁44行只是165/166模板容量，不是國考普遍規則；其他模板以回傳設定為準。前言本文結論可選，不強制每題同時定義、分類、舉例及評析。`;
 export const MATERIAL_BOUNDARY_INSTRUCTION = `先列材料已知事實，再分開合理推論、待核原因與缺少資訊；不能把未記載當成不存在，也不能只因不同編號就斷言沒有共同規則。推論須指出依據與限制，不補入題目沒有的事實。涵攝要將具體事實連結要件或判斷標準，不是重抄題目；只有真正相關且有依據的爭議才列不同見解。`;
 export const TASK_BOUNDARY_INSTRUCTION = `先列硬性數量、資源與範圍限制，按可獨立實施的措施或功能逐項計數；同一標題包含多項也分別計數，不得打包規避上限。改善方案要承認既有控制已能發揮的作用，再指出缺口，不因不足就否定原有紀錄或控制的有限用途。保持題示動作、對象、強度與規模，不把分類、提示或抽樣擴張成更強或全面措施；另提更強方案須明標建議及所需授權，不能當成題示事實。技術紀錄只支持可觀察事件或有依據的帳號關聯；區分帳號歸屬、設備使用與實際操作者，不保證已追到本人。`;
@@ -11,6 +12,7 @@ export const COMPRESS_INSTRUCTION = `先read_answer取得全文與版本，按�
 每次修改帶expectedVersion，對照前後重查小問、指令動詞、事實/推論界線及語義，再check_layout。不能為塞入工具容量而改字級或版面；必要內容無法兼顧時揭露缺口與取捨。fits=true不代表內容通過。
 修改使review stale；實際重核後以最新expectedVersion重存set_answer_review，再review_answer確認freshness=current及pending，不複製舊checked。`;
 export const REVIEW_REASONING_INSTRUCTION = `${APPLICABILITY_INSTRUCTION}
+${COMPACT_PAPER_INSTRUCTION}
 ${MATERIAL_BOUNDARY_INSTRUCTION}
 ${TASK_BOUNDARY_INSTRUCTION}
 依原題核對小問/動詞是否完整、標題及核心篇幅是否對題；比較成對、原因有機制、對策可執行、案例有事實要件連結。來源以sourceIds對應小問；配分只有明確可相加才設additive，包含關係不明用unknown。mapped、fits、no_structural_issues不是內容通過；不能以關鍵字出現代替語義核對。
