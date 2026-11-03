@@ -30,7 +30,8 @@
     "label": "匯出合輯",
     "tool": "export_exam_bundle",
     "min": 1,
-    "max": 2
+    "max": 2,
+    "success": true
   },
   {
     "kind": "all_templates",
@@ -38,6 +39,23 @@
     "allowed": [
       "police_information_essay_165",
       "police_information_essay_166"
+    ]
+  },
+  {
+    "kind": "exam_complete",
+    "label": "Existing plan completed with current PDF and DOCX artifacts",
+    "examId": "exam_resume-h2-2026",
+    "questionNos": [
+      1,
+      2,
+      3
+    ],
+    "retained": {
+      "1": "ans_h2-t-resume-exam"
+    },
+    "formats": [
+      "pdf",
+      "docx"
     ]
   }
 ]
