@@ -4,6 +4,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import JSZip from 'jszip';
+import {promises as journalFs} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {pathToFileURL} from 'node:url';
 import { Scope, verifyExports, type Rpc } from '../scripts/e2e-support.js';
 const uri = 'essay://exports/test';
 const mime = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', txt: 'text/plain' };
@@ -196,6 +199,84 @@ test('E2E preflight accepts only the actual CloudStore not-found contract', asyn
             assert.deepEqual(denied.deleted, []);
         } finally { await denied.dispose(); }
     }
+});
+
+test('E2E interrupted receipt write preserves the last-good armed journal', async () => {
+    const f=await fixture();const write=journalFs.writeFile;
+    try {
+        await f.scope.init(f.rpc);f.seed(0);
+        const before=await readFile(f.scope.file,'utf8');
+        journalFs.writeFile=(async(file:any,_data:any,options:any)=>{await write(file,'{"partial":',options);throw Error('injected interrupted write');}) as typeof write;
+        await assert.rejects(f.scope.save(),/injected interrupted write/);
+        journalFs.writeFile=write;
+        assert.equal(await readFile(f.scope.file,'utf8'),before);
+    }finally{journalFs.writeFile=write;await f.dispose();}
+});
+
+test('E2E abrupt process exit during journal publication remains recoverable', async t => {
+    const previous=process.env.E2E_RUN_ID;process.env.E2E_RUN_ID='fixture-run-1234';
+    try {for(const phase of ['partial-write','before-rename','after-rename'])await t.test(phase,async()=>{
+        const f=await fixture();try {
+            await f.scope.init(f.rpc);f.seed(0);f.seedExam([f.scope.identity.answers[0].id]);
+            f.answers.set('unrelated',{id:'unrelated',title:'User',version:1});
+            const before=await readFile(f.scope.file,'utf8');
+            const program=`import {promises as fs} from 'node:fs';
+              import {Scope} from ${JSON.stringify(pathToFileURL(path.resolve('scripts/e2e-support.ts')).href)};
+              const s=new Scope('exam','http://localhost',${JSON.stringify(f.scope.directory)},'fixture-run-1234');
+              Object.assign(s.receipt,JSON.parse(await fs.readFile(s.file,'utf8')));s.receipt.publication=${JSON.stringify(phase)};
+              const write=fs.writeFile,rename=fs.rename;
+              if(${JSON.stringify(phase)}==='partial-write')fs.writeFile=async(file,data,opts)=>{await write(file,'{"broken":',opts);process.exit(77)};
+              else fs.rename=async(a,b)=>{if(${JSON.stringify(phase)}==='before-rename')process.exit(77);await rename(a,b);process.exit(77)};
+              await s.save();process.exit(99);`;
+            const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30000,env:{...process.env,GOMAXPROCS:'2'}});
+            assert.ifError(child.error);assert.equal(child.status,77,child.stderr);
+            const saved=await readFile(f.scope.file,'utf8');
+            if(phase==='after-rename')assert.equal(JSON.parse(saved).publication,phase);else assert.equal(saved,before);
+            await new Scope('exam','http://localhost',f.scope.directory).recover(f.rpc);
+            assert.deepEqual(f.deleted,[f.scope.identity.answers[0].id,f.scope.identity.examId]);
+            assert.deepEqual([...f.answers.keys()],['unrelated']);
+        }finally{await f.dispose();}
+    });}finally{if(previous===undefined)delete process.env.E2E_RUN_ID;else process.env.E2E_RUN_ID=previous;}
+});
+
+test('E2E journal handles Windows locks and preserves last-good on permanent failures',async t=>{
+    for(const code of ['EACCES','EPERM','EBUSY','EIO'])await t.test(code,async()=>{
+        const f=await fixture();const rename=journalFs.rename;
+        try{
+            await f.scope.init(f.rpc);const before=await readFile(f.scope.file,'utf8');let attempts=0;
+            journalFs.rename=async()=>{attempts++;assert.equal(await readFile(f.scope.file,'utf8'),before);throw Object.assign(Error('injected rename failure'),{code});};
+            await assert.rejects(f.scope.save(),/injected rename failure/);
+            assert.equal(attempts,code==='EIO'?1:9);assert.equal(await readFile(f.scope.file,'utf8'),before);
+            assert.deepEqual(await journalFs.readdir(f.scope.directory),[path.basename(f.scope.file)]);
+        }finally{journalFs.rename=rename;await f.dispose();}
+    });
+    const f=await fixture();const rename=journalFs.rename;
+    try{
+        await f.scope.init(f.rpc);let attempts=0;f.scope.receipt.completed=true;
+        journalFs.rename=async(a,b)=>{if(attempts++<3)throw Object.assign(Error('brief lock'),{code:['EACCES','EPERM','EBUSY'][attempts-1]});return rename(a,b);};
+        await f.scope.save();assert.equal(attempts,4);assert.equal(JSON.parse(await readFile(f.scope.file,'utf8')).completed,true);
+    }finally{journalFs.rename=rename;await f.dispose();}
+});
+
+test('E2E journal sync failure preserves last-good and closes its temporary handle',async()=>{
+    const f=await fixture();const open=journalFs.open;
+    try{
+        await f.scope.init(f.rpc);const before=await readFile(f.scope.file,'utf8');
+        journalFs.open=(async(...args:Parameters<typeof open>)=>{const handle=await open(...args);handle.sync=async()=>{throw Error('injected sync failure');};return handle;}) as typeof open;
+        await assert.rejects(f.scope.save(),/injected sync failure/);
+        assert.equal(await readFile(f.scope.file,'utf8'),before);
+        assert.deepEqual(await journalFs.readdir(f.scope.directory),[path.basename(f.scope.file)]);
+    }finally{journalFs.open=open;await f.dispose();}
+});
+
+test('E2E journal never removes a preexisting temporary-name collision',async()=>{
+    const f=await fixture();const write=journalFs.writeFile;let existing='';
+    try{
+        await f.scope.init(f.rpc);const before=await readFile(f.scope.file,'utf8');
+        journalFs.writeFile=(async(file:any)=>{existing=String(file);await write(file,'preexisting',{flag:'wx'});throw Object.assign(Error('collision'),{code:'EEXIST'});}) as typeof write;
+        await assert.rejects(f.scope.save(),/collision/);
+        assert.equal(await readFile(existing,'utf8'),'preexisting');assert.equal(await readFile(f.scope.file,'utf8'),before);
+    }finally{journalFs.writeFile=write;await f.dispose();}
 });
 
 test('E2E interrupted-run recovery re-derives bounded IDs and refuses tampered receipts', async () => {
