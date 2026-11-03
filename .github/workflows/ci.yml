@@ -28,4 +28,6 @@ jobs:
         run: npm run test:render
         env:
           REQUIRE_DOCX_RENDER: true
+      - if: matrix.node-version == 20
+        run: npx tsx scripts/all-tools-e2e.ts
 

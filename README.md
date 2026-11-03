@@ -107,6 +107,10 @@ Remove-Item Env:E2E_CLEANUP_ONLY,Env:E2E_RUN_ID
 
 有正式楷書與 Poppler 的本機環境可執行 `npx tsx scripts/e2e-self-test.ts`：它在 loopback 建立隔離檔案儲存，真正執行兩支 CLI 的 HTTP／resource 匯出，並注入部分匯出、持久化後回應失敗及清理失敗，再驗證清理恢復。此命令不連雲端、不使用模型；會保留自己的測試收據及匯出檔。
 
+逐工具基本驗收可執行 `npx tsx scripts/all-tools-e2e.ts`（需要 Poppler `pdftotext`）。它自行啟動純 loopback HTTP 與全新 FileStore，不接受遠端服務網址，不會操作正式答案。輸出目錄的 `acceptance.json` 逐項記錄成功、錯誤、版本衝突、未測及不適用，另檢查資源、prompts、三種匯出與清理；新增工具若未有成功案例會令驗收失敗。故障測試會驗證失敗呼叫不被記成未測。這是指定案例的功能驗收，不代表所有輸入組合、雲端權限、原生 connector 目錄或畫板真實互動均已驗證；語義品質亦未測。
+
+畫板的 `warningCount` 計算版面警告；PDF 匯出的字型降級另由 `files[].fontWarning` 回報，不能用前者為零判定字型完全符合。general 的 PDF 斜體需要可用的 `ESSAY_MCP_PDF_ITALIC_FONT`；未配置時保留正文、使用一般字型並回報警告。165／166 原稿紙本來就不接受斜體。`paperProfile: original_166` 是保留的內部相容識別，165 顯示名稱及預設模板仍以實際 `load_exam_paper` 回應為準。
+
 這些腳本會存取實際服務，不包含在 `npm test`（只收集 `tests/**/*.test.ts`）中。
 
 ## 安全與部署
