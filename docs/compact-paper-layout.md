@@ -4,6 +4,8 @@
 
 此版與下述原先「只改指引」的驗證不同，必須另跑 `scripts/structured-paper-regression.ts`，其before/after傳入完全相同的heading＋text，只有緊湊旗標不同。儲存透過既有layoutExtensions封裝保留舊strict-reader可讀性；舊版忽略新選項的版面效果，不能宣稱回退版本仍有相同排版。
 
+完整空section修正：compactPaper=true時，完全空白且無特殊格式的section保留來源但佔0行，不只依isSpacer判斷。非空標題而正文缺漏仍保留供複查；明確非預設格式、false opt-out及未啟用旗標的歷史答案保持原樣。已有compactPaper=true的記錄會採修正後渲染；既有不可變匯出檔不改寫，若需新呈現必須重新匯出。此規則不代表空答案已完成或語義通過。
+
 短標題先以顯示寬度 `columns-2` 篩選，再以正式字型與相同Word預留寬度確認「標題＋冒號＋第一個正文grapheme」放得下；沒有位置就保留獨立標題，實際文字仍自然折行。緊湊是可逆的渲染選項，不會從儲存原文刪字。編輯時從read_answer取得原始heading／text，分別修改；不要把合併後的整行當作原始text或跨欄位find。舊答案只有在明確以update_answer_info帶expectedVersion開啟compactPaper後才改變呈現。原模板不支援的格式仍按原規則拒絕，不因緊湊而偷偷換字型或取消格式。
 
 新稿的短標題可與首句同段，例如：

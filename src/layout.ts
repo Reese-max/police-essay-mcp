@@ -344,7 +344,7 @@ function compressionHints(
 }
 
 /** Render-only view. Absent options preserve historical answers and explicit formats win. */
-function compactPaperSection(template: AnswerTemplate, section: AnswerSection, options: LayoutOptions): AnswerSection & { sourceParagraphIndexes?: number[] } {
+function compactPaperSection(template: AnswerTemplate, section: AnswerSection, options: LayoutOptions): AnswerSection & { sourceParagraphIndexes?: number[]; omitEmptySection?: boolean } {
   if (!template.paperProfile || !options.compactPaper) return section;
   const special = (format: object | undefined, defaults: object) => Object.entries(format ?? {})
     .some(([key, value]) => value !== undefined && value !== (defaults as Record<string, unknown>)[key]);
@@ -355,8 +355,9 @@ function compactPaperSection(template: AnswerTemplate, section: AnswerSection, o
   const retained = sectionParagraphs(section).map((paragraph, index) => ({ paragraph, sourceIndex: index + 1 }))
     .filter(p => p.paragraph.text.trim() !== '');
   const paragraphs = retained.map(p => ({ ...p.paragraph }));
-  // Empty bodies remain visible to review; do not hide an empty answer or invent prose.
-  if (!paragraphs.length) return section;
+  // Retain source records for review. Only an entirely blank, unformatted render view disappears.
+  // A meaningful heading with missing body remains visible instead of inventing prose.
+  if (!paragraphs.length) return section.heading?.trim() ? section : { ...section, omitEmptySection: true };
   let heading = section.heading;
   if (heading?.trim() === '') heading = undefined;
   if (heading && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
@@ -384,6 +385,10 @@ export function layoutSections(
 
   for (const storedSection of [...sections].sort((a, b) => a.order - b.order)) {
     const section = compactPaperSection(template, storedSection, options);
+    if (section.omitEmptySection) {
+      sectionLineCounts.set(section.id, 0);
+      continue;
+    }
     const sectionStart = lines.length;
     const headingStyle = mergeHeadingStyle(template, section);
     if (section.heading) {
