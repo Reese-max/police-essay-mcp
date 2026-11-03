@@ -635,7 +635,7 @@ const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text
 const PAPER_FORMAT_INSTRUCTION = "165 原稿紙模板（police_information_essay_165）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。舊代碼 police_information_essay_166 保留為相容別名；既有答案沿用儲存的代碼，不遷移，兩者版面相同，顯示名稱均為「165 原稿紙・兩頁申論」。";
 const REVIEW_INSTRUCTION = REVIEW_REASONING_INSTRUCTION;
 
-const EDIT_INSTRUCTION = "多題最短流程：start_exam → create_answers(examId) → 修正版面 → render_exam_overview(examId) → export_exam_bundle(examId)。使用者說繼續或前次中斷，先呼叫 get_exam_progress，依 nextStep 接續，將 summary 告知使用者一次；不要重做已完成題目或逐步旁白。fits 僅代表容量符合，絕不可稱答案已查證。匯出成功只代表檔案產出；get_exam_progress 的 done 保留為匯出流程終點，delivery.status=awaiting_review 表示內容、來源與逐頁視覺驗收待完成，不可稱成品已驗收或因此重複匯出。新答案預設整字換行、標題不落頁尾（layoutOptions）；舊答案可用 update_answer_info 開啟，補入的空白行計入行數與容量。單題用 create_answer 一次帶 exam、questionNo、lineTargets（sectionId 必須等於 sections 明確提供的 id）；重試使用相同 idempotencyKey 與請求，重送回傳目前版本，不同請求會拒絕。多題用 create_answers（1–10 題），全部驗證才開始儲存，逐題給不同 key；中途失敗依錯誤列出的已建立項目處理。只修改需要變更的內容。寫入預設回傳摘要，完整文字用 read_answer 或 responseDetail=full。read_answer 只回傳資料，不顯示畫板；單題畫板用 render_answer_sheet；多題只呼叫一次 render_exam_overview，以分頁切換，不要逐題開畫板。修改字句用 edit_text，只送 find/replace；整段改寫用 replace_text，整份重寫才用 write_answer；只改格式用 format_section。修改時帶 expectedVersion，可先用 preview_change 預覽，套用後回報變更清單。check_layout 檢查行數、目標與品質 warnings（僅提醒、不阻擋匯出）；單題用 export_answer(expectedVersion)，多題版面皆通過後必須呼叫一次 export_exam_bundle(examId)，預設輸出 PDF 與 Word；同一則訊息直接提供兩個下載連結，不要詢問是否匯出。可逐題指定 expectedVersion。合輯隨任一成員答案刪除；handle 建立失敗會回收先前 handle，回收失敗會列出遺留 handle。搬移用 move_section，編號不連續用 renumber_items；調整各節目標用 set_line_targets。list_revisions 查歷史，restore_revision 另存還原版本。update_answer_info 修改考試／題號等資訊，duplicate_answer 複製試寫。";
+const EDIT_INSTRUCTION = "多題最短流程：start_exam → create_answers(examId) → 修正版面 → render_exam_overview(examId) → export_exam_bundle(examId)。使用者說繼續或前次中斷，先呼叫 get_exam_progress（不知 examId 時省略），依 nextStep 接續，將 summary 告知使用者一次；不要重做已完成題目或逐步旁白。fits 僅代表容量符合，絕不可稱答案已查證。匯出成功只代表檔案產出；get_exam_progress 的 done 保留為匯出流程終點，delivery.status=awaiting_review 表示內容、來源與逐頁視覺驗收待完成，不可稱成品已驗收或因此重複匯出。新答案預設整字換行、標題不落頁尾（layoutOptions）；舊答案可用 update_answer_info 開啟，補入的空白行計入行數與容量。單題用 create_answer 一次帶 exam、questionNo、lineTargets（sectionId 必須等於 sections 明確提供的 id）；重試使用相同 idempotencyKey 與請求，重送回傳目前版本，不同請求會拒絕。多題用 create_answers（1–10 題），全部驗證才開始儲存，逐題給不同 key；中途失敗依錯誤列出的已建立項目處理。只修改需要變更的內容。寫入預設回傳摘要，完整文字用 read_answer 或 responseDetail=full。read_answer 只回傳資料，不顯示畫板；單題畫板用 render_answer_sheet；多題只呼叫一次 render_exam_overview，以分頁切換，不要逐題開畫板。修改字句用 edit_text，只送 find/replace；整段改寫用 replace_text，整份重寫才用 write_answer；只改格式用 format_section。修改時帶 expectedVersion，可先用 preview_change 預覽，套用後回報變更清單。check_layout 檢查行數、目標與品質 warnings（僅提醒、不阻擋匯出）；單題用 export_answer(expectedVersion)，多題版面皆通過後必須呼叫一次 export_exam_bundle(examId)，預設輸出 PDF 與 Word；同一則訊息直接提供兩個下載連結，不要詢問是否匯出。可逐題指定 expectedVersion。合輯隨任一成員答案刪除；handle 建立失敗會回收先前 handle，回收失敗會列出遺留 handle。搬移用 move_section，編號不連續用 renumber_items；調整各節目標用 set_line_targets。list_revisions 查歷史，restore_revision 另存還原版本。update_answer_info 修改考試／題號等資訊，duplicate_answer 複製試寫。";
 
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
@@ -859,11 +859,22 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(progress.summary) };
   });
   registerTool("get_exam_progress", {
-    title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam.",
-    inputSchema: { examId: examIdSchema },
-    outputSchema: z.object({ examId: examIdSchema, summary: z.string() }).loose(),
+    title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
+    inputSchema: { examId: examIdSchema.optional() },
+    outputSchema: z.object({ examId: examIdSchema.optional(), summary: z.string() }).loose(),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ examId }) => {
+    if (!examId) {
+      const plans = [...await store.listExams()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      if (plans.length === 1) examId = plans[0].id;
+      else {
+        const exams = plans.map(p => ({ examId: p.id, title: p.title, questionCount: p.questions.length, updatedAt: p.updatedAt }));
+        const summary = exams.length ? [`找到 ${exams.length} 份考試計畫（新到舊），請以 examId 再呼叫一次：`,
+          ...exams.map(e => `・${e.title}（${e.examId}，${e.questionCount} 題，更新於 ${e.updatedAt}）`)].join("\n")
+          : "目前沒有考試計畫；請改用 list_answers 查看已存答案。";
+        return { structuredContent: { exams, summary }, content: textContent(summary) };
+      }
+    }
     const progress = await examProgress(store, examId);
     return { structuredContent: progress, content: textContent(progress.summary) };
   });

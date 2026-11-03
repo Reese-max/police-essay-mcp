@@ -8,7 +8,7 @@ import { reviewAnswer } from "./review.js";
 export async function examProgress(store: EssayStore, examId: string) {
   const plan = await store.getExam(examId);
   const questions = await Promise.all([...plan.questions].sort((a, b) => a.questionNo - b.questionNo).map(async q => {
-    const missing = { questionNo: q.questionNo, stage: "not_started" as const, answerId: undefined, version: undefined };
+    const missing = { questionNo: q.questionNo, stage: "not_started" as const, answerId: undefined, version: undefined, ...(q.question ? { question: q.question } : {}) };
     if (!q.answerId) return missing;
     let answer;
     try { answer = await store.getAnswer(q.answerId); } catch (error) { if (isStoreNotFound(error)) return missing; throw error; }
@@ -38,6 +38,7 @@ export async function examProgress(store: EssayStore, examId: string) {
     content: "not_checked" as const, source: "not_checked" as const, visual: "not_checked" as const,
   } };
   const missing = questions.find(q => q.stage === "not_started");
+  const pending = questions.flatMap(q => q.stage === "not_started" && "question" in q && q.question ? [`第${q.questionNo}題「${q.question.length > 200 ? `${q.question.slice(0, 200)}…` : q.question}」`] : []);
   const drafted = questions.find(q => q.stage === "drafted");
   const completed = questions.filter(q => q.stage === "layout_ok" || q.stage === "exported").map(q => q.questionNo);
   const doneText = completed.length ? `第${completed.join("、")}題版面已通過；` : `已辨識${questions.length}題；`;
@@ -47,7 +48,7 @@ export async function examProgress(store: EssayStore, examId: string) {
   const fileText = plan.lastBundle?.formats.includes("pdf") && plan.lastBundle.formats.includes("docx") ? "PDF 與 Word"
     : plan.lastBundle?.formats.map(f => f === "docx" ? "Word" : "PDF").join("、");
   const nextStep = missing ? { action: "create_answer" as const, questionNo: missing.questionNo,
-    message: `${doneText}第${missing.questionNo}題尚未建立，從第${missing.questionNo}題接續。` }
+    message: `${doneText}第${missing.questionNo}題尚未建立，從第${missing.questionNo}題接續。${pending.length ? `計畫中的題目：${pending.join("；")}` : ""}` }
     : drafted ? { action: "fix_layout" as const, questionNo: drafted.questionNo,
       message: `${doneText}內容已保存，從第${drafted.questionNo}題接續檢查版面。` }
     : !current ? { action: "export_exam_bundle" as const,
