@@ -157,7 +157,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "replace_text": {
     "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
-    "after": "Replace one section's text or paragraphs; its heading and all other sections stay untouched."
+    "after": "Replace one section's text or paragraphs; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched."
   },
   "write_answer": {
     "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
