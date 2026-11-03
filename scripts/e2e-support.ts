@@ -85,7 +85,9 @@ export function identities(mode: 'single' | 'exam', runId: string) {
     return { mode, runId, marker, examKey, examId, answers: (mode === 'exam' ? ['1', '2'] : ['165', 'general']).map(slot => ({ slot, key: `e2e_${runId}_${slot}`, title: `${marker}-${slot}`, id: mode === 'exam' ? `ans_exam-${hash(`${examId}:${slot}`)}` : `ans_idem-${hash(`e2e_${runId}_${slot}`)}` })) };
 }
 function absent(r: any, kind: 'answer' | 'exam', id: string) {
-    return r.isError === true && (kind === 'answer' ? text(r).startsWith(`找不到答案 ${id}`) : text(r).startsWith('找不到考試計畫'));
+    // FileStore and CloudStore currently expose different, explicit not-found messages.
+    // Never treat an arbitrary isError/permission/network failure as absence.
+    return r.isError === true && (kind === 'answer' ? text(r).startsWith(`找不到答案 ${id}`) : text(r).startsWith('找不到考試計畫') || text(r) === 'Exam not found.');
 }
 export class Scope {
     readonly identity;
@@ -124,11 +126,11 @@ export class Scope {
         await fs.writeFile(this.file, JSON.stringify(this.receipt, null, 2), { flag: 'wx' });
         for (const a of this.identity.answers) {
             const r = await rpc('read_answer', { answerId: a.id });
-            assert.ok(absent(r, 'answer', a.id), 'preexisting or unconfirmed answer; scope not armed');
+            assert.ok(absent(r, 'answer', a.id), `preexisting or unconfirmed answer; scope not armed: ${text(r)}`);
         }
         if (this.identity.mode === 'exam') {
             const r = await rpc('get_exam_progress', { examId: this.identity.examId });
-            assert.ok(absent(r, 'exam', this.identity.examId), 'preexisting or unconfirmed exam; scope not armed');
+            assert.ok(absent(r, 'exam', this.identity.examId), `preexisting or unconfirmed exam; scope not armed: ${text(r)}`);
         }
         this.armed = true;
         this.receipt.armed = true;

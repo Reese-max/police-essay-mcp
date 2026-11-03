@@ -179,6 +179,25 @@ test('E2E preflight collision, foreign title and foreign exam links refuse delet
         await links.dispose();
     }
 });
+test('E2E preflight accepts only the actual CloudStore not-found contract', async () => {
+    const f = await fixture();
+    try {
+        f.setFault(name => name === 'get_exam_progress' ? { isError: true, content: [{type:'text',text:'Exam not found.'}] } : undefined);
+        await f.scope.run(f.rpc, async () => {});
+        assert.equal(f.scope.receipt.success, true);
+        assert.deepEqual(f.deleted, []);
+    } finally { await f.dispose(); }
+    for (const message of ['permission denied', 'Exam not found. permission denied']) {
+        const denied = await fixture();
+        try {
+            denied.setFault(name => name === 'get_exam_progress' ? { isError: true, content: [{type:'text',text:message}] } : undefined);
+            await assert.rejects(denied.scope.run(denied.rpc, async () => assert.fail('body must not run')), /scope not armed/);
+            assert.equal(denied.scope.armed, false);
+            assert.deepEqual(denied.deleted, []);
+        } finally { await denied.dispose(); }
+    }
+});
+
 test('E2E interrupted-run recovery re-derives bounded IDs and refuses tampered receipts', async () => {
     const original = process.env.E2E_RUN_ID;
     process.env.E2E_RUN_ID = 'fixture-run-1234';

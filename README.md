@@ -87,6 +87,8 @@ npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir>
 
 驗收機需有 `pdftotext`（可用 `PDFTOTEXT` 指定完整路徑）。腳本要求所有指定格式齊全且 `failed` 為空，下載或透過 MCP resource 解碼實際 bytes，並檢查 PDF／Word／TXT 包含合成正文；不把 HTTP 200 或檔案大小當作內容通過。單題核對三種格式，考卷合輯依現有 API 核對 PDF／Word，另逐題核對 TXT。這些是檔案內容檢查，並不等於語義或逐頁視覺驗收。
 
+有多個服務網址別名時，`baseUrl` 請使用服務設定的 `ESSAY_PUBLIC_BASE_URL`。腳本拒絕跨來源下載，以免將 owner credential 傳給其他來源；MCP resource 模式不需要下載網址。
+
 每次執行先將隨機 run ID、固定 idempotency keys 與可清理的精確 IDs 寫入收據；確認 IDs 原先不存在後才建立資料。單題收據預設在 `tmp/e2e-receipts`（可設 `E2E_RECEIPT_DIR`），考卷收據在 `<outDir>`。清理只處理該次固定 ID、標題及目前版本，不掃描或刪除其他答案；部分建立／連結失敗也會清理。清理失敗會令腳本以非零狀態結束，不會輸出成功標記。`duplicate_answer` 尚無可預先指定的 idempotency 身分，故不在這個限縮清理範圍的線上腳本內測試。
 
 中斷後保留收據，使用收據內同一個 run ID、同一個 base URL 及收據目錄，只重做清理：
