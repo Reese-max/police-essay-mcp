@@ -1,0 +1,41 @@
+{
+  "id": "ans_h2-paper165",
+  "templateId": "police_information_essay_165",
+  "title": "165原稿紙警政資訊題目",
+  "sections": [
+    {
+      "id": "sec-h2-paper165-1",
+      "heading": "一",
+      "text": "警察資訊系統應落實資通安全與個人資料保護。",
+      "paragraphs": [
+        {
+          "text": "警察資訊系統應落實資通安全與個人資料保護。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

@@ -1,0 +1,57 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "建立一份答案",
+    "eq": 1
+  },
+  {
+    "kind": "all_fit",
+    "label": "版面通過"
+  },
+  {
+    "kind": "answer_where",
+    "label": "三節及目標合理",
+    "match": {
+      "title": "警察資訊管理措施"
+    },
+    "checks": {
+      "section_count_eq": 3,
+      "section_text_contains": {
+        "sectionIndex": 0,
+        "text": "盤點"
+      },
+      "section_text_contains2": {
+        "sectionIndex": 1,
+        "text": "權限"
+      },
+      "section_text_contains3": {
+        "sectionIndex": 2,
+        "text": "改善"
+      },
+      "line_targets_sum_min": 35,
+      "line_targets_sum_max": 44
+    }
+  },
+  {
+    "kind": "tool_called",
+    "label": "檢查版面",
+    "tool": "check_layout",
+    "min": 1
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "寫入帶版本",
+    "tools": [
+      "set_line_targets"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

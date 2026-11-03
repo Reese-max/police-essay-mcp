@@ -1,0 +1,110 @@
+[
+  {
+    "seed": "edit",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 7,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "empty",
+    "answers": 0,
+    "templateId": null,
+    "fits": null,
+    "totalLines": 0,
+    "capacity": 44,
+    "intent": "empty store for default-165 creation"
+  },
+  {
+    "seed": "overflow",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": false,
+    "totalLines": 88,
+    "capacity": 44,
+    "intent": "far over: two capacities"
+  },
+  {
+    "seed": "paper165",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 3,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-boundary-delete",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 4,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-boundary-unsupported",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 4,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-boundary-verify",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 4,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-edit-move",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 6,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-edit-paragraph",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 6,
+    "capacity": 44,
+    "intent": "fits; preserves task content"
+  },
+  {
+    "seed": "t-fit-short",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 7,
+    "capacity": 44,
+    "intent": "short: far under 12 lines per section"
+  },
+  {
+    "seed": "t-fit-tight",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": false,
+    "totalLines": 46,
+    "capacity": 44,
+    "intent": "tight: two lines over"
+  },
+  {
+    "seed": "t-resume-exam",
+    "answers": 1,
+    "templateId": "police_information_essay_165",
+    "fits": true,
+    "totalLines": 3,
+    "capacity": 44,
+    "intent": "one unchanged answer, two pending questions"
+  }
+]

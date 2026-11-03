@@ -1,0 +1,45 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "答案不變",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "不產生新版本",
+    "match": {
+      "title": "警察職權行使法與個資保護"
+    },
+    "checks": {
+      "version_eq": 1
+    }
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未寫入：write_answer",
+    "tool": "write_answer"
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未寫入：replace_text",
+    "tool": "replace_text"
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未寫入：set_line_targets",
+    "tool": "set_line_targets"
+  },
+  {
+    "kind": "final_message_matches",
+    "label": "指出偏短節次",
+    "regex": "(第?[一二三]節?|節別).*?(少|差|不足|偏短)|偏短"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

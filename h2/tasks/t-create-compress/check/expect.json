@@ -1,0 +1,81 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "建立一份答案",
+    "eq": 1
+  },
+  {
+    "kind": "all_fit",
+    "label": "壓縮後通過"
+  },
+  {
+    "kind": "answer_where",
+    "label": "保留四節重點",
+    "match": {
+      "title": "資通安全風險管理"
+    },
+    "checks": {
+      "section_count_eq": 4,
+      "section_text_contains": {
+        "sectionIndex": 0,
+        "text": "資產清冊"
+      },
+      "section_text_contains2": {
+        "sectionIndex": 1,
+        "text": "發生可能性"
+      },
+      "section_text_contains3": {
+        "sectionIndex": 2,
+        "text": "最小權限"
+      },
+      "section_text_contains4": {
+        "sectionIndex": 3,
+        "text": "追蹤改善結果"
+      },
+      "total_lines_min": 32
+    }
+  },
+  {
+    "kind": "tool_called",
+    "label": "前後檢查版面",
+    "tool": "check_layout",
+    "min": 2
+  },
+  {
+    "kind": "tool_called_any",
+    "label": "超頁後有採取壓縮修改",
+    "tools": [
+      "edit_text",
+      "replace_text",
+      "write_answer"
+    ]
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未刪除答案",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "寫入帶版本",
+    "tools": [
+      "edit_text",
+      "replace_text",
+      "write_answer"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "呼叫有界",
+    "n": 16
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

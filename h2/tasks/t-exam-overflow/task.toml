@@ -1,0 +1,4 @@
+domain = "exam"
+workspace = "project"
+deliverable = "diff"
+check = "node check/grade.mjs check/expect.json"
