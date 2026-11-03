@@ -85,6 +85,24 @@ npx tsx scripts/http-e2e.ts <baseUrl>
 npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir>
 ```
 
+驗收機需有 `pdftotext`（可用 `PDFTOTEXT` 指定完整路徑）。腳本要求所有指定格式齊全且 `failed` 為空，下載或透過 MCP resource 解碼實際 bytes，並檢查 PDF／Word／TXT 包含合成正文；不把 HTTP 200 或檔案大小當作內容通過。單題核對三種格式，考卷合輯依現有 API 核對 PDF／Word，另逐題核對 TXT。這些是檔案內容檢查，並不等於語義或逐頁視覺驗收。
+
+每次執行先將隨機 run ID、固定 idempotency keys 與可清理的精確 IDs 寫入收據；確認 IDs 原先不存在後才建立資料。單題收據預設在 `tmp/e2e-receipts`（可設 `E2E_RECEIPT_DIR`），考卷收據在 `<outDir>`。清理只處理該次固定 ID、標題及目前版本，不掃描或刪除其他答案；部分建立／連結失敗也會清理。清理失敗會令腳本以非零狀態結束，不會輸出成功標記。`duplicate_answer` 尚無可預先指定的 idempotency 身分，故不在這個限縮清理範圍的線上腳本內測試。
+
+中斷後保留收據，使用收據內同一個 run ID、同一個 base URL 及收據目錄，只重做清理：
+
+```powershell
+$env:E2E_RUN_ID = '<receipt runId>'
+$env:E2E_CLEANUP_ONLY = '1'
+# 單題另外指定原 E2E_RECEIPT_DIR；考卷沿用原 outDir
+npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir>
+Remove-Item Env:E2E_CLEANUP_ONLY,Env:E2E_RUN_ID
+```
+
+恢復時從 run ID 重新推導 IDs，核對收據身分、伺服器與原先已啟用的清理範圍；不接受收據指定其他刪除目標。新測試不得重用舊 run ID 或覆寫既有收據。
+
+有正式楷書與 Poppler 的本機環境可執行 `npx tsx scripts/e2e-self-test.ts`：它在 loopback 建立隔離檔案儲存，真正執行兩支 CLI 的 HTTP／resource 匯出，並注入部分匯出、持久化後回應失敗及清理失敗，再驗證清理恢復。此命令不連雲端、不使用模型；會保留自己的測試收據及匯出檔。
+
 這些腳本會存取實際服務，不包含在 `npm test`（只收集 `tests/**/*.test.ts`）中。
 
 ## 安全與部署

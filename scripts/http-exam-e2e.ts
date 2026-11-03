@@ -1,61 +1,55 @@
-// Exam flow E2E: start_exam -> create_answers -> render_exam_overview -> export_exam_bundle -> get_exam_progress, then cleanup.
-// Usage: npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir> [ownerToken]
-import assert from "node:assert/strict";
-import { writeFileSync, mkdirSync } from "node:fs";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-
-if (!process.argv[2] || !process.argv[3]) {
-  console.error("Usage: npx tsx scripts/http-exam-e2e.ts <baseUrl> <outDir> [ownerToken] (or set E2E_OWNER_TOKEN)");
-  process.exit(2);
-}
-const base = process.argv[2].replace(/\/+$/, "");
-const outDir = process.argv[3];
+// Synthetic HTTP exam acceptance. Predicted IDs are journalled before mutation.
+import assert from 'node:assert/strict';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { Scope, success, verifyExports, type Rpc } from './e2e-support.js';
+if (!process.argv[2] || !process.argv[3])
+    throw Error('Usage: tsx scripts/http-exam-e2e.ts <baseUrl> <outDir> [ownerToken]');
+const base = process.argv[2].replace(/\/+$/, '');
+const directory = process.argv[3];
 const token = process.env.E2E_OWNER_TOKEN || process.argv[4];
-mkdirSync(outDir, { recursive: true });
 const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-const client = new Client({ name: "slim-exam-e2e", version: "1" });
-await client.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers } }));
-const call = async (name: string, args: Record<string, unknown>) => {
-  const r = await client.callTool({ name, arguments: args });
-  const text = (r.content as any[]).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-  assert.notEqual(r.isError, true, `${name}: ${text}`);
-  console.log("EXAM", name, text.split("\n")[0].slice(0, 100));
-  return r.structuredContent as any;
-};
-const ids: string[] = [];
-let examId: string | undefined;
+const client = new Client({ name: 'cleanup-bounded-exam-e2e', version: '2' });
+await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers } }));
+const scope = new Scope('exam', base, directory);
+const rpc: Rpc = async (name, args) => { scope.receipt.events.push({ name, args }); await scope.save(); return client.callTool({ name, arguments: args }); };
+const call = async (name: string, args: Record<string, unknown>) => success(await rpc(name, args), name);
 try {
-  const plan = await call("start_exam", { title: "SLIM-E2E 考試", questions: [{ questionNo: 1, question: "試述資安治理。" }, { questionNo: 2, question: "試述零信任。" }] });
-  examId = plan.examId;
-  const created = await call("create_answers", { examId: plan.examId, answers: [1, 2].map((n) => ({
-    title: `SLIM-E2E 第${n}題`, questionNo: n, exam: "SLIM-E2E 考試", idempotencyKey: `slim_e2e_${Date.now()}_${n}`,
-    sections: [{ id: "a", heading: "一、前言", text: `第${n}題合成內容：資訊安全治理與 Zero Trust 架構。`.repeat(4) }] })) });
-  for (const a of created.answers) ids.push(a.answerId);
-  assert.equal(ids.length, 2);
-  await call("get_exam_progress", { examId: plan.examId });
-  await call("render_exam_overview", { examId: plan.examId });
-  const bundle = await call("export_exam_bundle", { examId: plan.examId });
-  for (const f of bundle.files ?? []) {
-    const r = await fetch(f.downloadUrl, { headers }); assert.equal(r.status, 200, f.fileName);
-    const buf = Buffer.from(await r.arrayBuffer()); writeFileSync(`${outDir}/bundle.${f.format}`, buf);
-    console.log("EXAM bundle", f.format, f.fileName, buf.byteLength);
-  }
-  const progress = await call("get_exam_progress", { examId: plan.examId });
-  console.log("EXAM nextStep", progress.nextStep, "delivery", progress.delivery?.status);
-} finally {
-  for (const id of ids) {
-    try {
-      const cur = await client.callTool({ name: "read_answer", arguments: { answerId: id } });
-      const d = await client.callTool({ name: "delete_answer", arguments: { answerId: id, expectedVersion: (cur.structuredContent as any)?.answer?.version } });
-      console.log("EXAM cleanup", id, d.isError ? "FAILED" : "deleted");
-    } catch (error) { console.log("EXAM cleanup", id, "FAILED", String(error).slice(0, 200)); }
-  }
-  try {
-    if (examId) {
-      const progress = await call("get_exam_progress", { examId });
-      await call("delete_exam", { examId, expectedVersion: progress.version });
-    }
-  } finally { await client.close(); }
+    if (process.env.E2E_CLEANUP_ONLY === '1')
+        await scope.recover(rpc);
+    else
+        await scope.run(rpc, async () => {
+            const identity = scope.identity;
+            const formats = ['pdf', 'docx'];
+            const exam = await call('start_exam', { title: identity.marker, idempotencyKey: identity.examKey, formats, questions: [{ questionNo: 1 }, { questionNo: 2 }] });
+            assert.equal(exam.examId, identity.examId);
+            const expected = identity.answers.map(a => `第${a.slot}題合成內容：資訊安全治理與 Zero Trust 架構。`.repeat(4));
+            const created = await call('create_answers', { examId: identity.examId, answers: identity.answers.map((a, i) => ({ title: a.title, questionNo: Number(a.slot), idempotencyKey: a.key, sections: [{ id: 'a', text: expected[i] }] })) });
+            assert.deepEqual(created.answers.map((a: any) => a.answerId), identity.answers.map(a => a.id));
+            assert.ok(created.answers.every((a: any) => !a.linkPending), 'answer link incomplete');
+            scope.receipt.exports = [];
+            for (const [index, own] of identity.answers.entries()) {
+                const answer = (await call('read_answer', { answerId: own.id })).answer;
+                assert.equal(answer.templateId, 'police_information_essay_165');
+                // Bundles support only PDF/DOCX; TXT is verified through the supported single-answer API.
+                const txt = await call('export_answer', { answerId: own.id, expectedVersion: answer.version, formats: ['txt'] });
+                scope.receipt.exports.push(...await verifyExports(txt, ['txt'], [expected[index]], { base, headers, readResource: a => client.readResource(a), save: async (f, b) => { await fs.writeFile(path.join(directory, `question-${own.slot}-${identity.runId}.${f}`), b); } }));
+                await scope.save();
+            }
+            const progress = await call('get_exam_progress', { examId: identity.examId });
+            assert.deepEqual(progress.questions.map((q: any) => q.answerId), identity.answers.map(a => a.id));
+            await call('render_exam_overview', { examId: identity.examId });
+            const bundle = await call('export_exam_bundle', { examId: identity.examId, formats });
+            scope.receipt.exports.push(...await verifyExports(bundle, formats, expected, { base, headers, readResource: a => client.readResource(a), save: async (f, b) => { await fs.writeFile(path.join(directory, `bundle-${identity.runId}.${f}`), b); } }));
+            await scope.save();
+            const end = await call('get_exam_progress', { examId: identity.examId });
+            assert.equal(end.nextStep.action, 'done');
+            assert.equal(end.delivery.status, 'awaiting_review');
+        });
 }
-console.log("HTTP_EXAM_E2E_OK");
+finally {
+    await client.close();
+}
+console.log(process.env.E2E_CLEANUP_ONLY === '1' ? 'HTTP_EXAM_E2E_CLEANUP_OK' : 'HTTP_EXAM_E2E_OK', scope.file);
