@@ -1596,8 +1596,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       return {
         structuredContent: { ...(current ? renderSummary(current, layoutWarnings(current.layout, template).length) : {}), ...overview,
           ...(responseDetail === "full" ? full : {}) },
-        content: textContent(progress?.summary ?? summaries.map((answer, index) => `第${answer.questionNo ?? index + 1}題 ${answer.title}：${answer.totalLines}/${answer.capacity} 行，`
-          + (answer.fits ? "符合" : `超出 ${answer.totalLines - answer.capacity} 行`) + `，警告 ${answer.warnings}`).join("\n") + "\n畫板以分頁切換題目。"),
+        content: textContent((progress?.summary ?? summaries.map((answer, index) => `第${answer.questionNo ?? index + 1}題 ${answer.title}：${answer.totalLines}/${answer.capacity} 行，`
+          + (answer.fits ? "符合" : `超出 ${answer.totalLines - answer.capacity} 行`) + `，警告 ${answer.warnings}`).join("\n") + "\n畫板以分頁切換題目。")
+          + "\nwarningCount 只計算目前顯示答案的版面警告；examAnswers[].warnings 為各題版面警告，並非全卷所有警告。PDF 字型警告另見匯出 files[].fontWarning，不能以版面警告 0 判定字型完全符合。"),
         _meta: { snapshot: examId ? full : current, readOnly, ...paper },
       };
     },
