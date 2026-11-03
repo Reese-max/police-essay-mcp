@@ -58,6 +58,18 @@ node h2/dump-state.mjs . <answerDir> <emptyExportDir> <outFile>
 
 ## Held-out evaluation and grading
 
+### Local grading correction
+
+CI runs `node --test h2/grade.test.mjs` on Node20/22/24. For actual offline MCP trajectories, build first and run `node scripts/h2-integration-eval.mjs` with the approved `ESSAY_MCP_PAPER_FONT` and Poppler `pdftotext` available. That separate integration command audits all12 seeds and5 real positive/negative trajectories, exports PDF/DOCX and checks source text. It does not call a model or fetch sources. Hosted CI has no approved private165 font, so it does not claim to run this integration command; local receipts must accompany a release.
+
+The verification task compares ordered headings, section text and paragraph text with the committed seed, rather than requiring version1. Saving a caller review may increment the version without changing that content. This is a content-immutability check, not proof that the recorded review or answer is correct.
+
+The two-cell indentation requirement is4 display-width units. Missing/empty paragraph data does not pass the indentation check.
+
+The resume task requires a successful bundle call, the original plan/question1 identity, three distinct linked answers belonging to the planned question numbers, current exported progress at matching answer versions, and nonempty PDF/DOCX file records. Plan answerId links establish membership: actual persisted answers do not require an examId field (if present in a dump it must agree). Existing generic tool_called criteria still count attempts unless success:true is requested. File records come from dump-state; the grader does not independently validate PDF/DOCX signatures, visual quality, source accuracy or resistance to a forged state dump.
+
+The previously reported model comparison scores must be rerun with the corrected evaluator before making new guidance-improvement claims. The local regression uses synthetic good/bad states, not paid model calls or a new ChatGPT effectiveness experiment.
+
 `h2/holdout.txt` is unchanged: `p-edit`, `t-fit-tight`, `t-exam-resume`, `t-boundary-unsupported`. `t-exam-resume` is solvable because `get_exam_progress` accepts a missing `examId` and discovers the saved exam. `p-overflow` remains excluded.
 
 `h2/steer.md` describes the assistant guidance-editing workflow. Existing criterion kinds keep their previous semantics. Two new kinds enforce the paper boundary: `all_templates` accepts only 165/166 for every answer, and `no_unsupported_formatting` inspects all listed tool attempts recursively for bold/italic or centre/right/justify alignment. Explicit `false` emphasis and left alignment are allowed; plain text containing those words is not formatting. The tests exercise a good and a targeted bad fake run for every active task, compare central and standalone graders, and cover both new criteria independently.

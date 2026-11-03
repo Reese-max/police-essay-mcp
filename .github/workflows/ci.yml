@@ -20,6 +20,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Harness evaluator regression
+        run: node --test h2/grade.test.mjs
       - if: matrix.node-version == 20
         run: sudo apt-get update && sudo apt-get install -y libreoffice poppler-utils fonts-noto-cjk
       - run: npm test

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { grade } from './grade.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,7 +17,7 @@ const data = {
   'p-rewrite': make(answer('警察資訊安全管理',[section('一','警察機關應建立資通安全管理制度，明定權責分工。'),section('二','應落實存取控管與操作紀錄保存，並定期稽核。'),section('三','應辦理教育訓練與演練，持續檢討改善。')]),['replace_text']),
   't-create-targets': make(answer('警察資訊管理措施',[section('一、現況','盤點系統與資料流程'),section('二、措施','權限控管、操作紀錄與教育訓練'),section('三、檢討','持續改善')],{lineTargets:{a:12,b:12,c:12},totalLines:38}),['create_answer','set_line_targets','check_layout']),
   't-create-compress': make(answer('資通安全風險管理',[section('一、資產盤點','盤點資訊資產清冊與資料流程'),section('二、風險評估','評估影響與發生可能性'),section('三、控制措施','落實最小權限與操作紀錄'),section('四、事件改善','保存證據並追蹤改善結果')],{totalLines:32}),['create_answer','check_layout','replace_text','check_layout']),
-  't-create-format': make(answer('個資保護與警察勤務',['一、','二、','三、'].map(x=>section(x,'法定目的及必要範圍',2))),['create_answer','check_layout']),
+  't-create-format': make(answer('個資保護與警察勤務',['一、','二、','三、'].map(x=>section(x,'法定目的及必要範圍',4))),['create_answer','check_layout']),
   't-edit-paragraph': make(answer('警察資訊勤務紀錄',[section('一','系統應依職務設定權限並定期檢視。'),section('二','稽核紀錄應完整保存並定期檢視，以利事後追查異常操作。'),section('三','機關應辦理教育訓練並持續改善。')]),['replace_text']),
   't-edit-move': make(answer('個資事故應變順序',[section('一、控制','先限制存取並保存相關紀錄。'),section('二、通報','發現疑似事件應立即通報權責單位。'),section('三、檢討','事後檢討原因並修正管理措施。')]),['move_section','renumber_items']),
   't-fit-tight': make(answer('數位鑑識流程',['一','二','三','四'].map(x=>section(x,'資通安全應定期檢視並保存紀錄。')),{totalLines:42}),['check_layout','edit_text','check_layout']),
@@ -27,6 +28,15 @@ const data = {
   't-boundary-delete': make(answer('個資保存期限',[section('一','依目的使用'),section('二','屆期依法處理')],{version:1})),
   't-boundary-unsupported': make(answer('數位鑑識證據保全',[section('一','記錄來源時間'),section('二','保存原始資料')],{version:1}),[],'目前不支援 B4 紙張或插入圖片。'),
 };
+
+// Good fakes model the saved seed content and actual dump-state linkage, not just counts.
+const verifySeed=JSON.parse(await fs.readFile('h2/seeds/t-boundary-verify/store/answer-records/ans_h2-t-boundary-verify.json','utf8'));
+data['t-boundary-verify'].state.answers[0].sections=verifySeed.sections.map(s=>section(s.heading,s.text));
+const resumed=data['t-exam-resume'];
+resumed.state.answers.forEach((a,i)=>{a.id=i===0?'ans_h2-t-resume-exam':'ans_resume-'+i;a.examId='exam_resume-h2-2026';a.questionNo=i+1;});
+resumed.state.exams[0].plannedQuestions=resumed.state.answers.map(a=>({questionNo:a.questionNo,answerId:a.id}));
+resumed.state.exams[0].progress={bundle:{status:'current'},questions:resumed.state.answers.map(a=>({questionNo:a.questionNo,answerId:a.id,version:a.version,stage:'exported'}))};
+resumed.state.exports.forEach(e=>{e.file='bundle.'+e.kind;e.bytes=100;});
 
 const bad = {
   'p-165': d=>d.calls.push({tool:'format_section',args:{headingStyle:{bold:true},paragraphFormat:{alignment:'center'}}}),
@@ -51,20 +61,22 @@ const bad = {
 async function run(id, adversarial = false) {
   const dir = path.join(root, 'h2', `.grade-${process.pid}-${id}`);
   const d = structuredClone(data[id]);
-  if (adversarial) bad[id](d);
+  if (typeof adversarial === 'function') adversarial(d);
+  else if (adversarial) bad[id](d);
   const expect = JSON.parse(await fs.readFile(path.join(root, 'h2/tasks', id, 'check/expect.json'), 'utf8'));
+  try {
   await fs.mkdir(path.join(dir, 'h2-result'), { recursive: true });
   await fs.writeFile(path.join(dir, 'h2-result/state.json'), JSON.stringify(d.state));
   await fs.writeFile(path.join(dir, 'h2-result/final.md'), d.final);
   await fs.writeFile(path.join(dir, 'h2-result/events.jsonl'), d.calls.map((call,i)=>{
-    const entry=typeof call==='string'?{tool:call,args:{}}:{tool:call.tool,args:call.args??{}};
-    return JSON.stringify({item:{id:`i${i}`,type:'mcp_tool_call',server:'essay',tool:entry.tool,arguments:{expectedVersion:1,...entry.args},result:{},status:'completed'}});
+    const entry=typeof call==='string'?{tool:call,args:{}}:{tool:call.tool,args:call.args??{},failed:call.failed};
+    return JSON.stringify({item:{id:`i${i}`,type:'mcp_tool_call',server:'essay',tool:entry.tool,arguments:{expectedVersion:1,...entry.args},result:entry.failed?{isError:true}:{},status:entry.failed?'failed':'completed'}});
   }).join('\n'));
   const result = await grade(dir, path.join(root, 'h2/tasks', id, 'check/expect.json'));
-  const taskGrader = await import(path.join(root, 'h2/tasks', id, 'check/grade.mjs'));
+  const taskGrader = await import(pathToFileURL(path.join(root, 'h2/tasks', id, 'check/grade.mjs')));
   assert.deepEqual(await taskGrader.grade(dir, path.join(root, 'h2/tasks', id, 'check/expect.json')), result);
-  await fs.rm(dir, { recursive: true, force: true });
   return result;
+  } finally { await fs.rm(dir, { recursive: true, force: true }); }
 }
 
 export async function selfCheck() {
@@ -98,6 +110,60 @@ async function gradeCriterion(criterion, { calls = [], answers = [answer('測試
   }
 }
 
+test('verification accepts review-only version changes but rejects rewritten source text', async () => {
+  assert.equal((await run('t-boundary-verify', d=>{d.state.answers[0].version=2;d.calls=['set_answer_review'];})).code,0);
+  assert.equal((await run('t-boundary-verify', d=>{d.state.answers[0].sections[0].text='unrequested rewrite';})).code,1);
+});
+
+test('two-cell indent rejects one-cell and accepts four display-width units', async () => {
+  assert.equal((await run('t-create-format',d=>{for(const s of d.state.answers[0].sections)s.paragraphs[0].firstLineIndent=2;})).code,1);
+  assert.equal((await run('t-create-format',d=>{for(const s of d.state.answers[0].sections)s.paragraphs[0].firstLineIndent=4;})).code,0);
+});
+
+test('exam resume rejects failed export attempts without linked questions or artifacts', async () => {
+  const r=await run('t-exam-resume',d=>{d.state.exports=[];d.state.exams=[{examId:'exam_resume-h2-2026',plannedQuestions:[{questionNo:1,answerId:'ans_h2-t-resume-exam'},{questionNo:2},{questionNo:3}]}];d.calls.at(-1).failed=true;});
+  assert.equal(r.code,1,r.output);
+});
+
+test('actual dump-state membership comes from plan links, not an invented required answer.examId', async () => {
+  const r=await run('t-exam-resume',d=>{for(const a of d.state.answers)delete a.examId;});
+  assert.equal(r.code,0,r.output);
+});
+
+test('resume requires real pending-question linkage, fresh progress and both nonempty formats independently', async () => {
+  const mutations=[
+    d=>{d.calls.at(-1).failed=true;},
+    d=>{d.state.exports=[];},
+    d=>{d.state.exports.pop();},
+    d=>{d.state.exports[0].bytes=0;},
+    d=>{delete d.state.exams[0].plannedQuestions[1].answerId;},
+    d=>{d.state.exams[0].plannedQuestions[1].answerId=d.state.exams[0].plannedQuestions[0].answerId;},
+    d=>{d.state.exams[0].plannedQuestions[0].answerId='ans_replaced';},
+    d=>{d.state.answers[1].examId='exam_unrelated';},
+    d=>{d.state.exams[0].progress.bundle.status='outdated';},
+    d=>{d.state.exams[0].progress.questions[1].stage='not_started';},
+    d=>{d.state.exams[0].progress.questions[1].version=99;},
+  ];
+  for(const mutate of mutations){const r=await run('t-exam-resume',mutate);assert.equal(r.code,1,r.output);}
+});
+
+test('verification compares headings, ordering and paragraph text against seed even at version1', async () => {
+  for(const mutate of [
+    d=>{d.state.answers[0].sections[0].title='changed';},
+    d=>{d.state.answers[0].sections.reverse();},
+    d=>{d.state.answers[0].sections[0].paragraphs[0].text='changed paragraph';},
+    d=>{d.state.answers[0].sections.pop();},
+  ])assert.equal((await run('t-boundary-verify',mutate)).code,1);
+});
+
+test('indent data cannot be missing, empty or below two cells in any section', async () => {
+  for(const mutate of [
+    d=>{delete d.state.answers[0].sections[1].paragraphs[0].firstLineIndent;},
+    d=>{d.state.answers[0].sections[1].paragraphs=[];},
+    d=>{d.state.answers[0].sections[1].paragraphs[0].firstLineIndent=3;},
+  ])assert.equal((await run('t-create-format',mutate)).code,1);
+});
+
 test('all 17 active tasks have good/bad fixtures and identical standalone graders', async () => {
   const active = (await fs.readdir(path.join(root, 'h2/tasks'))).sort();
   assert.equal(active.length, 17);
@@ -114,6 +180,15 @@ test('all_templates accepts 165/166, rejects mixed legacy layouts and empty answ
   }
   assert.equal((await gradeCriterion(criterion, { answers: [] })).code, 1);
   assert.equal((await gradeCriterion(criterion, { answers: [answer('新稿', []), answer('舊稿', [], { templateId: 'police_information_essay' })] })).code, 1);
+});
+
+test('successful tool count rejects failed, error and incomplete attempts without changing generic attempt counts', async () => {
+  const criterion={kind:'tool_called',tool:'export_exam_bundle',min:1,success:true};
+  for(const variant of [{status:'failed'},{result:{isError:true}},{result:{is_error:true}},{error:'failed'},{status:'in_progress'}]){
+    const item={id:'call',type:'mcp_tool_call',tool:'export_exam_bundle',status:'completed',result:{},...variant};
+    assert.equal((await gradeCriterion(criterion,{calls:[item]})).code,1);
+    assert.equal((await gradeCriterion({...criterion,success:false},{calls:[item]})).code,0);
+  }
 });
 
 test('format boundary rejects nested emphasis/alignment in successful, failed, preview and batch attempts', async () => {
