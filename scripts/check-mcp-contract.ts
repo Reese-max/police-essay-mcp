@@ -117,27 +117,27 @@ export function assertSchemaSubset(compact: unknown, base: unknown, where: strin
 export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string }> = {
   "check_layout": {
     "before": "Use this when the user wants exact page usage, remaining capacity, overflow count, or compression priorities for a saved answer.",
-    "after": "Read exact line usage, overflow, targets and quality warnings (not content verification)."
+    "after": "Read authoritative line usage, overflow, targets and quality warnings, not content verification. For fit/export tasks call for EVERY answer before compression and again after its last edit, including answers that batch or overview tools report as fitting. Reuse checks for unchanged versions. Report planned targets separately from actual usage."
   },
   "create_answer": {
     "before": "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
-    "after": "Create an editable answer. Omit templateId for the default 165 paper; pass one only when the user picks a paper. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4. examId resumes existing planned questions; use idempotencyKey for retries."
+    "after": "Create an editable answer. Omit templateId for the default 165 paper; pass one only when the user picks a paper. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4. Preserve supplied drafts; include explicit section IDs, matching lineTargets in version 1 and known exam/questionNo. Allocate targets from the user's budget or template capacity, not current usage; do not expand drafts to meet targets. examId resumes existing planned questions; retry with the same idempotencyKey and identical request."
   },
   "delete_text": {
     "before": "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
-    "after": "Delete one section; preview_change can preview first."
+    "after": "Delete one section only when its removal is explicitly requested or authorized; compression alone is not permission to remove sections. preview_change can preview first."
   },
   "format_section": {
     "before": "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
-    "after": "Change section/paragraph formatting without rewriting content. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4."
+    "after": "Change section/paragraph formatting without rewriting content; use expectedVersion. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4."
   },
   "insert_text": {
     "before": "Use this when the user wants to add a new section at a precise position in an existing answer; the complete answer is reflowed afterward.",
-    "after": "Insert a section after afterSectionId, or append when omitted."
+    "after": "Insert a section after afterSectionId, or append when omitted; use expectedVersion."
   },
   "list_answers": {
     "before": "Use this when the user wants to find saved essay answers that can be reopened or edited.",
-    "after": "List saved answers grouped by exam, ordered by question number."
+    "after": "Find saved answers grouped by exam and ordered by question number. Reuse a known answerId instead of listing again."
   },
   "list_templates": {
     "before": "Use this when the user wants to inspect available essay answer-sheet templates before creating an answer.",
@@ -145,23 +145,23 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "load_exam_paper": {
     "before": "Use this when the user wants to load a template or reopen an existing essay answer with its calculated grid layout.",
-    "after": "Load template geometry and formatting rules."
+    "after": "Load template geometry and formatting rules. Before allocating proportional line targets, load the suitable known/default template if its capacity is not already available; no preceding list_templates is needed. Layout summaries are not full original text or substitutes for per-answer check_layout."
   },
   "read_answer": {
     "before": "Use this when the user wants the complete structured answer, section metadata, and exact rendered lines.",
-    "after": "Read the complete answer and rendered lines; no canvas."
+    "after": "Read the complete answer, section IDs, current version and rendered lines; no canvas. Before compression obtain the full original, not just a layout summary; reuse full text already available."
   },
   "render_answer_sheet": {
     "before": "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
-    "after": "Show one answer canvas with authoritative layout and editing controls; the client renders it, so the default result's line usage and status suffice — omit responseDetail=full unless per-line data is needed."
+    "after": "Show one answer canvas with authoritative layout and editing controls; the client renders it, so the default result's line usage and status suffice — omit responseDetail=full unless per-line data is needed. For multiple questions use one render_exam_overview instead."
   },
   "replace_text": {
     "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
-    "after": "Replace one section's text or paragraphs; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched."
+    "after": "Replace one section's text or paragraphs at expectedVersion; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched. During compression retain headings, numbered subheadings and distinct substantive points; do not replace multiple sections with one summary."
   },
   "write_answer": {
     "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
-    "after": "Replace all sections; expectedVersion protects edits. Prefer edit_text for phrases. When compressing to fit capacity, keep existing headings, numbering and each question's block; merge only verbatim-identical or same-point restatements."
+    "after": "Replace all sections at expectedVersion only for a whole-answer rewrite or explicitly requested content clearing; include every section that must remain. Prefer edit_text or replace_text for targeted edits and compression. Keep section IDs, headings, numbering, order, each question's block and distinct substantive points; merge only verbatim-identical or same-point restatements."
   }
 };
 export function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T, baseline: ContractTool[]): T {
