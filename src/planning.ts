@@ -1,4 +1,6 @@
-import type { AnswerDocument, AnswerSection, LayoutReport } from "./domain.js";
+import type { AnswerDocument, AnswerSection, AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
+import { displayWidth } from "./layout.js";
+import { originalPaperAvailableWidth, originalPaperMeasure } from "./original-paper.js";
 
 export interface SectionLines {
   sectionId: string;
@@ -35,14 +37,30 @@ export function planLines(answer: AnswerDocument, layout: LayoutReport): { secti
   const label = (section: SectionLines) => name({ id: section.sectionId, heading: section.heading });
   const over = targeted.filter((section) => section.overTarget! > 0).sort((a, b) => b.overTarget! - a.overTarget!);
   const under = targeted.filter((section) => section.overTarget! < 0).sort((a, b) => a.overTarget! - b.overTarget!);
+  // Sections that layout keeps as core: a suggestion to compress them first is wrong.
+  // Same rule as compressionHints in layout.ts: required or priority >= 4.
+  const protectedIds = new Set(answer.sections.filter((section) => section.required || section.priority >= 4).map((section) => section.id));
+  const overSum = over.reduce((sum, section) => sum + section.overTarget!, 0);
+  // Trust the over-target list only when amending those targets could actually clear
+  // the overflow (their amounts reach overflowLines) and none of them is protected;
+  // otherwise the page truly exceeds its capacity elsewhere, so fall back to
+  // compressionHints, which ranks the most compressible sections first.
+  const targetsExplainOverflow = over.length > 0 && overSum >= layout.overflowLines
+    && over.every((section) => !protectedIds.has(section.sectionId));
   if (layout.overflowLines > 0) {
-    const first = over.length ? over.map((section) => `${label(section)}超出目標 ${section.overTarget} 行`).join("、")
-      : layout.compressionHints.slice(0, 3).map((hint) => `${name({ id: hint.sectionId, heading: hint.heading })}（${hint.currentLines} 行）`).join("、");
+    const unprotected = layout.compressionHints.filter(hint => !hint.protected);
+    const fallback = unprotected.length ? unprotected : layout.compressionHints;
+    const first = targetsExplainOverflow
+      ? over.map((section) => `${label(section)}超出目標 ${section.overTarget} 行`).join("、")
+      : fallback.slice(0, 3).map((hint) => `${name({ id: hint.sectionId, heading: hint.heading })}（${hint.currentLines} 行）`).join("、");
     notes.push(`超出答案紙 ${layout.overflowLines} 行；建議先壓縮：${first}。`);
   } else if (layout.remainingLines > 0) {
     notes.push(under.length
       ? `還可再寫 ${layout.remainingLines} 行；低於目標的區塊：${under.map((section) => `${label(section)}少 ${-section.overTarget!} 行`).join("、")}。`
-      : `還可再寫 ${layout.remainingLines} 行${layout.remainingLines >= 2 ? "；若要寫滿兩頁，可擴充論述最核心的區塊" : ""}。`);
+      : over.length
+        // Room still exists, but a target is already exceeded: expansion would be misleading.
+        ? `還可再寫 ${layout.remainingLines} 行。`
+        : `還可再寫 ${layout.remainingLines} 行${layout.remainingLines >= 2 ? "；若要寫滿兩頁，可擴充論述最核心的區塊" : ""}。`);
   } else {
     notes.push("剛好寫滿答案紙。");
   }
@@ -70,4 +88,58 @@ export function describeTargetChanges(before: AnswerDocument, after: AnswerDocum
       const show = (value: number | undefined) => value === undefined ? "未設定" : `${value} 行`;
       return `${name(section ?? { id })}目標行數：${show(own(left, id))}→${show(own(right, id))}`;
     });
+}
+
+export interface LayoutWarning {
+  code: "ORPHAN_HEADING" | "SPLIT_LATIN_WORD" | "PUNCTUATION_ONLY_LINE";
+  page: number;
+  line: number;
+  sectionId: string;
+  message: string;
+}
+
+/** Detection only; the authoritative wrapping and answer remain untouched. */
+export function layoutWarnings(layout: LayoutReport, template?: AnswerTemplate): LayoutWarning[] {
+  const warnings: LayoutWarning[] = [];
+  const headings = new Map<string, LayoutReport["lines"][number]>();
+  const bodies = new Set<string>();
+  const lines = layout.lines.filter(line => !line.isSpacer);
+  const continues = (left: LayoutLine, right: LayoutLine) => !left.isLastLineOfParagraph
+    && left.sectionId === right.sectionId && left.paragraphIndex === right.paragraphIndex && left.isHeading === right.isHeading;
+  const measure = template?.paperProfile ? originalPaperMeasure(template) : displayWidth;
+  for (const [index, line] of lines.entries()) {
+    const previous = lines[index - 1];
+    if (previous && continues(previous, line) && /^[，。！？、；：,.!?;:…」』）】〉》]+$/u.test(line.text)) {
+      warnings.push({ code: "PUNCTUATION_ONLY_LINE", page: line.page, line: line.lineOnPage, sectionId: line.sectionId,
+        message: "自然換行後只剩結尾標點；不阻擋匯出，建議以 update_answer_info 設定 layoutOptions.avoidPunctuationOnlyLines=true，或調整換行。" });
+    }
+    if (line.isHeading) headings.set(line.sectionId, line);
+    else if (!bodies.has(line.sectionId)) {
+      bodies.add(line.sectionId);
+      const heading = headings.get(line.sectionId);
+      if (heading && heading.page < line.page) warnings.push({ code: "ORPHAN_HEADING", page: heading.page,
+        line: heading.lineOnPage, sectionId: line.sectionId,
+        message: "標題與內文分處兩頁；不阻擋匯出，建議移動區塊或改寫前文，讓標題與內文同頁。" });
+    }
+    if (previous && continues(previous, line)
+      && /[A-Za-z0-9]$/.test(previous.text) && /^[A-Za-z0-9]/.test(line.text)) {
+      let run = previous.text.match(/[A-Za-z0-9]+$/)![0];
+      for (let cursor = index - 2; cursor >= 0 && /^[A-Za-z0-9]+$/.test(lines[cursor + 1].text)
+        && continues(lines[cursor], lines[cursor + 1]); cursor -= 1) {
+        run = (lines[cursor].text.match(/[A-Za-z0-9]+$/)?.[0] ?? "") + run;
+      }
+      for (let cursor = index; cursor < lines.length && continues(lines[cursor - 1], lines[cursor]); cursor += 1) {
+        const prefix = lines[cursor].text.match(/^[A-Za-z0-9]+/)?.[0] ?? "";
+        run += prefix;
+        if (prefix.length !== lines[cursor].text.length) break;
+      }
+      const available = template?.paperProfile ? originalPaperAvailableWidth(line.format, template)
+        : (template?.columns ?? layout.columns) - line.format.leftIndent - line.format.rightIndent;
+      warnings.push({ code: "SPLIT_LATIN_WORD", page: previous.page, line: previous.lineOnPage, sectionId: line.sectionId,
+        message: measure(run) <= available
+          ? "英數字詞跨行斷開；字詞可容納於一行，僅因未啟用整字換行而拆開，不阻擋匯出，建議用 update_answer_info 設定 layoutOptions.wholeLatinWords=true，或改寫字句。"
+          : "英文字詞跨行斷開；字詞長於一行時仍須斷行，不阻擋匯出，建議縮短字詞或調整縮排。" });
+    }
+  }
+  return warnings;
 }

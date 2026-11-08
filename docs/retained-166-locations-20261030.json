@@ -1,0 +1,873 @@
+{
+  "scope": "Tracked source and unignored new source; excludes this inventory/audit, encoded immutable asset body, and incidental dependency integrity hashes. line=0 records a retained filename.",
+  "entries": [
+    {
+      "path": "README.md",
+      "line": 183,
+      "kind": "content",
+      "text": "預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，既有答案的模板代碼不遷移。兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」。此次只改代碼與名稱，底圖、字型、行數、座標及 Word／PDF 幾何完全沿用原設定。原稿紙以不可編輯底圖呈現，保留記分欄與印刷提示，正文為可編輯的 Word 表格文字或 PDF 文字。每頁 22 行，共兩頁；不增加標題、姓名、頁碼或字型註記。`title` 僅供答案管理及檔案中繼資料使用。",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "SPECIFICATION.md",
+      "line": 17,
+      "kind": "content",
+      "text": "新建答案的預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」，不遷移既有答案。代碼與名稱以外的模板設定、底圖資產及內部 `original_166` profile 保持不變：",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "assets/paper_166.asset.json",
+      "line": 0,
+      "kind": "filename",
+      "text": "assets/paper_166.asset.json",
+      "reason": "原始底圖資產檔名與完整內容不改，避免改變底圖或部署路徑。"
+    },
+    {
+      "path": "docs/cloud-run-rollout.md",
+      "line": 10,
+      "kind": "content",
+      "text": "- 保留正常申論紙與 `police_information_essay_165` 兩種流程；舊 ID `police_information_essay_166` 仍可讀取既有答案，兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」；不得以相似字型替代 MOE 5.1 字型通過 165 紙驗收。",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "docs/cloud-run-rollout.md",
+      "line": 20,
+      "kind": "content",
+      "text": "- `ESSAY_MCP_PAPER_FONT` 指向 MOE 原版標準楷書 5.1；其 SHA-256 由 `src/original-paper.ts` 驗證；`assets/paper_166.asset.json` 和 `templates/` 必須包含在映像檔內。",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "docs/codec-review-20261029.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/codec-review-20261029.md",
+      "line": 33,
+      "kind": "content",
+      "text": "沒有改 166 排版或 Word reserve。原工作區與 reference-ideal-pdf 中沒有找到可讀的原始 `考古題1-1星期二14-16(1).pdf`；已知目錄只有先前自己生成的比較檔，不能拿它當理想參考。沒有重試先前失敗或被拒絕的 Library 操作，沒有改道下載。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/codec-review-20261029.md",
+      "line": 37,
+      "kind": "content",
+      "text": "本輪沒有新增參考像素或 Word 成品驗收。上一輪真正看過的是新生成的 166 比較檔兩頁；首行約低 1.72pt 尚未校準，不能宣稱已改善。既有全 22 行 PDF／SVG 基線回歸保留並隨完整測試執行。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 0,
+      "kind": "filename",
+      "text": "docs/default166-validation-20261029.md",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 1,
+      "kind": "content",
+      "text": "# 166 新預設與兩頁比較檔驗證",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 9,
+      "kind": "content",
+      "text": "- `create_answer`、`create_answers` 及 `start_exam` 後的建立流程省略模板時使用 `police_information_essay_166`。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 13,
+      "kind": "content",
+      "text": "- 不更改 166 底圖、字級、座標、換行或格式限制。缺少、修改過或缺字的正式楷書仍明確失敗，不退回一般模板。批次任一題驗證失敗時不寫入其他題。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 18,
+      "kind": "content",
+      "text": "`output/pdf/default166-reference-comparison/default166-reference-pages1-2.pdf`，212,602 bytes，SHA-256 `5fd876a42fe91e8d50898dd16580bb75a34349055fd7d20095beeda7c8520e69`。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 20,
+      "kind": "content",
+      "text": "來源是父端提供的理想 PDF 第一、二頁全文，逐段保留文字與英文周邊空格，沒有按原版面行硬切、強制分頁或新增正文標頭。文字輸入保存在 `examples/reference-comparison-1-2.json`；生成器 `scripts/default166-demo.ts` 使用隔離 FileStore、實際 MCP 工具及省略模板的新建流程，不呼叫付費 API。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 43,
+      "kind": "content",
+      "text": "首行約低 1.72pt；本輪沒有為此全局調整 166。逐行座標、字型與底圖資料在產物旁 `inspection.json`，MCP layout、完整文字與 delivery 在 `manifest.json`，兩頁圖為 `page-1.png`、`page-2.png`。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 51,
+      "kind": "content",
+      "text": "新增專項涵蓋新預設、明確覆寫、舊答案不變、舊 key 重試、模板資源身分、預覽沿用模板、缺字型與批次無部分寫入。MCP 契約只對兩個既有工具的精確 template default 作受約束的相容比較，其他 schema 仍嚴格核對。既有一般模板案例逐項指定一般模板，保留全部斷言，讓無私有字型的 CI 仍測其原行為；另以已校驗字型驗證真正的 166 新預設與兩頁實檔。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 55,
+      "kind": "content",
+      "text": "- 配置正式楷書：313 通過、0 失敗、10 略過，69.4 秒；紀錄 `../default166-withfont-green.tap`。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/default166-validation-20261029.md",
+      "line": 56,
+      "kind": "content",
+      "text": "- 未配置正式楷書：297 通過、0 失敗、26 略過，61.5 秒；紀錄 `../default166-nofont-green.tap`。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 1,
+      "kind": "content",
+      "text": "# 新版儲存相容性與 166 回歸驗證",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 17,
+      "kind": "content",
+      "text": "## 166 匯出與基線",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 21,
+      "kind": "content",
+      "text": "修正既有 default166-demo 在乾淨工作目錄缺少 tmp/pdfs 時失敗的問題。已重新使用父端提供的參考第一、二頁全文，自然排版匯出 166 PDF，沒有重用八頁 general 合成樣本，沒有硬切參考版面行。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 23,
+      "kind": "content",
+      "text": "新產物在 `output/pdf/default166-reference-comparison/`：19pt TW-MOE-Std-Kai，兩頁各 22／21 行，正文連英文周邊空白在去除版面換行後完全一致，無 fontWarning。已以 Poppler 120dpi 重新渲染兩頁並實際逐頁看圖：原稿紙表頭與記分欄保留，未見缺字、超框或重疊。PDF SHA-256 `3eae7604aeca15f107d6369d182f0ebaac1d4eff65c97f45e616ebc91dc8d1ab`，座標與每行 baseline 在 inspection-next.json。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/optimization-next-20261029.md",
+      "line": 27,
+      "kind": "content",
+      "text": "Word reserve、字級、22 行上限、自然換行與 166 預設保持原狀。既有 spacing audit 已證實空白量測／PDF 皆 9.5pt，兩處較早換行來自歷史 Word compatibility reserve；本輪沒有任意移除它。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/original-paper-workflow.md",
+      "line": 3,
+      "kind": "content",
+      "text": "新建答案使用 `police_information_essay_165`（165 原稿紙）；`police_information_essay_166` 保留為相容別名，既有答案不遷移。兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」。兩者共用原底圖、字型與幾何設定；內部 `original_166` profile 及資產檔名保留。舊驗收腳本入口仍作相容轉接，新輸出檔名均使用 165。",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "docs/original-paper-workflow.md",
+      "line": 25,
+      "kind": "content",
+      "text": "新模式目前限定靠左、不使用粗斜體、不使用 tab；縮排與段落空行仍會計入行數。既有一般稿紙模式保留原本格式功能。背景沿用歷史 166 空白稿紙資產（目前顯示名稱為 165），沒有同學答案正文；以 SHA-256 確認資產完整性。",
+      "reason": "只說明舊 ID 相容、內部 profile 或不可改的歷史底圖路徑；現行名稱與預設均為 165。"
+    },
+    {
+      "path": "docs/paper-baseline-calibration-20261029.md",
+      "line": 1,
+      "kind": "content",
+      "text": "# 166 PDF/SVG baseline calibration",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/paper-baseline-calibration-20261029.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/paper-baseline-calibration-20261029.md",
+      "line": 23,
+      "kind": "content",
+      "text": "Library candidate identity: `libfile_853748ad33988191b3caf418b2b2bf7c`, `file_00000000f15882309bb72417d5e05c5e`, `/166-baseline-candidate.pdf`, version 0. Remote creation succeeded; local metadata application failed because Windows Python does not support `os.setxattr`. Library reports 236899 bytes, so byte identity is not assumed and there was no duplicate upload.",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/quality-e2e-20261029.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/quality-e2e-20261029.md",
+      "line": 15,
+      "kind": "content",
+      "text": "- 166 專用 `ESSAY_MCP_PAPER_FONT` 未設定，本輪沒有驗證其專用字型路徑或原稿紙成品；沒有拿微軟正黑體、標楷體代替 166 驗收。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/quality-e2e-20261029.md",
+      "line": 30,
+      "kind": "content",
+      "text": "已讀取 [PR 48 的實際 patch](https://github.com/Reese-max/police-essay-mcp/pull/48)。它主要移除 PDFKit width／height 導致的行末裁字，保留一般模板的名義欄位逐字繪製，並保留 166 的量測整行繪製。本輪基準 main 已有非換行的逐字 drawGridLine，所以沒有重新搬入這段裁字修復。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/quality-e2e-20261029.md",
+      "line": 32,
+      "kind": "content",
+      "text": "本輪新增的是實際 advance 防覆畫與實際寬度警告，不是重做 PR 48 的丟字修正；166 的繪製分支沒有改動。但都涉及 `src/exporters.ts`，未來整合 PR 48 時仍需人工核對並重跑本案例及 166 幾何測試，不能宣稱已完成跨 PR 或 166 驗收。未推送、未聯絡外部代理、未改其他分支。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/quality-e2e-20261029.md",
+      "line": 82,
+      "kind": "content",
+      "text": "- 25 項完整測試跳過原因仍包括 166 專用字型、Noto CJK／外部轉檔前置環境、Firestore emulator、舊版 contract checkout 與 Docker context。DOCX 檔已在 MCP 流程實際生成，但未做 Word／LibreOffice 成品排版驗收。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 第一輪歷史紀錄：本輪後另發現舊 ID 的顯示名稱仍為 166，已於第二輪修正為 165。下列「舊模板完整保留」及其 SHA 僅描述第一輪；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 10,
+      "kind": "content",
+      "text": "- `police_information_essay_166.json` 完整保留，作為舊代碼的相容模板；明確指定仍可使用。既有答案、版本、冪等請求及複製仍使用原來儲存的代碼，沒有資料遷移。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 11,
+      "kind": "content",
+      "text": "- 165 與 166 模板除了 `id`、`name` 外逐欄深度比對完全相同，繼續共用內部 `original_166` profile 與既有資產。歷史 QA 腳本檔名保留；default166-demo 的新建預設斷言更新為 165。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 20,
+      "kind": "content",
+      "text": "- 新增不需字型的測試覆蓋 165 名稱與預設、166 明確選用、批次／全卷覆寫、舊答案讀取／重排／複製、舊 166 冪等重試與請求衝突，並比對舊答案原檔及 revision 不變。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 30,
+      "kind": "content",
+      "text": "| `assets/paper_166.asset.json` | `d76a71e5c5d9fba4877a285e43abaa1fd06325ebef755fcde72f5081e779ba75` |",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 32,
+      "kind": "content",
+      "text": "| `templates/police_information_essay_166.json` | `8c2b3db854974fe19794aebe5d0eba2a4c359e9339806942fe3d2bf59c9a9b29` |",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/template-code-165-verification-20261030.md",
+      "line": 38,
+      "kind": "content",
+      "text": "`src/original-paper.ts` 與 `src/exporters.ts` 將新標籤文字 `165` 換回 `166` 後，與原 main 全文完全相同；沒有改變幾何、字距、baseline、換行或匯出演算法。核准字型 SHA、字型名稱與底圖內容均未改。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/verification-answer-review-20261030.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 歷史驗證紀錄：下文的 166 為當時的模板代碼或產物名稱，保留以供追溯。現行顯示名稱為 165，舊代碼僅供相容；目前狀態見 [第二輪名稱核對](template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "docs/verification-answer-review-20261030.md",
+      "line": 29,
+      "kind": "content",
+      "text": "- 18 項 166 原稿紙字型相關測試：環境未配置通過 SHA 校驗的教育部標準楷書，故略過，未執行這些渲染案例。本次未修改原稿紙、PDF／SVG 基線、Word 幾何或預設模板。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 3,
+      "kind": "content",
+      "text": "> 目前原始碼預設為 `police_information_essay_165`，兩個相容 ID 均顯示「165 原稿紙・兩頁申論」；本次未部署。下文保留 2026-10-29 的歷史提案與授權紀錄，其中 166 指當時代碼。現行核對見 [第二輪名稱核對](docs/template-name-165-audit-20261030.md)。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 5,
+      "kind": "content",
+      "text": "## 歷史授權（2026-10-29）：166 設為新建預設",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 7,
+      "kind": "content",
+      "text": "使用者後續明確要求「繼續處理並設為預設」，已取代先前不更改預設的限制。新建、批次與全卷建立省略模板採 166；明確指定及既有答案沿用原模板，沒有正式資料遷移。已用父端提供的理想 PDF 前兩頁全文實際輸出兩頁 19pt 教育部楷書，共 22＋21 行；沒有更改 166 的底圖或座標。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 9,
+      "kind": "content",
+      "text": "詳見 [本輪驗證與剩餘差異](docs/default166-validation-20261029.md)。HP 未取得理想 PDF 像素，首行 baseline 與父端量測約差 1.72pt，仍待父端比較兩份實檔；不得宣稱理想範例已像素重現，亦未宣稱四題正式內容已核對。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 11,
+      "kind": "content",
+      "text": "以下保留初輪調查時點的事實與提案；其中「省略模板預設 general」描述原先行為，現已依新授權改為 166。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 28,
+      "kind": "content",
+      "text": "5. 明確指定不存在的模板會回 `TEMPLATE_NOT_FOUND`；省略模板才使用預設 general。沒有證據支持「明確指定 166 失敗後默默改 general」這個缺陷說法。166 已有字型雜湊校驗及缺字拒絕機制。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 57,
+      "kind": "content",
+      "text": "本輪沒有原講義、認可的舊 PDF 與被批評的四題 PDF，不能確定漏項、第四題來源頁碼、字型替換或實際孤立標題。分享 ID 與同名對話的對應也未獨立確認。166 模板的存在及其參數不能證明它就是使用者當次指定的基準；不硬設 166、19pt 或其他行數為全域預設。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "proposal.md",
+      "line": 85,
+      "kind": "content",
+      "text": "- 25 項跳過涉及 166 專用字型、Noto CJK／實際轉檔等前置環境、Firestore emulator、contract provenance 的舊版 checkout，以及實際 Docker build context；各項原始跳過原因在 TAP 中。既有 MCP contract 檢查通過，但重新產生舊版 provenance 的測試未執行。CloudStore 測試使用 fake，不代表正式 Firestore／GCS 已驗收。",
+      "reason": "明確標註的歷史驗證紀錄；保留當時代碼、檔名、雜湊與測試結果以追溯。"
+    },
+    {
+      "path": "scripts/check-mcp-contract.ts",
+      "line": 156,
+      "kind": "content",
+      "text": "    \"before\": \"Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.\",",
+      "reason": "before 為 pinned 舊版合約的歷史說明；after 與實際 tools/list 已使用 165。"
+    },
+    {
+      "path": "scripts/default166-demo.ts",
+      "line": 0,
+      "kind": "filename",
+      "text": "scripts/default166-demo.ts",
+      "reason": "舊命令檔名保留為轉接入口，執行 canonical 165 腳本；新 QA 輸出名稱使用 165。"
+    },
+    {
+      "path": "scripts/paper166-smoke.ts",
+      "line": 0,
+      "kind": "filename",
+      "text": "scripts/paper166-smoke.ts",
+      "reason": "舊命令檔名保留為轉接入口，執行 canonical 165 腳本；新 QA 輸出名稱使用 165。"
+    },
+    {
+      "path": "scripts/verify-paper165.py",
+      "line": 8,
+      "kind": "content",
+      "text": "asset = json.loads((pathlib.Path(__file__).resolve().parents[1] / 'assets/paper_166.asset.json').read_text())",
+      "reason": "仍讀取同一個 paper_166.asset.json 原底圖，不改資產或幾何。"
+    },
+    {
+      "path": "scripts/verify-paper166.py",
+      "line": 0,
+      "kind": "filename",
+      "text": "scripts/verify-paper166.py",
+      "reason": "舊命令檔名保留為轉接入口，執行 canonical 165 腳本；新 QA 輸出名稱使用 165。"
+    },
+    {
+      "path": "src/domain.ts",
+      "line": 104,
+      "kind": "content",
+      "text": "  paperProfile: z.literal(\"original_166\").optional(),",
+      "reason": "內部 original_166 schema literal 保留，使舊模板與工具輸出合約仍可讀。"
+    },
+    {
+      "path": "src/original-paper.ts",
+      "line": 8,
+      "kind": "content",
+      "text": "const assetUrl = new URL(import.meta.url.includes(\"/dist/\") ? \"../../assets/paper_166.asset.json\" : \"../assets/paper_166.asset.json\", import.meta.url);",
+      "reason": "仍讀取同一個 paper_166.asset.json 原底圖，不改資產或幾何。"
+    },
+    {
+      "path": "src/server.ts",
+      "line": 667,
+      "kind": "content",
+      "text": "const PAPER_FORMAT_INSTRUCTION = \"165 原稿紙模板（police_information_essay_165）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。舊代碼 police_information_essay_166 保留為相容別名；既有答案沿用儲存的代碼，不遷移，兩者版面相同，顯示名稱均為「165 原稿紙・兩頁申論」。\";",
+      "reason": "明確說明舊 ID 為相容別名，同句指定兩個 ID 的顯示名稱均為 165。"
+    },
+    {
+      "path": "templates/police_information_essay_165.json",
+      "line": 44,
+      "kind": "content",
+      "text": "  \"paperProfile\": \"original_166\"",
+      "reason": "舊 ID／內部 original_166 profile 相容；兩個模板 name 均已改為 165。"
+    },
+    {
+      "path": "templates/police_information_essay_166.json",
+      "line": 0,
+      "kind": "filename",
+      "text": "templates/police_information_essay_166.json",
+      "reason": "舊 ID／內部 original_166 profile 相容；兩個模板 name 均已改為 165。"
+    },
+    {
+      "path": "templates/police_information_essay_166.json",
+      "line": 2,
+      "kind": "content",
+      "text": "  \"id\": \"police_information_essay_166\",",
+      "reason": "舊 ID／內部 original_166 profile 相容；兩個模板 name 均已改為 165。"
+    },
+    {
+      "path": "templates/police_information_essay_166.json",
+      "line": 44,
+      "kind": "content",
+      "text": "  \"paperProfile\": \"original_166\"",
+      "reason": "舊 ID／內部 original_166 profile 相容；兩個模板 name 均已改為 165。"
+    },
+    {
+      "path": "tests/cloud-storage.test.ts",
+      "line": 149,
+      "kind": "content",
+      "text": "test(\"166 invalid formatting and duplicate section IDs fail before any persistence\", async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/cloud-storage.test.ts",
+      "line": 151,
+      "kind": "content",
+      "text": "  const invalid = createAnswerDocument({ templateId: \"police_information_essay_166\", title: \"invalid\",",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 14,
+      "kind": "content",
+      "text": "const general = \"police_information_essay\", paper = \"police_information_essay_165\", legacyPaper = \"police_information_essay_166\";",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 48,
+      "kind": "content",
+      "text": "  assert.match(client.getInstructions()!, /police_information_essay_166 保留為相容別名/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 51,
+      "kind": "content",
+      "text": "test(\"165 changes only template identity; the 166 compatibility template keeps every rendering setting\", async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 57,
+      "kind": "content",
+      "text": "  assert.equal(current.paperProfile, \"original_166\", \"the internal rendering profile must remain unchanged\");",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 86,
+      "kind": "content",
+      "text": "    assert.doesNotMatch(JSON.stringify(loaded.content), /166 原稿紙/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 100,
+      "kind": "content",
+      "text": "  for (const tool of tools) assert.doesNotMatch(tool.description ?? \"\", /166/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 102,
+      "kind": "content",
+      "text": "  assert.doesNotMatch(client.getInstructions()!, /166 原稿紙/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 106,
+      "kind": "content",
+      "text": "  assert.doesNotMatch(text, /166 原稿紙/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 124,
+      "kind": "content",
+      "text": "        assert.doesNotMatch(JSON.stringify(result.content), /166 原稿紙/);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 133,
+      "kind": "content",
+      "text": "test(\"empty creates use 165 without migrating saved 166 answers, revisions or idempotent requests\", async () => withClient(async (client, store) => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/default-template.test.ts",
+      "line": 144,
+      "kind": "content",
+      "text": "  const args = { title: \"既有166\", sections: [], idempotencyKey: \"old-166-retry\" };",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 177,
+      "kind": "content",
+      "text": "test(\"bundle aggregates template, snapshot and 166 preflight errors with other answers\", async () => withClient(async (client, store) => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 181,
+      "kind": "content",
+      "text": "  const paper = { ...sample(\"原稿紙設定\"), templateId: \"police_information_essay_166\", sections: [] };",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 189,
+      "kind": "content",
+      "text": "    // Empty sections need no wrapping font; outputPageCount must reject this invalid 166 geometry.",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 293,
+      "kind": "content",
+      "text": "test(\"166 bundle shares its single PDF font and two-page policy\", { skip: !process.env.ESSAY_MCP_PAPER_FONT && \"ESSAY_MCP_PAPER_FONT not set\" }, async () => withClient(async (client, store) => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 294,
+      "kind": "content",
+      "text": "  const answer = createAnswerDocument({ templateId: \"police_information_essay_166\", title: \"原稿紙\", sections: [{ text: \"原稿紙內容。\" }] });",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 650,
+      "kind": "content",
+      "text": "test(\"166 overview carries exactly the active answer's paper preview metadata\", { skip: !process.env.ESSAY_MCP_PAPER_FONT && \"ESSAY_MCP_PAPER_FONT not set\" }, async () => withClient(async (client, store) => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 652,
+      "kind": "content",
+      "text": "  const paper = createAnswerDocument({ templateId: \"police_information_essay_166\", title: \"原稿紙\", sections: [{ text: \"正文\" }] });",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 909,
+      "kind": "content",
+      "text": "for (const paperMode of [false, true]) test(`render tools opt into full structured snapshots (${paperMode ? \"166 SVG\" : \"plain\"}) while defaults stay compact`,",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 912,
+      "kind": "content",
+      "text": "  const paper = createAnswerDocument({ templateId: \"police_information_essay_166\", title: \"paper full\", sections: [{ id: \"body\", text: \"原稿紙論述。\" }] });",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 1014,
+      "kind": "content",
+      "text": "test(\"166 bundle DOCX shares embedded font, paper background and exact page counts with PDF\", {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/exam-workflow.test.ts",
+      "line": 1017,
+      "kind": "content",
+      "text": "  const answers = [1, 2].map(n => createAnswerDocument({ templateId: \"police_information_essay_166\", title: `第${n}題`, sections: [{ text: `第${n}題論述。` }] }));",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 5495,
+      "kind": "content",
+      "text": "                      \"const\": \"original_166\"",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 5774,
+      "kind": "content",
+      "text": "                    \"const\": \"original_166\"",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 15293,
+      "kind": "content",
+      "text": "          \"description\": \"Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.\",",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 18682,
+      "kind": "content",
+      "text": "                      \"const\": \"original_166\"",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 18961,
+      "kind": "content",
+      "text": "                    \"const\": \"original_166\"",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/fixtures/mcp-contract.json",
+      "line": 28480,
+      "kind": "content",
+      "text": "          \"description\": \"Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.\",",
+      "reason": "凍結的舊版 MCP 合約／內部 original_166 schema；保留基準與已發布來源可重建性。"
+    },
+    {
+      "path": "tests/format-inheritance.test.ts",
+      "line": 35,
+      "kind": "content",
+      "text": "  // Like the 166 paper: headings default to non-bold.",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/format-inheritance.test.ts",
+      "line": 46,
+      "kind": "content",
+      "text": "test(\"the 166 paper accepts numbered headings without asking to turn off bold\",",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/format-inheritance.test.ts",
+      "line": 55,
+      "kind": "content",
+      "text": "      const created = await client.callTool({ name: \"create_answer\", arguments: { responseDetail: \"full\", templateId: \"police_information_essay_166\", title: \"編號\",",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/layout-options.test.ts",
+      "line": 154,
+      "kind": "content",
+      "text": "for (const paper of [false, true]) test(`split warnings reach check, bundle and overview with the ${paper ? \"166\" : \"regular\"} template`,",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/layout-options.test.ts",
+      "line": 156,
+      "kind": "content",
+      "text": "    const currentTemplate = await store.getTemplate(paper ? \"police_information_essay_166\" : template.id);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/layout.test.ts",
+      "line": 205,
+      "kind": "content",
+      "text": "    // Only the 166 paper embeds its font; the grid template keeps the plain Word font table.",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 9,
+      "kind": "content",
+      "text": "const template = templateSchema.parse(JSON.parse(readFileSync(new URL('../templates/police_information_essay_166.json', import.meta.url), 'utf8')));",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 11,
+      "kind": "content",
+      "text": "test('166 original image is intact and contains exactly 22 contiguous writing rows', () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 17,
+      "kind": "content",
+      "text": "test('166 wrapping fails explicitly without its font instead of using a substitute', () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 22,
+      "kind": "content",
+      "text": "test('166 measured wrapping preserves mixed text, punctuation and all characters', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 32,
+      "kind": "content",
+      "text": "test('166 whole Latin words use measured next-line width and preserve punctuation carry', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 60,
+      "kind": "content",
+      "text": "test('166 exports reject 45 lines even when an overflow override is requested', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 68,
+      "kind": "content",
+      "text": "test('166 full-run lookahead avoids oversized and whitespace-only moves, including punctuation carry', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 92,
+      "kind": "content",
+      "text": "test('166 split warnings use full-run font widths and non-first-line available width', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 112,
+      "kind": "content",
+      "text": "test('166 asset does not appear as a template and invalid formatting does not persist', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 117,
+      "kind": "content",
+      "text": " const dir = await fs.mkdtemp(join(tmpdir(),'paper166-store-'));",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 128,
+      "kind": "content",
+      "text": "test('166 canvas preview keeps two original pages even when content overflows', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 139,
+      "kind": "content",
+      "text": "test('166 canvas preview defines each glyph outline once per page and places every glyph', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 178,
+      "kind": "content",
+      "text": "test('166 Word export embeds the used paper glyphs so Word renders without the installed font', {skip:!process.env.ESSAY_MCP_PAPER_FONT}, async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/original-paper.test.ts",
+      "line": 184,
+      "kind": "content",
+      "text": " const dir=await fs.mkdtemp(join(tmpdir(),'paper166-docx-'));",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-baselines.test.ts",
+      "line": 13,
+      "kind": "content",
+      "text": "test(\"166 real PDF and SVG share all 22 baselines and preserve mixed-script spaces\", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async t => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-baselines.test.ts",
+      "line": 16,
+      "kind": "content",
+      "text": "    const template = await new FileStore().getTemplate(\"police_information_essay_166\");",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-code-compatibility.test.ts",
+      "line": 14,
+      "kind": "content",
+      "text": "test(\"165 and legacy 166 preserve identical wrapping, SVG, DOCX geometry and PDF drawing coordinates\", {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-code-compatibility.test.ts",
+      "line": 21,
+      "kind": "content",
+      "text": "    const legacy = await store.getTemplate(\"police_information_essay_166\");",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-multipage-baselines.test.ts",
+      "line": 13,
+      "kind": "content",
+      "text": "test(\"166 PDF and SVG preserve mixed-script text at all 44 calibrated baselines\", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async t => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/paper-multipage-baselines.test.ts",
+      "line": 16,
+      "kind": "content",
+      "text": "    const template = await new FileStore().getTemplate(\"police_information_essay_166\");",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/runtime-health.test.ts",
+      "line": 126,
+      "kind": "content",
+      "text": "    const store = new FileStore(), template = await store.getTemplate(\"police_information_essay_166\");",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/widget-tools.test.ts",
+      "line": 721,
+      "kind": "content",
+      "text": "test(\"OpenAI full render keeps 166 SVG pages without metadata, only for the same answer and version\", async () => {",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/widget-tools.test.ts",
+      "line": 722,
+      "kind": "content",
+      "text": "  const svgPages = [1, 2].map(page => `<svg xmlns=\"http://www.w3.org/2000/svg\" data-paper=\"166-${page}\"><g data-section-id=\"a\"><path d=\"M0 0\"/></g></svg>`);",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    },
+    {
+      "path": "tests/widget-tools.test.ts",
+      "line": 725,
+      "kind": "content",
+      "text": "    const papers = () => h.dom.window.document.querySelectorAll('.original-paper svg[data-paper^=\"166-\"]');",
+      "reason": "使用舊 ID、舊資料或舊 SVG fixture 的向後相容回歸；不是現行模板顯示名稱。"
+    }
+  ]
+}

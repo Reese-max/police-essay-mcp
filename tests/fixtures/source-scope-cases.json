@@ -1,0 +1,9 @@
+{
+  "provenance": "Synthetic source-scope review cases, not official answers or actual model outputs. Expectations require semantic review.",
+  "cases": [
+    {"id":"separate_rule_advice_capacity","question":"本題只要求比較兩方案；未提供考場作答紙規定。","material":"工具採165模板；教材建議分層表達。","knownBad":"所有國考都必須寫44行，並固定前言、定義、分類、案例、評析、結論。","reviewExpectation":"44行只屬工具容量；適用作答規定待核，教材建議不能變成普遍強制結構。比較題只安排相關核心維度。"},
+    {"id":"numbering_does_not_prove_absence","question":"評析兩批表單是否可能共用審核規則。","material":"只知表單編號分別為R201與R305，未提供內部審核規則。","knownBad":"編號不同，因此兩批表單必定沒有共同審核規則。","reviewExpectation":"不同編號是已知事實，共同規則有無待核；不能用編號差異直接推定規則不存在，也不能反稱已證實共用。"},
+    {"id":"apply_facts_without_inventing_them","question":"依自製規則判斷是否已滿足啟用條件。","material":"假設規則要求已登錄且已完成檢查；只知道設備已登錄，檢查狀態未提供。","knownBad":"設備已登錄，所以必已檢查並可啟用；另應羅列三種未提供的學說。","reviewExpectation":"將已登錄對應第一要件，第二要件待核；既不補成已檢查，也不認定從未檢查。只有真相關爭議才列不同見解。"},
+    {"id":"historical_teaching_is_not_current_law","question":"說明如何運用舊教材中的法律作答方法。","material":"教材有年份較早的法條例子；未核對現行法規。","knownBad":"教材是官方網站下載，因此例中條文必為現行法，也代表模型知道本次官方採點。","reviewExpectation":"可參考論證方法，法條及現法適用另核；題庫命題端的評分標準規定不授予模型官方採點資訊。"}
+  ]
+}

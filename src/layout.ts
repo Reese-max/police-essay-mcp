@@ -2,17 +2,19 @@ import {
   answerParagraphSchema,
   headingStyleSchema,
   paragraphFormatSchema,
+  normalizeNewlines,
   type AnswerParagraph,
   type AnswerSection,
   type AnswerTemplate,
   type HeadingStyle,
   type LayoutLine,
+  type LayoutOptions,
   type ParagraphFormat,
   type CompressionHint,
   type LayoutReport,
 } from "./domain.js";
 
-import { wrapOriginalPaper } from "./original-paper.js";
+import { wrapOriginalPaper, originalPaperMeasure, originalPaperAvailableWidth } from "./original-paper.js";
 
 const COMBINING_MARKS = /\p{Mark}/u;
 const ZERO_WIDTH_CHARACTERS = /[\u200b-\u200d\ufe0e\ufe0f]/u;
@@ -75,7 +77,7 @@ function isWideCodePoint(codePoint: number): boolean {
   );
 }
 
-function splitGraphemes(text: string): string[] {
+export function splitGraphemes(text: string): string[] {
   if (graphemeSegmenter) return Array.from(graphemeSegmenter.segment(text), (part) => part.segment);
   return Array.from(text);
 }
@@ -123,16 +125,13 @@ export function expandTabs(text: string, tabSize = 4, startColumn = 0): string {
   return expanded;
 }
 
-function normalizeNewlines(text: string): string {
-  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-}
-
 function splitParagraphText(text: string): string[] {
   return normalizeNewlines(text).split("\n");
 }
 
 function sectionParagraphs(section: AnswerSection): AnswerParagraph[] {
-  if (section.paragraphs?.length) return section.paragraphs;
+  if (section.paragraphs?.length) return section.paragraphs.flatMap(paragraph =>
+    splitParagraphText(paragraph.text).map(text => ({ ...paragraph, text })));
   return splitParagraphText(section.text).map((text) => ({ text }));
 }
 
@@ -187,17 +186,20 @@ function wrapParagraph(
   paragraph: string,
   format: ParagraphFormat,
   columns: number,
+  options: LayoutOptions = {},
 ): string[] {
   const lines: string[] = [];
   let current = "";
   let currentWidth = 0;
   let lineIndex = 0;
+  let offset = 0;
 
   while (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0) >= columns) {
     throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、leftIndent 或 rightIndent。");
   }
 
   for (const character of splitGraphemes(paragraph)) {
+    offset += character.length;
     while (true) {
       const lineIndent = format.leftIndent + (lineIndex === 0 ? format.firstLineIndent : 0);
       const available = columns - lineIndent - format.rightIndent;
@@ -212,14 +214,35 @@ function wrapParagraph(
         currentWidth += width;
         break;
       }
-      lines.push(current);
-      current = "";
-      currentWidth = 0;
+      const trailing = options.wholeLatinWords && /^[A-Za-z0-9]$/.test(character)
+        ? current.match(/[A-Za-z0-9]+$/)?.[0] ?? "" : "";
+      const nextAvailable = columns - format.leftIndent - format.rightIndent;
+      const run = trailing ? trailing + character + (paragraph.slice(offset).match(/^[A-Za-z0-9]*/)?.[0] ?? "") : "";
+      const carry = trailing && /\S/u.test(current.slice(0, -trailing.length))
+        && displayWidth(run) <= nextAvailable ? trailing : "";
+      lines.push(carry ? current.slice(0, -carry.length) : current);
+      current = carry;
+      currentWidth = carry.length;
       lineIndex += 1;
     }
   }
 
   if (current.length > 0 || lines.length === 0) lines.push(current);
+  if (options.avoidPunctuationOnlyLines) {
+    for (let index = 1; index < lines.length; index++) {
+      if (!/^[，。！？、；：,.!?;:…」』）】〉》]+$/u.test(lines[index])) continue;
+      const previous = lines[index - 1];
+      const last = splitGraphemes(previous).at(-1);
+      if (!last) continue;
+      const word = options.wholeLatinWords ? previous.match(/[A-Za-z0-9]+$/)?.[0] : undefined;
+      const carry = word && /\S/u.test(previous.slice(0, -word.length))
+        && displayWidth(word + lines[index]) <= columns - format.leftIndent - format.rightIndent ? word : last;
+      if (!/\S/u.test(previous.slice(0, -carry.length))
+        || displayWidth(carry + lines[index]) > columns - format.leftIndent - format.rightIndent) continue;
+      lines[index - 1] = previous.slice(0, -carry.length);
+      lines[index] = carry + lines[index];
+    }
+  }
   return lines;
 }
 
@@ -266,14 +289,15 @@ function addParagraph(
   format: ParagraphFormat,
   options: { isHeading?: boolean } = {},
   template: AnswerTemplate,
+  layoutOptions: LayoutOptions,
 ): void {
   for (let index = 0; index < format.spaceBeforeLines; index += 1) {
     makeLine(lines, sectionId, paragraphIndex, "", format, { isSpacer: true });
   }
 
-  const wrapped = template.paperProfile
-    ? wrapOriginalPaper(text, format, template)
-    : wrapParagraph(text, format, template.columns);
+  const wrapped = splitParagraphText(text).flatMap(part => template.paperProfile
+    ? wrapOriginalPaper(part, format, template, layoutOptions)
+    : wrapParagraph(part, format, template.columns, layoutOptions));
   wrapped.forEach((line, index) => {
     makeLine(lines, sectionId, paragraphIndex, line, format, {
       isHeading: options.isHeading,
@@ -319,15 +343,52 @@ function compressionHints(
   return sorted;
 }
 
+/** Render-only view. Absent options preserve historical answers and explicit formats win. */
+function compactPaperSection(template: AnswerTemplate, section: AnswerSection, options: LayoutOptions): AnswerSection & { sourceParagraphIndexes?: number[]; omitEmptySection?: boolean } {
+  if (!template.paperProfile || !options.compactPaper) return section;
+  const special = (format: object | undefined, defaults: object) => Object.entries(format ?? {})
+    .some(([key, value]) => value !== undefined && value !== (defaults as Record<string, unknown>)[key]);
+  const bodyDefaults = { ...DEFAULT_PARAGRAPH_FORMAT, ...template.paragraphDefaults };
+  const headingDefaults = { ...DEFAULT_HEADING_STYLE, ...template.headingDefaults };
+  if (special(section.headingStyle, headingDefaults) || special(section.paragraphFormat, bodyDefaults)
+    || section.paragraphs?.some(p => special(p.format, bodyDefaults))) return section;
+  const retained = sectionParagraphs(section).map((paragraph, index) => ({ paragraph, sourceIndex: index + 1 }))
+    .filter(p => p.paragraph.text.trim() !== '');
+  const paragraphs = retained.map(p => ({ ...p.paragraph }));
+  // Retain source records for review. Only an entirely blank, unformatted render view disappears.
+  // A meaningful heading with missing body remains visible instead of inventing prose.
+  if (!paragraphs.length) return section.heading?.trim() ? section : { ...section, omitEmptySection: true };
+  let heading = section.heading;
+  if (heading?.trim() === '') heading = undefined;
+  if (heading && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
+    const prefix = heading + (/[：:]$/u.test(heading) ? '' : '：');
+    const spaces = paragraphs[0].text.match(/^\s*/u)![0];
+    const firstBody = spaces + (splitGraphemes(paragraphs[0].text.slice(spaces.length))[0] ?? '');
+    // Reserve room for a real body grapheme using the same font/Word width as wrapping.
+    if (originalPaperMeasure(template)(prefix + firstBody)
+      <= originalPaperAvailableWidth(paragraphFormatSchema.parse(bodyDefaults), template, 0)) {
+      paragraphs[0].text = prefix + paragraphs[0].text;
+      heading = undefined;
+    }
+  }
+  return { ...section, heading, paragraphs, sourceParagraphIndexes: retained.map(p => p.sourceIndex) };
+}
+
 export function layoutSections(
   template: AnswerTemplate,
   sections: AnswerSection[],
+  options: LayoutOptions = {},
 ): LayoutReport {
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
 
-  for (const section of [...sections].sort((a, b) => a.order - b.order)) {
+  for (const storedSection of [...sections].sort((a, b) => a.order - b.order)) {
+    const section = compactPaperSection(template, storedSection, options);
+    if (section.omitEmptySection) {
+      sectionLineCounts.set(section.id, 0);
+      continue;
+    }
     const sectionStart = lines.length;
     const headingStyle = mergeHeadingStyle(template, section);
     if (section.heading) {
@@ -340,6 +401,7 @@ export function layoutSections(
         paragraphFormatSchema.parse(headingStyle),
         { isHeading: true },
         template,
+        options,
       );
     }
 
@@ -347,14 +409,38 @@ export function layoutSections(
       addParagraph(
         lines,
         section.id,
-        index + 1,
+        section.sourceParagraphIndexes?.[index] ?? index + 1,
         paragraph.text,
         mergeParagraphFormat(template, section, paragraph.format),
         {},
         template,
+        options,
       );
     });
     sectionLineCounts.set(section.id, lines.length - sectionStart);
+  }
+
+  if (options.keepHeadingWithNext) {
+    for (let index = 0; index < lines.length; index += 1) {
+      const heading = lines[index];
+      if (!heading.isHeading || (index > 0 && lines[index - 1].isHeading && lines[index - 1].sectionId === heading.sectionId)) continue;
+      let bodyIndex = index + 1;
+      while (bodyIndex < lines.length && lines[bodyIndex].sectionId === heading.sectionId
+        && (lines[bodyIndex].isHeading || lines[bodyIndex].isSpacer)) {
+        bodyIndex += 1;
+      }
+      if (bodyIndex === lines.length || lines[bodyIndex].sectionId !== heading.sectionId) continue;
+      const offset = index % template.linesPerPage;
+      const blockLines = bodyIndex - index + 1;
+      if (offset === 0 || blockLines > template.linesPerPage
+        || Math.floor(index / template.linesPerPage) === Math.floor(bodyIndex / template.linesPerPage)) continue;
+      const count = template.linesPerPage - offset;
+      const padding = Array.from({ length: count }, () => ({ ...heading, text: "", displayWidth: 0,
+        isHeading: false, isSpacer: true, isPadding: true, isFirstLineOfParagraph: false, isLastLineOfParagraph: false }));
+      lines.splice(index, 0, ...padding);
+      sectionLineCounts.set(heading.sectionId, (sectionLineCounts.get(heading.sectionId) ?? 0) + count);
+      index = bodyIndex + count;
+    }
   }
 
   lines.forEach((line, index) => {
@@ -427,7 +513,7 @@ export function renderTextLine(line: LayoutLine, template: AnswerTemplate): stri
   const extra = Math.max(0, available - contentWidth);
   let content = expanded;
 
-  if ((line.format.alignment === "justify" || line.format.alignment === "distributed") && !line.isLastLineOfParagraph) {
+  if (line.format.alignment === "distributed" || (line.format.alignment === "justify" && !line.isLastLineOfParagraph)) {
     content = addJustificationSpaces(content, extra, line.format.alignment === "distributed");
   } else if (line.format.alignment === "right") {
     content = `${" ".repeat(extra)}${content}`;

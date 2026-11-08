@@ -1,11 +1,18 @@
+import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRUCTIONS, WORKFLOW_RESOURCE_LINES } from "./agent-guidance.js";
+export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
+import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
+import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import path from "node:path";
+import { isRetryableExportError, publicExportMessage } from "./export-errors.js";
 import { z } from "zod";
 import {
-  answerDocumentSchema,
+  answerDocumentSchema, examQuestionSchema, examFormatsSchema, type ExamPlan,
+  MAX_ANSWER_BYTES,
+  layoutOptionsSchema,
   answerParagraphSchema,
   answerSectionInputSchema,
-  answerSectionSchema as storedSectionSchema,
   applyTextEdits,
   createAnswerDocument,
   assertExpectedVersion,
@@ -26,18 +33,22 @@ import {
 } from "./domain.js";
 import { describeChanges } from "./changes.js";
 import { renumberItems } from "./numbering.js";
-import { describeLines, describeTargetChanges, planLines } from "./planning.js";
+import { describeLines, describeTargetChanges, planLines, layoutWarnings } from "./planning.js";
 import { answerFileName, describeAnswerList, describeInfoChanges, encodeStrict, sortAnswers, type ExportFormat } from "./answer-info.js";
-import { exportDocx, exportPdf, exportText, withTemporaryExport } from "./exporters.js";
+import { exportDocx, exportPdf, exportText, exportPdfBundle, exportDocxBundle, exportParagraphTextBundle, outputPageCount, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
-import { FileStore, isStoreNotFound, type EssayStore } from "./storage.js";
+import { FileStore, isStoreNotFound, isStoreConflict, conflictBackoff, safeId, type EssayStore } from "./storage.js";
 import { originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
+import { examProgress } from "./exam-progress.js";
+import { reviewPlanSchema } from "./review-schema.js";
+import { reviewAnswer, reviewFingerprint } from "./review.js";
 import { toolScope } from "./oauth.js";
 
-export const DEFAULT_TEMPLATE_ID = "police_information_essay";
+export const DEFAULT_TEMPLATE_ID = "police_information_essay_165";
 
+const responseDetailSchema = z.enum(["summary", "full"]).default("summary").describe("Full snapshot or compact summary.");
 const expectedVersionSchema = z.number().int().positive().optional();
 const answerIdSchema = z.string().regex(/^ans_[A-Za-z0-9-]+$/);
 
@@ -48,13 +59,12 @@ const answerSummarySchema = answerDocumentSchema.pick({ id: true, templateId: tr
 const layoutSummarySchema = layoutReportSchema.pick({
   capacity: true, totalLines: true, pagesUsed: true, overflowLines: true, remainingLines: true, fits: true, status: true,
 }).loose();
-const sectionSummarySchema = storedSectionSchema.pick({ id: true, heading: true, order: true }).loose();
 const templateSummarySchema = templateSchema.pick({ id: true, name: true, pages: true, linesPerPage: true, paperProfile: true }).loose();
 
 const snapshotOutputSchema = z.object({
   answer: answerSummarySchema,
   layout: layoutSummarySchema,
-});
+}).loose();
 
 // Loose: check_layout also returns the lines each section uses against its target.
 const layoutOutputSchema = z.object({
@@ -63,11 +73,10 @@ const layoutOutputSchema = z.object({
   layout: layoutSummarySchema,
 }).loose();
 
-const sectionOutputSchema = z.object({
-  section: sectionSummarySchema,
-  answer: answerSummarySchema,
-  layout: layoutSummarySchema,
-});
+const writeOutputSchema = z.object({
+  answer: answerDocumentSchema.pick({ id: true, title: true, version: true }).loose(),
+  layout: layoutReportSchema.pick({ fits: true, totalLines: true }).loose(),
+}).loose();
 
 const replacementContentSchema = z.object({
   newText: z.string().max(100_000).optional(),
@@ -103,6 +112,219 @@ type PreviewOperation = typeof PREVIEW_OPERATIONS[number];
 
 const sectionIdSchema = z.string().min(1);
 const textEditsSchema = z.array(textEditSchema).min(1).max(50);
+const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
+const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
+const createFields = {
+  examId: examIdSchema.optional(),
+  layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
+  templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
+  question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
+  questionNo: z.number().int().min(1).max(20).optional(),
+  lineTargets: z.array(z.object({ sectionId: sectionIdSchema, lines: z.number().int().min(1).max(200) })).max(100).optional()
+    .describe("sectionId must equal an explicit id given in sections."),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/).optional()
+    .describe("Retry-safe: the same key and request return the existing answer"),
+};
+const createRequestSchema = z.strictObject({ ...createFields, sections: z.array(answerSectionInputSchema).max(100).default([]) });
+const batchCreateSchema = z.strictObject({ ...createFields,
+  sections: z.array(z.record(z.string(), z.unknown())).max(100).default([]).describe("Same section objects as create_answer.sections."),
+});
+// Preserve the received JSON for hashing and indexed validation; prepareCreate applies the real schema.
+function rawCreateInput<T extends z.ZodType>(schema: T) {
+  const { $schema: _schema, ...json } = z.toJSONSchema(schema, { io: "input" });
+  return z.unknown().meta(json) as z.ZodType<z.input<T>>;
+}
+type CreateRequest = z.infer<typeof createRequestSchema>;
+type PreparedCreate = { current: AnswerSnapshot; replayed?: true; examId?: string; examQuestionNo?: number; keyHash?: string; requestHash?: string; linkPending?: true; message?: string };
+class CreateError extends Error {
+  constructor(readonly code: "INVALID_INPUT" | "TEMPLATE_NOT_FOUND" | "LAYOUT_INVALID" | "IDEMPOTENCY_KEY_REUSED", message: string) {
+    super(`${code}：${message}`);
+  }
+}
+const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
+
+async function createReplay(store: EssayStore, answer: AnswerDocument): Promise<PreparedCreate | undefined> {
+  if (!answer.createRequestHash) return;
+  let existing: AnswerDocument;
+  try { existing = await store.getAnswer(answer.id); }
+  catch (error) { if (isStoreNotFound(error)) return; throw error; }
+  if (existing.createRequestHash !== answer.createRequestHash) {
+    throw new CreateError("IDEMPOTENCY_KEY_REUSED", `此 idempotencyKey 已用於不同的建立請求（${answer.id}）。要建立另一份答案請換新的 idempotencyKey；要取回原答案請用 read_answer ${answer.id}。`);
+  }
+  let template: AnswerTemplate;
+  try { template = await store.getTemplate(existing.templateId); }
+  catch (error) {
+    if (isStoreNotFound(error)) throw new CreateError("TEMPLATE_NOT_FOUND", `此 idempotencyKey 的既有答案 ${existing.id}：${errorMessage(error)}`);
+    throw error;
+  }
+  try { return { current: snapshot({ ...existing, sections: inLayoutOrder(existing.sections) }, template), replayed: true }; }
+  catch (error) { throw new CreateError("LAYOUT_INVALID", `此 idempotencyKey 的既有答案 ${existing.id}：${errorMessage(error)}`); }
+}
+
+async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionNo?: number): Promise<PreparedCreate> {
+  const parsed = createRequestSchema.safeParse(input);
+  if (!parsed.success) throw new CreateError("INVALID_INPUT", parsed.error.issues.map(issue => `${issue.path.join(".") || "輸入"}：${issue.message}`).join("；"));
+  const request = parsed.data;
+  const keyHash = request.examId && request.idempotencyKey ? sha256(request.idempotencyKey) : undefined;
+  let savedCreate: AnswerDocument | undefined;
+  // An omitted template on a retry follows the saved answer, even if the default changed.
+  // The full request hash below still rejects a changed payload or explicit template.
+  if ((input as CreateRequest).templateId === undefined && request.idempotencyKey) {
+    let savedId = request.examId ? undefined : `ans_idem-${sha256(request.idempotencyKey).slice(0, 40)}`;
+    if (request.examId && keyHash) {
+      const plan = await store.getExam(request.examId);
+      const entry = plan.createRequests?.[keyHash];
+      savedId = entry && plan.questions.find(q => q.questionNo === entry.questionNo)?.answerId;
+    }
+    if (savedId) try {
+      savedCreate = await store.getAnswer(savedId);
+      if (request.examId) request.templateId = savedCreate.templateId;
+    }
+    catch (error) { if (!isStoreNotFound(error)) throw error; }
+  }
+  const createRequestHash = (templateId = request.templateId) => {
+    const { title, question, exam, questionNo, lineTargets } = request;
+    const received = input as CreateRequest;
+    return sha256(canonicalJson({ templateId, title, question, exam, questionNo, lineTargets,
+      sections: received.sections ?? [], ...(received.layoutOptions === undefined ? {} : { layoutOptions: received.layoutOptions }) }));
+  };
+  if (savedCreate && !request.examId) {
+    // The former default also lets a damaged stored template reach the existing replay diagnostics.
+    const replayTemplate = [request.templateId, savedCreate.templateId, "police_information_essay"]
+      .find(templateId => savedCreate!.createRequestHash === createRequestHash(templateId));
+    if (replayTemplate) request.templateId = replayTemplate;
+    const replay = await createReplay(store, { ...savedCreate, createRequestHash: createRequestHash() });
+    if (replay) return replay;
+  }
+  const requestHash = keyHash ? sha256(canonicalJson({ ...(input as CreateRequest), templateId: request.templateId, sections: (input as CreateRequest).sections ?? [] })) : undefined;
+  if (keyHash) for (const exam of await store.listExams()) {
+    if (exam.createRequests?.[keyHash] && exam.createRequests[keyHash].requestHash !== requestHash)
+      throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求；請換新的 key 或 read_answer 取回既有答案。");
+  }
+  if (request.examId) {
+    const plan = await store.getExam(request.examId);
+    if (keyHash && plan.createRequests?.[keyHash]) request.questionNo ??= plan.createRequests[keyHash].questionNo;
+    request.questionNo ??= defaultQuestionNo;
+    const ordered = [...plan.questions].sort((a, b) => a.questionNo - b.questionNo);
+    let question = ordered.find(q => q.questionNo === request.questionNo);
+    if (request.questionNo === undefined) {
+      for (const q of ordered) {
+        if (!q.answerId) { question = q; break; }
+        try { await store.getAnswer(q.answerId); } catch (error) { if (!isStoreNotFound(error)) throw error; question = q; break; }
+      }
+      question ??= ordered[0];
+    }
+    if (!question) throw new CreateError("INVALID_INPUT", "questionNo 不在考試計畫中。");
+    request.exam ??= plan.title; request.questionNo ??= question.questionNo; request.question ??= question.question;
+    if (question.answerId) {
+      try { return { current: await loadSnapshot(store, question.answerId), replayed: true, examId: plan.id, examQuestionNo: question.questionNo, keyHash, requestHash }; }
+      catch (error) { if (!isStoreNotFound(error)) throw error; }
+    }
+  }
+  const { templateId, title, question, exam, questionNo, lineTargets, sections, idempotencyKey, layoutOptions } = request;
+  try { safeId(templateId); }
+  catch { throw new CreateError("INVALID_INPUT", "templateId 不是有效的識別碼。"); }
+  let template: AnswerTemplate;
+  try { template = await store.getTemplate(templateId); }
+  catch (error) { if (isStoreNotFound(error)) throw new CreateError("TEMPLATE_NOT_FOUND", `找不到模板 ${templateId}。`); throw error; }
+  let answer: AnswerDocument;
+  try {
+    answer = { ...createAnswerDocument({ templateId, title, question, sections }), exam, questionNo,
+      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true,
+        ...(template.paperProfile ? { compactPaper: true } : {}), ...layoutOptions },
+      ...(lineTargets ? { lineTargets: Object.fromEntries(lineTargets.map(({ sectionId, lines }) => [sectionId, lines])) } : {}) };
+    const targetIds = new Set<string>();
+    for (const { sectionId } of lineTargets ?? []) {
+      if (!sections.some(section => section.id === sectionId)) throw new Error(`找不到 sectionId：${sectionId}；lineTargets 必須參照 sections 明確提供的 id。`);
+      if (targetIds.has(sectionId)) throw new Error(`重複的 lineTargets sectionId：${sectionId}。`);
+      targetIds.add(sectionId);
+    }
+    ensureUniqueSectionIds(answer.sections);
+  } catch (error) { throw new CreateError("INVALID_INPUT", errorMessage(error)); }
+  let current: AnswerSnapshot;
+  try { current = snapshot(answer, template); }
+  catch (error) { throw new CreateError("LAYOUT_INVALID", errorMessage(error)); }
+  if (idempotencyKey && !request.examId) {
+    answer.id = `ans_idem-${sha256(idempotencyKey).slice(0, 40)}`;
+    // Only templateId gets its default before hashing; sections retain input fields and newlines.
+    current.answer = { ...answer, createRequestHash: createRequestHash() };
+    const replay = await createReplay(store, current.answer);
+    if (replay) return replay;
+  }
+  if (Buffer.byteLength(JSON.stringify(current.answer)) > MAX_ANSWER_BYTES) throw new CreateError("INVALID_INPUT", "答案超過 700 KiB 文件上限。");
+  if (request.examId) {
+    current.answer.id = `ans_exam-${sha256(`${request.examId}:${request.questionNo}`).slice(0, 40)}`;
+    try { return { current: await loadSnapshot(store, current.answer.id), replayed: true, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash }; }
+    catch (error) { if (!isStoreNotFound(error)) throw error; }
+  }
+  return { current, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash };
+}
+
+async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    const plan = await store.getExam(examId);
+    const question = plan.questions.find(q => q.questionNo === questionNo);
+    if (!question) throw new CreateError("INVALID_INPUT", "questionNo 不在考試計畫中。");
+    if (keyHash && plan.createRequests?.[keyHash] && plan.createRequests[keyHash].requestHash !== requestHash)
+      throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求。");
+    if (question.answerId === answer.id && (!keyHash || plan.createRequests?.[keyHash])) return;
+    const updated = { ...plan, ...(keyHash ? { createRequests: { ...plan.createRequests, [keyHash]: { requestHash: requestHash!, questionNo: question.questionNo } } } : {}), updatedAt: new Date().toISOString(), questions: plan.questions.map(q => q === question ? { ...q, answerId: answer.id } : q) };
+    try { await store.saveExam(updated, { expectedVersion: plan.version }); return; }
+    catch (error) { if (attempt >= 4 || !isStoreConflict(error)) throw error; await conflictBackoff(attempt); }
+  }
+}
+
+async function linkSavedCreate(store: EssayStore, prepared: PreparedCreate): Promise<PreparedCreate> {
+  if (prepared.examId) try {
+    await linkExamAnswer(store, prepared.examId, prepared.current.answer, prepared.keyHash, prepared.requestHash, prepared.examQuestionNo);
+  } catch (error) {
+    if (!isStoreConflict(error)) throw error;
+    return { ...prepared, linkPending: true, message: "答案已保存；考試連結待完成。請呼叫 get_exam_progress 或以相同請求重試 create_answer。" };
+  }
+  return prepared;
+}
+
+async function commitCreate(store: EssayStore, prepared: PreparedCreate): Promise<PreparedCreate> {
+  if (prepared.examId && prepared.keyHash) {
+    for (let attempt = 0; ; attempt++) {
+      const plan = await store.getExam(prepared.examId);
+      const entry = plan.createRequests?.[prepared.keyHash];
+      if (entry) {
+        if (entry.requestHash !== prepared.requestHash) throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求。");
+        break;
+      }
+      try {
+        await store.saveExam({ ...plan, updatedAt: new Date().toISOString(), createRequests: { ...plan.createRequests,
+          [prepared.keyHash]: { requestHash: prepared.requestHash!, questionNo: prepared.examQuestionNo! } } }, { expectedVersion: plan.version }); break;
+      } catch (error) { if (!isStoreConflict(error)) throw error;
+        if (attempt >= 4) { if (prepared.replayed) return linkSavedCreate(store, prepared); throw error; }
+        await conflictBackoff(attempt); }
+    }
+  }
+  if (prepared.replayed) {
+    return linkSavedCreate(store, prepared);
+  }
+  try { await store.saveAnswer(prepared.current.answer); }
+  catch (error) {
+    // A concurrent create may win after preflight, or a successful write may lose its response.
+    if (prepared.examId) {
+      try {
+        const current = await loadSnapshot(store, prepared.current.answer.id);
+        return linkSavedCreate(store, { ...prepared, current, replayed: true });
+      } catch (lookupError) { if (!isStoreNotFound(lookupError)) throw lookupError; }
+    }
+    const replay = await createReplay(store, prepared.current.answer);
+    if (replay) return replay;
+    throw error;
+  }
+  const current = await loadSnapshot(store, prepared.current.answer.id);
+  return linkSavedCreate(store, { ...prepared, current });
+}
 
 /** Arguments each previewed write tool takes besides answerId and expectedVersion. */
 const previewArgumentSchemas = {
@@ -116,13 +338,6 @@ const previewArgumentSchemas = {
   renumber_items: z.object({ sectionId: sectionIdSchema.optional() }),
 } satisfies Record<PreviewOperation, z.ZodObject>;
 
-// Output schemas of the tools added after the base contract stay minimal to fit the tools/list
-// budget; before/after snapshots and the remaining answer/layout fields pass through untyped.
-const compactSnapshotShape = {
-  answer: z.object({ id: answerIdSchema, version: z.number().int().positive() }).loose(),
-  layout: layoutReportSchema.pick({ totalLines: true, overflowLines: true, fits: true }).loose(),
-};
-
 const changePreviewOutputSchema = z.object({
   operation: z.enum(PREVIEW_OPERATIONS),
   answerId: answerIdSchema,
@@ -131,33 +346,13 @@ const changePreviewOutputSchema = z.object({
   summary: z.array(z.string()),
 }).loose();
 
-const editOutputSchema = z.object({
-  ...compactSnapshotShape,
-  replacements: z.number().int().positive(),
-  changes: z.array(z.string()),
-});
-
 const revisionListOutputSchema = z.object({
   answerId: answerIdSchema,
   currentVersion: z.number().int().positive(),
-  // Each entry also carries updatedAt, totalLines and fits.
+  // Entries carry layout metrics when calculable, or layoutError for a legacy invalid revision.
   revisions: z.array(z.object({ version: z.number().int().positive(), changes: z.array(z.string()) }).loose()),
   olderVersions: z.number().int().nonnegative(),
 });
-
-// Loose: the export tools also return the readable fileName and, when configured, a downloadUrl.
-const exportOutputSchema = z.object({
-  answerId: answerIdSchema,
-  version: z.number().int().positive(),
-  format: z.enum(["docx", "pdf", "txt"]),
-  path: z.string(),
-  exportUri: z.string(),
-  exportExpiresAt: z.string(),
-  pages: z.number().int().positive(),
-  layout: layoutSummarySchema,
-  font: z.string().optional(),
-  fontWarning: z.string().optional(),
-}).loose();
 
 const ANSWER_SHEET_UI_META = {
   ui: { resourceUri: ANSWER_SHEET_WIDGET_URI, visibility: ["model", "app"] },
@@ -166,6 +361,34 @@ const ANSWER_SHEET_UI_META = {
 
 function textContent(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
+}
+
+function assertExportVersion(answer: AnswerDocument, expectedVersion: number | undefined): void {
+  if (expectedVersion !== undefined && answer.version !== expectedVersion) {
+    throw new Error(`VERSION_CONFLICT ${answer.id}：目前版本 ${answer.version}，預期 ${expectedVersion}；請用 read_answer/check_layout 重新讀取。`);
+  }
+}
+
+type ExportIssue = {
+  code: "ANSWER_NOT_FOUND" | "VERSION_CONFLICT" | "LAYOUT_OVERFLOW" | "LAYOUT_INVALID" | "EXPORT_FAILED";
+  answerId?: string; questionNo?: number; format?: ExportFormat; retryable: boolean; message: string;
+};
+function exportIssue(code: ExportIssue["code"], message: unknown, answer?: Partial<Pick<AnswerDocument, "id" | "questionNo">>, format?: ExportFormat, cause: unknown = message): ExportIssue {
+  return { code, ...(answer ? { answerId: answer.id, ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }) } : {}),
+    ...(format ? { format } : {}), retryable: code === "EXPORT_FAILED" && isRetryableExportError(cause), message: publicExportMessage(errorMessage(message)) };
+}
+class ExportFailure extends Error {
+  constructor(readonly errors: ExportIssue[], message = errors.map(error => error.message).join("\n")) { super(message); }
+}
+// SDK clients validate structured error content too: require either the success fields or errors.
+function exportResultSchema<T extends z.ZodObject>(success: T) {
+  return success.partial().extend({ errors: z.array(z.record(z.string(), z.unknown())).min(1).optional() })
+    .meta({ anyOf: [{ required: Object.keys(success.shape) }, { required: ["errors"] }] });
+}
+function renderSummary(current: AnswerSnapshot, warningCount: number) {
+  const { id, templateId, title, version } = current.answer;
+  const { totalLines, capacity, fits, overflowLines, pagesUsed, remainingLines, status } = current.layout;
+  return { answer: { id, templateId, title, version }, layout: { totalLines, capacity, fits, overflowLines, pagesUsed, remainingLines, status }, warningCount };
 }
 
 function exportArtifactLink(name: string, uri: string, mimeType: string) {
@@ -187,7 +410,7 @@ function ensureUniqueSectionIds(sections: AnswerSection[]): void {
 }
 
 function snapshot(answer: AnswerDocument, template: AnswerTemplate): AnswerSnapshot {
-  return { answer, layout: layoutSections(template, answer.sections) };
+  return { answer, layout: layoutSections(template, answer.sections, answer.layoutOptions) };
 }
 
 /** `order`, not the array position, decides the layout; changes start from that order so renumbering keeps it. */
@@ -201,13 +424,28 @@ async function loadSnapshot(store: EssayStore, answerId: string): Promise<Answer
   return snapshot({ ...stored, sections: inLayoutOrder(stored.sections) }, template);
 }
 
+function writeResponse(current: AnswerSnapshot, detail: "summary" | "full") {
+  if (detail === "full") return current;
+  const { id, templateId, title, version, exam, questionNo } = current.answer;
+  const { capacity, totalLines, pagesUsed, overflowLines, remainingLines, fits, status, pageUsage } = current.layout;
+  const section = current.section as AnswerSection | undefined;
+  return { ...current,
+    answer: { id, templateId, title, version, ...(exam === undefined ? {} : { exam }), ...(questionNo === undefined ? {} : { questionNo }) },
+    layout: { capacity, totalLines, pagesUsed, overflowLines, remainingLines, fits, status, pageUsage },
+    ...(section ? { section: { id: section.id, heading: section.heading, order: section.order } } : {}),
+    sections: planLines(current.answer, current.layout).sections, detail: "summary" as const,
+  };
+}
+
 function sectionFromInput(input: AnswerSectionInput, order: number): AnswerSection {
   return normalizeSection(input, order);
 }
 
 function hypotheticalAnswer(answer: AnswerDocument, sections: AnswerSection[]): AnswerDocument {
+  const ids = new Set(sections.map((section) => section.id));
   return answerDocumentSchema.parse({
     ...answer,
+    lineTargets: answer.lineTargets ? Object.fromEntries(Object.entries(answer.lineTargets).filter(([id]) => ids.has(id))) : undefined,
     sections: sections.map((section, index) => ({ ...section, order: index })),
     version: answer.version + 1,
     updatedAt: new Date().toISOString(),
@@ -298,7 +536,7 @@ function skippedNote(skipped: string[]): string {
 
 /** Checks preview_change arguments against the previewed tool, naming the fields that tool expects. */
 function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperation, schema: Schema, args: Record<string, unknown>): z.infer<Schema> {
-  const stray = Object.keys(args).filter((key) => args[key] !== undefined && !(key in schema.shape));
+  const stray = Object.keys(args).filter((key) => args[key] !== undefined && !Object.hasOwn(schema.shape, key));
   if (stray.length) throw new Error(`${operation} 不使用 ${stray.join("、")}；它的參數是 ${Object.keys(schema.shape).join("、")}。`);
   const parsed = schema.safeParse(args);
   if (!parsed.success) {
@@ -368,12 +606,7 @@ async function makeChangePreview<Operation extends PreviewOperation>(
   };
 }
 
-/** Formatting tools state the 166 paper limits up front so the model explains them instead of retrying. */
-export const PAPER_FORMAT_NOTE = " The 166 original-paper template (police_information_essay_166) accepts only left-aligned text without bold or italic; tell the user so instead of attempting that formatting.";
 const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "preview_change"]);
-const PAPER_FORMAT_INSTRUCTION = "166 原稿紙模板（police_information_essay_166）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。";
-
-const EDIT_INSTRUCTION = "修改字詞或句子時用 edit_text，只送要改的原文片段與新文字，不要重送整段或整份答案；replace_text 只用於整段改寫，write_answer 只用於整份重寫。任何修改都可先用 preview_change（operation 填要預覽的工具名稱，其餘參數與該工具相同）把變更清單給使用者確認，套用後把回傳的變更清單告訴使用者。改錯或想回到舊版時，用 list_revisions 查版本，再以 restore_revision 還原（還原會另存新版本，不會刪除紀錄）。搬移區塊用 move_section；插入、刪除或搬移後若手寫的編號（壹、一、（一）、1.）不再連續，用 renumber_items 重新編號。使用者規劃各節行數時用 set_line_targets，之後 check_layout 會回報各節行數、與目標的差距，以及要補滿或壓縮時該從哪一節增減。使用者要檔案時用 export_answer（預設一次輸出 Word 與 PDF，檔名用考試、題號與標題），回覆裡有下載連結時直接提供給使用者。答案屬於哪場考試、第幾題用 update_answer_info 記錄；想試寫另一個版本時用 duplicate_answer 複製。";
 
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
@@ -391,16 +624,26 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       version: "0.1.0",
     },
     {
-      instructions:
-        "這是一個固定版面國考申論答題紙 MCP。先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。使用者要求觀看、建立後顯示或編輯時，呼叫 render_answer_sheet 顯示互動答題紙畫板。修改後呼叫 check_layout，只有 fits=true 才可視為符合兩頁限制。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION,
+      instructions: SERVER_INSTRUCTIONS,
     },
   );
 
   const registerTool: typeof server.registerTool = (name, base, callback) => {
-    const config = FORMATTING_TOOLS.has(name) ? { ...base, description: (base.description ?? "") + PAPER_FORMAT_NOTE } : base;
+    const description = TOOL_DESCRIPTIONS[name] ?? base.description;
+    const config = { ...base, description: FORMATTING_TOOLS.has(name) ? (description ?? "") + PAPER_FORMAT_NOTE : description };
     return server.registerTool(name, options.scopes ? { ...config, _meta: { ...config._meta,
       securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }],
-    } } : config, callback);
+    } } : config, (async (...args: unknown[]) => {
+      try {
+        const result = await (callback as (...args: unknown[]) => unknown)(...args);
+        // Storage-only idempotency state must never leave a tool, including full previews and widget metadata.
+        return JSON.parse(JSON.stringify(result, (key, value) => ["createRequestHash", "createRequests"].includes(key) ? undefined : value));
+      } catch (error) {
+        if (name !== "export_answer" && name !== "export_exam_bundle") throw error;
+        const errors = error instanceof ExportFailure ? error.errors : [exportIssue("EXPORT_FAILED", error)];
+        return { isError: true, structuredContent: { errors }, content: textContent(publicExportMessage(errorMessage(error))) };
+      }
+    }) as typeof callback);
   };
 
   server.registerResource(
@@ -430,7 +673,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       mimeType: "application/json",
     },
     async (uri) => {
-      const template = await store.getTemplate(DEFAULT_TEMPLATE_ID);
+      const template = await store.getTemplate("police_information_essay");
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(template, null, 2) }],
       };
@@ -449,25 +692,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       contents: [{
         uri: uri.href,
         mimeType: "text/markdown",
-        text: [
-          "# 申論答題紙工作流程",
-          "1. load_exam_paper：讀模板或既有答案。",
-          "2. create_answer / write_answer：把答案存成可編輯的 sections；可在 paragraphs.format 設定縮排、對齊、間距、Tab 與粗體。" + PAPER_FORMAT_INSTRUCTION,
-          "3. read_answer / check_layout：查看每頁行數、剩餘行數與溢出。",
-          "4. format_section：只改 section 或指定 paragraphs 的格式，不必重送文字；使用 expectedVersion 防止覆蓋別人的新版本。",
-          "5. edit_text：改字詞或句子時只送原文片段（find）與新文字（replace），一次可改多處、全部成功才存檔。",
-          "6. replace_text / insert_text / delete_text：整段改寫、插入或刪除區塊，並使用 expectedVersion 防止覆蓋別人的新版本。",
-          "7. preview_change：任何修改前都可預覽；operation 填要預覽的工具（write_answer、replace_text、format_section、insert_text、delete_text、edit_text、move_section、renumber_items），其餘參數與該工具相同，不會存檔。",
-          "8. list_revisions / restore_revision：查看每個版本改了什麼，必要時還原舊版本；還原會另存新版本。",
-          "9. move_section：把區塊移到另一個區塊之前或之後；插入、刪除或搬移後編號不連續時，用 renumber_items 重新編號（標題自成一串，各區塊段落各自一串）。",
-          "10. set_line_targets：設定各節目標行數；check_layout 回報各節行數與目標差距，並建議補滿或壓縮時從哪一節增減。",
-          "11. update_answer_info：改標題、題目，或記錄考試名稱與題號（list_answers 依考試分組、依題號排序）；duplicate_answer：複製一份答案試寫另一個版本。",
-          "12. export_answer：一次輸出 Word 與 PDF（formats 可選 docx、pdf、txt），檔名用考試、題號與標題；有下載連結時直接給使用者。",
-          "13. 超出時依 compressionHints 優先濃縮低優先級或可壓縮區塊，再重新 check_layout。",
-          "14. 使用者要求畫面預覽或編輯時呼叫 render_answer_sheet，顯示互動答題紙畫板；畫板可重新檢查版面並預覽／套用區塊修改。",
-          "15. fits=true 後才呼叫 export_docx 或 export_pdf。",
-          "16. 只有使用者明確要求永久刪除答案時才呼叫 delete_answer，並帶目前的 expectedVersion；刪除後無法復原。",
-        ].join("\n"),
+        text: WORKFLOW_RESOURCE_LINES.join("\n"),
       }],
     }),
   );
@@ -477,7 +702,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     new ResourceTemplate("essay://exports/{handle}", { list: undefined }),
     {
       title: "已匯出的申論檔案",
-      description: "export_docx / export_pdf / export_text 產生的限時檔案；URI 見工具結果的 exportUri。",
+      description: "export_answer / export_exam_bundle 產生的限時檔案；URI 見工具結果的 exportUri。",
     },
     async (uri, variables) => {
       if (options.readOnly || (options.scopes && !options.scopes.includes("essay.export"))) throw new Error("Export artifact not found.");
@@ -514,33 +739,36 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "載入申論答題紙",
       description: "Use this when the user wants to load a template or reopen an existing essay answer with its calculated grid layout.",
       inputSchema: {
-        templateId: z.string().default(DEFAULT_TEMPLATE_ID),
+        templateId: rawCreateInput(z.string().default(DEFAULT_TEMPLATE_ID)).optional(),
         answerId: answerIdSchema.optional(),
       },
       outputSchema: z.object({
         template: templateSummarySchema,
         answer: answerSummarySchema.optional(),
         layout: layoutSummarySchema.optional(),
+        writingGuide: z.unknown().optional(),
       }),
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: ANSWER_SHEET_UI_META,
     },
     async ({ templateId, answerId }) => {
-      const template = await store.getTemplate(templateId);
+      z.string().optional().parse(templateId);
+      const answer = answerId ? await store.getAnswer(answerId) : undefined;
+      const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
       if (!answerId) {
         return {
-          structuredContent: { template },
-          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。`),
+          structuredContent: { template, writingGuide: writingGuide() },
+          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
         };
       }
-      const answer = await store.getAnswer(answerId);
+      if (!answer) throw new Error("Answer not found");
       if (answer.templateId !== template.id) {
         throw new Error(`答案使用的模板是 ${answer.templateId}，不是 ${template.id}。`);
       }
-      const layout = layoutSections(template, answer.sections);
+      const layout = layoutSections(template, answer.sections, answer.layoutOptions);
       return {
-        structuredContent: { template, answer, layout },
-        content: textContent(`已載入答案「${answer.title}」；${summarizeLayout(layout)}`),
+        structuredContent: { template, answer, layout, writingGuide: writingGuide() },
+        content: textContent(`已載入答案「${answer.title}」；${summarizeLayout(layout)}` + WRITING_GUIDE_HINT),
       };
     },
   );
@@ -561,18 +789,87 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
   );
 
+  const startExamTool = registerTool("start_exam", {
+    title: "建立考試計畫", description: "Plan questions before drafting; reuse idempotencyKey on retry.",
+    inputSchema: { title: z.string().min(1).max(100), questions: z.array(examQuestionSchema.omit({ answerId: true }).strict()).min(1).max(20).refine(q => new Set(q.map(x => x.questionNo)).size === q.length, "questionNo 不可重複。"),
+      formats: examFormatsSchema.default(["pdf", "docx"]), idempotencyKey: createFields.idempotencyKey },
+    outputSchema: z.object({ examId: examIdSchema, summary: z.string() }).loose(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  }, async ({ idempotencyKey, ...request }) => {
+    const id = idempotencyKey ? `exam_idem-${sha256(idempotencyKey).slice(0, 40)}` : `exam_${randomUUID()}`;
+    const hash = sha256(canonicalJson(request));
+    const replay = async () => {
+      try {
+        const plan = await store.getExam(id);
+        if (plan.createRequestHash !== hash) throw new Error("IDEMPOTENCY_KEY_REUSED：此 key 已用於不同的考試計畫。");
+        return plan;
+      } catch (error) { if (isStoreNotFound(error)) return; throw error; }
+    };
+    let plan = await replay(); let replayed = Boolean(plan);
+    if (!plan) {
+      const now = new Date().toISOString();
+      plan = { ...request, id, version: 1, createdAt: now, updatedAt: now, createRequestHash: hash };
+      try { await store.saveExam(plan); } catch (error) { if (!await replay()) throw error; replayed = true; }
+    }
+    const progress = await examProgress(store, id);
+    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(progress.summary) };
+  });
+  registerTool("get_exam_progress", {
+    title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
+    inputSchema: { examId: examIdSchema.optional() },
+    outputSchema: z.object({ examId: examIdSchema.optional(), summary: z.string() }).loose(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ examId }) => {
+    if (!examId) {
+      const plans = [...await store.listExams()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      if (plans.length === 1) examId = plans[0].id;
+      else {
+        const exams = plans.slice(0, 10).map(p => ({ examId: p.id, title: p.title, questionCount: p.questions.length, updatedAt: p.updatedAt }));
+        const summary = exams.length ? [`共 ${plans.length} 份考試計畫，列出最新 ${exams.length} 份（新到舊），請以 examId 再呼叫一次：`,
+          ...exams.map(e => `・${e.title}（${e.examId}，${e.questionCount} 題，更新於 ${e.updatedAt}）`)].join("\n")
+          : "目前沒有考試計畫；請改用 list_answers 查看已存答案。";
+        return { structuredContent: { exams, total: plans.length, summary }, content: textContent(summary) };
+      }
+    }
+    const progress = await examProgress(store, examId);
+    return { structuredContent: progress, content: textContent(progress.summary) };
+  });
+
+  const deleteExamTool = registerTool("delete_exam", {
+    title: "刪除考試計畫", description: "Permanently delete an exam plan after deleting its answers; use get_exam_progress.version as expectedVersion; remaining artifacts expire via lifecycle.",
+    inputSchema: { examId: examIdSchema, expectedVersion: z.number().int().positive() },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
+  }, async ({ examId, expectedVersion }) => {
+    try {
+      const plan = await store.getExam(examId);
+      if (plan.version !== expectedVersion) throw new Error("考試計畫版本衝突；請呼叫 get_exam_progress 取得目前 version 後重試。");
+      for (const question of plan.questions) {
+        if (!question.answerId) continue;
+        try { await store.getAnswer(question.answerId); }
+        catch (error) { if (isStoreNotFound(error)) continue; throw error; }
+        throw new Error(`第${question.questionNo}題仍有答案 ${question.answerId}；請先用 delete_answer 刪除答案，再呼叫 get_exam_progress 取得目前 version 後重試。`);
+      }
+      await store.deleteExam(examId, { expectedVersion });
+      return { structuredContent: { examId, version: plan.version }, content: textContent("考試計畫已永久刪除。") };
+    } catch (error) {
+      if (isStoreNotFound(error)) throw new Error("找不到考試計畫；可能已刪除，請確認 examId。");
+      if (isStoreConflict(error)) throw new Error("考試計畫版本衝突；請呼叫 get_exam_progress 取得目前 version 後重試。");
+      throw error;
+    }
+  });
+
   const createAnswerTool = registerTool(
     "create_answer",
     {
       title: "建立申論答案",
       description: "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
       inputSchema: {
-        templateId: z.string().default(DEFAULT_TEMPLATE_ID),
-        title: z.string().min(1).max(300),
-        question: z.string().max(10_000).optional(),
-        sections: z.array(answerSectionInputSchema).max(100).default([]),
+        responseDetail: responseDetailSchema,
+        ...createFields,
+        templateId: rawCreateInput(createFields.templateId).optional(),
+        sections: rawCreateInput(createRequestSchema.shape.sections).default([]),
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ...ANSWER_SHEET_UI_META,
@@ -580,16 +877,72 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "答題紙已建立。",
       },
     },
-    async ({ templateId, title, question, sections }) => {
-      await store.getTemplate(templateId);
-      const answer = createAnswerDocument({ templateId, title, question, sections });
-      ensureUniqueSectionIds(answer.sections);
-      await store.saveAnswer(answer);
-      const current = await loadSnapshot(store, answer.id);
+    async ({ responseDetail, ...request }) => {
+      const { current, replayed, linkPending, message } = await commitCreate(store, await prepareCreate(store, request));
+      const { id, version, exam, questionNo } = current.answer;
       return {
-        structuredContent: current,
-        content: textContent(`已建立 ${answer.id}；${summarizeLayout(current.layout)}`),
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) },
+        content: textContent((replayed ? (request.examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
+          + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
+          + (message ? `\n${message}` : "")
+          + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")),
       };
+    },
+  );
+
+  const createAnswersTool = registerTool(
+    "create_answers",
+    {
+      title: "批次建立申論答案",
+      description: "Use this when creating 1–10 answers. All items are validated before saving; use unique idempotencyKeys for safe retries.",
+      inputSchema: { examId: examIdSchema.optional(), answers: z.array(rawCreateInput(batchCreateSchema)).min(1).max(10) },
+      outputSchema: z.object({ answers: z.array(z.object({ index: z.number().int(), answerId: answerIdSchema,
+        version: z.number().int(), fits: z.boolean() }).loose()) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    },
+    async ({ examId, answers }) => {
+      const failures: string[] = [], prepared: PreparedCreate[] = [];
+      const assigned = new Map<string, Set<number>>();
+      const keys = answers.map(item => item && typeof item === "object" ? item.idempotencyKey : undefined);
+      for (const [index, received] of answers.entries()) {
+        let request = received;
+        try {
+          if (keys[index] && keys.indexOf(keys[index]) !== index) throw new CreateError("INVALID_INPUT", "批次內 idempotencyKey 不可重複。");
+          if (examId && request && typeof request === "object") {
+            if (request.examId && request.examId !== examId) throw new CreateError("INVALID_INPUT", "批次 examId 與項目的 examId 不一致。");
+            request = { ...request, examId };
+          }
+          let defaultQuestionNo: number | undefined;
+          if (request?.examId) {
+            const used = assigned.get(request.examId) ?? new Set<number>();
+            const plan = await store.getExam(request.examId);
+            defaultQuestionNo = request.questionNo ?? (request.idempotencyKey ? plan.createRequests?.[sha256(request.idempotencyKey)]?.questionNo : undefined)
+              ?? [...plan.questions].sort((a,b) => a.questionNo - b.questionNo).find(q => !q.answerId && !used.has(q.questionNo))?.questionNo;
+            const item = await prepareCreate(store, request, defaultQuestionNo);
+            used.add(item.examQuestionNo!); assigned.set(plan.id, used); prepared.push(item);
+          } else prepared.push(await prepareCreate(store, request));
+        } catch (error) {
+          if (!(error instanceof CreateError)) throw error;
+          failures.push(`第 ${index + 1} 項 ${error.message}`);
+        }
+      }
+      if (failures.length) throw new Error(failures.join("\n"));
+      const results = [];
+      for (const [index, item] of prepared.entries()) {
+        try {
+          const { current: { answer, layout }, replayed, linkPending, message } = await commitCreate(store, item);
+          results.push({ index: index + 1, answerId: answer.id, title: answer.title,
+            ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
+            version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
+            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) });
+        } catch (error) {
+          throw new Error(`已完成：${results.map(item => `第 ${item.index} 項 ${item.answerId}${item.replayed ? "（重送）" : ""}`).join("、") || "無"}。\n`
+            + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);
+        }
+      }
+      return { structuredContent: { answers: results }, content: textContent(results.map(item =>
+        `第${item.questionNo ?? item.index}題/${item.title} ${item.answerId} ${item.totalLines}/${item.capacity} 行，`
+        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")) };
     },
   );
 
@@ -601,7 +954,6 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: { answerId: answerIdSchema },
       outputSchema: snapshotOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-      _meta: ANSWER_SHEET_UI_META,
     },
     async ({ answerId }) => {
       try {
@@ -620,24 +972,25 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "寫入完整申論答案",
       description: "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
       inputSchema: {
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         sections: z.array(answerSectionInputSchema).max(100),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "寫入並計算版面…",
         "openai/toolInvocation/invoked": "答案已寫入並完成排版檢查。",
       },
     },
-    async ({ answerId, sections, expectedVersion }) => {
+    async ({ responseDetail, answerId, sections, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       await store.saveAnswer(hypotheticalAnswer(answer, writtenSections(sections)), { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已寫入；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
+      return { structuredContent: writeResponse(current, responseDetail), content: textContent(`已寫入；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
     },
   );
 
@@ -647,11 +1000,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "替換申論區塊",
       description: "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
       inputSchema: replacementContentSchema.extend({
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       }),
-      outputSchema: sectionOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -659,7 +1013,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "段落已修改並重新計算行數。",
       },
     },
-    async ({ answerId, sectionId, newText, paragraphs, heading, expectedVersion }) => {
+    async ({ responseDetail, answerId, sectionId, newText, paragraphs, heading, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
@@ -669,7 +1023,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const section = current.answer.sections.find((item) => item.id === sectionId);
       if (!section) throw new Error("替換後找不到 section。");
       return {
-        structuredContent: { section, answer: current.answer, layout: current.layout },
+        structuredContent: writeResponse({ section, answer: current.answer, layout: current.layout }, responseDetail),
         content: textContent(`已修改「${section.heading ?? section.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`),
       };
     },
@@ -681,18 +1035,19 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "格式化申論區塊",
       description: "Use this when the user wants to change indentation, alignment, spacing, tabs, emphasis, heading style, or selected paragraph formats without resending or rewriting the section text.",
       inputSchema: formattingPayloadSchema.extend({
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       }),
-      outputSchema: sectionOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "更新段落格式並重排…",
         "openai/toolInvocation/invoked": "段落格式已更新並重新計算行數。",
       },
     },
-    async ({ answerId, sectionId, paragraphFormat, headingStyle, paragraphFormats, expectedVersion }) => {
+    async ({ responseDetail, answerId, sectionId, paragraphFormat, headingStyle, paragraphFormats, expectedVersion }) => {
       if (paragraphFormat === undefined && headingStyle === undefined && (paragraphFormats?.length ?? 0) === 0) {
         throw new Error("至少提供 paragraphFormat、headingStyle 或一個 paragraphFormats 項目。");
       }
@@ -705,7 +1060,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const section = current.answer.sections.find((item) => item.id === sectionId);
       if (!section) throw new Error("格式化後找不到 section。");
       return {
-        structuredContent: { section, answer: current.answer, layout: current.layout },
+        structuredContent: writeResponse({ section, answer: current.answer, layout: current.layout }, responseDetail),
         content: textContent(`已更新「${section.heading ?? section.id}」的格式；${summarizeLayout(current.layout)}${changeText(before, current)}`),
       };
     },
@@ -717,26 +1072,27 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "插入申論區塊",
       description: "Use this when the user wants to add a new section at a precise position in an existing answer; the complete answer is reflowed afterward.",
       inputSchema: {
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         afterSectionId: z.string().min(1).optional(),
         section: answerSectionInputSchema,
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "插入段落並重排…",
         "openai/toolInvocation/invoked": "段落已插入並重新計算行數。",
       },
     },
-    async ({ answerId, afterSectionId, section, expectedVersion }) => {
+    async ({ responseDetail, answerId, afterSectionId, section, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       const { sections, inserted: newSection } = insertedSections(answer, afterSectionId, section);
       await store.saveAnswer(hypotheticalAnswer(answer, sections), { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`
+      return { structuredContent: writeResponse(current, responseDetail), content: textContent(`已插入「${newSection.heading ?? newSection.id}」；${summarizeLayout(current.layout)}${changeText(before, current)}`
         + numberingHint(current.answer.sections)) };
     },
   );
@@ -747,24 +1103,25 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "刪除申論區塊",
       description: "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
       inputSchema: {
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         sectionId: z.string().min(1),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: snapshotOutputSchema,
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "刪除段落並重排…",
         "openai/toolInvocation/invoked": "段落已刪除並重新計算行數。",
       },
     },
-    async ({ answerId, sectionId, expectedVersion }) => {
+    async ({ responseDetail, answerId, sectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       const answer = before.answer;
       assertExpectedVersion(answer, expectedVersion);
       await store.saveAnswer(hypotheticalAnswer(answer, deletedSections(answer, sectionId)), { expectedVersion: answer.version });
       const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}${changeText(before, current)}`
+      return { structuredContent: writeResponse(current, responseDetail), content: textContent(`已刪除 ${sectionId}；${summarizeLayout(current.layout)}${changeText(before, current)}`
         + numberingHint(current.answer.sections)) };
     },
   );
@@ -780,21 +1137,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "預覽修改",
       description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId), edit_text (edits), move_section (sectionId, beforeSectionId or afterSectionId) or renumber_items (sectionId).",
-      // Every previewed tool's arguments, all optional here; previewedSections checks them per operation.
-      // Strict, so a misspelled or invented argument is reported instead of silently dropped.
+      // Keep top-level arguments intact; previewedSections validates the selected tool's schema.
       inputSchema: z.object({
         answerId: answerIdSchema,
         operation: z.enum(PREVIEW_OPERATIONS),
         expectedVersion: expectedVersionSchema,
-        sections: previewArgumentSchemas.write_answer.shape.sections.optional(),
-        sectionId: sectionIdSchema.optional(),
-        ...replacementContentSchema.shape,
-        ...formattingPayloadSchema.shape,
-        afterSectionId: sectionIdSchema.optional(),
-        beforeSectionId: sectionIdSchema.optional(),
-        section: answerSectionInputSchema.optional(),
-        edits: textEditsSchema.optional(),
-      }).strict(),
+      }).loose().describe("Same top-level arguments as the selected write tool; validated against that tool's schema."),
       outputSchema: changePreviewOutputSchema,
       _meta: { ui: { visibility: ["model", "app"] } },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
@@ -814,8 +1162,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "修改字句",
       description: "Use this when the user wants to change, add or delete specific words or sentences without resending whole sections. Each edit replaces the exact text `find` (heading or paragraph) with `replace`: to insert, keep the anchor text in `replace`; empty `replace` deletes (an emptied paragraph is removed); a newline splits the paragraph. A `find` occurring more than once needs `occurrence` (1-based) or `replaceAll`; `sectionId` limits the search. All edits apply as one new version or none do; the result lists each change with its page and line.",
-      inputSchema: textEditsInput,
-      outputSchema: editOutputSchema,
+      inputSchema: { ...textEditsInput, responseDetail: responseDetailSchema },
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -823,7 +1171,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "字句已修改並重新計算行數。",
       },
     },
-    async ({ answerId, edits, expectedVersion }) => {
+    async ({ responseDetail, answerId, edits, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
       const { sections, replacements } = applyTextEdits(before.answer.sections, edits);
@@ -832,7 +1180,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const changes = describeChanges(before, current);
       const total = replacements.reduce((sum, count) => sum + count, 0);
       return {
-        structuredContent: { ...current, replacements: total, changes },
+        structuredContent: writeResponse({ ...current, replacements: total, changes }, responseDetail),
         content: textContent(`已修改 ${total} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
           + changes.map((line) => `\n・${line}`).join("") + numberingHint(current.answer.sections)),
       };
@@ -844,12 +1192,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "搬移申論區塊",
       description: "Use this when the user wants a section moved to another position: give beforeSectionId or afterSectionId (one of them). Only the order changes; the result lists the new order and the layout effect.",
-      inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.move_section.shape, expectedVersion: expectedVersionSchema },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, ...previewArgumentSchemas.move_section.shape, expectedVersion: expectedVersionSchema },
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: { ui: { visibility: ["model", "app"] } },
     },
-    async ({ answerId, sectionId, beforeSectionId, afterSectionId, expectedVersion }) => {
+    async ({ responseDetail, answerId, sectionId, beforeSectionId, afterSectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
       const sections = movedSections(before.answer, sectionId, { beforeSectionId, afterSectionId });
@@ -857,7 +1205,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const current = await loadSnapshot(store, answerId);
       const changes = describeChanges(before, current);
       return {
-        structuredContent: { ...current, changes },
+        structuredContent: writeResponse({ ...current, changes }, responseDetail),
         content: textContent(`已搬移「${findSection(current.answer, sectionId).heading ?? sectionId}」（版本 ${before.answer.version} → ${current.answer.version}）；`
           + summarizeLayout(current.layout) + changes.map((line) => `\n・${line}`).join("") + numberingHint(current.answer.sections)),
       };
@@ -869,12 +1217,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "重新編號",
       description: "Use this after items or sections were inserted, deleted or moved and their written numbers (壹、 一、 （一） 1. （1）) are no longer consecutive. Headings are numbered as one list and each section's paragraphs as their own, each level restarting under a higher one; sectionId limits it to that section's paragraphs. Preview with preview_change first.",
-      inputSchema: { answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
-      outputSchema: z.object({ ...compactSnapshotShape, renumbered: z.number().int().positive(), skipped: z.array(z.string()), changes: z.array(z.string()) }),
+      inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, ...previewArgumentSchemas.renumber_items.shape, expectedVersion: expectedVersionSchema },
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
       _meta: { ui: { visibility: ["model", "app"] } },
     },
-    async ({ answerId, sectionId, expectedVersion }) => {
+    async ({ responseDetail, answerId, sectionId, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
       const { sections, renumbered, skipped } = renumberItems(before.answer.sections, sectionId);
@@ -882,13 +1230,55 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const current = await loadSnapshot(store, answerId);
       const changes = describeChanges(before, current);
       return {
-        structuredContent: { ...current, renumbered, skipped, changes },
+        structuredContent: writeResponse({ ...current, renumbered, skipped, changes }, responseDetail),
         content: textContent(`已重新編號 ${renumbered} 處（版本 ${before.answer.version} → ${current.answer.version}）；${summarizeLayout(current.layout)}`
           + changes.map((line) => `\n・${line}`).join("")
           + (skipped.length ? `\n${skippedNote(skipped)}` : "")),
       };
     },
   );
+
+  server.registerResource("answer-review-plan-schema", "essay://schemas/review-plan", {
+    title: "小問與驗收清單 JSON Schema", mimeType: "application/json",
+    description: "Strict plan schema for set_answer_review; evidence is caller-reported, not server approval.",
+  }, async uri => ({ contents: [{ uri: uri.href, mimeType: "application/json",
+    text: JSON.stringify(z.toJSONSchema(reviewPlanSchema, { io: "input" })) }] }));
+
+  registerTool("review_answer", {
+    title: "檢查小問覆蓋與驗收紀錄",
+    description: "Check mapped subquestions, score totals, source/scan review records and line allocation; never verifies semantic correctness or fetches sources.",
+    inputSchema: { answerId: answerIdSchema, expectedVersion: expectedVersionSchema },
+    outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+  }, async ({ answerId, expectedVersion }) => {
+    const current = await loadSnapshot(store, answerId);
+    assertExpectedVersion(current.answer, expectedVersion);
+    const template = await store.getTemplate(current.answer.templateId);
+    const report = reviewAnswer(current.answer, template, current.layout);
+    return { structuredContent: report, content: textContent(report.summary + report.issues.map(i => `\n${i.code}：${i.message}`).join("")) };
+  });
+
+  const setAnswerReviewTool = registerTool("set_answer_review", {
+    title: "保存小問與驗收清單",
+    description: "Replace or clear review plan at required expectedVersion; records caller evidence, not automatic approval. All prior evidence must be rechecked after edits.",
+    // Keep the strict full schema in a resource rather than repeating it in every tools/list.
+    inputSchema: { answerId: answerIdSchema, expectedVersion: z.number().int().positive(),
+      plan: z.record(z.string(), z.unknown()).nullable().describe("Strict ReviewPlan JSON: read essay://schemas/review-plan. null clears the plan.") },
+    outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+  }, async ({ answerId, expectedVersion, plan: inputPlan }) => {
+    const plan = inputPlan === null ? null : reviewPlanSchema.parse(inputPlan);
+    const before = await loadSnapshot(store, answerId);
+    assertExpectedVersion(before.answer, expectedVersion);
+    for (const r of plan?.requirements ?? []) for (const id of r.sectionIds) findSection(before.answer, id);
+    const template = await store.getTemplate(before.answer.templateId);
+    const updated = hypotheticalAnswer({ ...before.answer, review: undefined }, before.answer.sections);
+    if (plan) updated.review = { plan, reviewedVersion: updated.version, fingerprint: reviewFingerprint(updated, template) };
+    if (Buffer.byteLength(JSON.stringify(updated)) > MAX_ANSWER_BYTES) throw new Error("答案超過 700 KiB 文件上限。");
+    await store.saveAnswer(updated, { expectedVersion });
+    const report = reviewAnswer(updated, template, layoutSections(template, updated.sections, updated.layoutOptions));
+    return { structuredContent: report, content: textContent(report.summary + report.issues.map(i => `\n${i.code}：${i.message}`).join("")) };
+  });
 
   const setLineTargetsTool = registerTool(
     "set_line_targets",
@@ -949,13 +1339,25 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const stored = await store.listRevisions(answerId, { limit: limit + 1 });
       const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
       byVersion.set(current.version, current);
-      const revisions = [...byVersion.values()].sort((a, b) => b.version - a.version)
+      const revisions: Array<{ version: number; updatedAt: string; totalLines?: number; fits?: boolean;
+        layoutError?: string; changes: string[] }> = [...byVersion.values()].sort((a, b) => b.version - a.version)
         // A version committed after `current` was read stays out, so at most `limit` are listed.
         .filter((revision) => revision.version <= current.version && revision.version > current.version - limit)
         .map((revision) => {
-          const after = snapshot(revision, template);
+          let after: AnswerSnapshot;
+          try {
+            after = snapshot(revision, template);
+          } catch (error) {
+            const layoutError = error instanceof Error ? error.message : "未知版面錯誤";
+            return { version: revision.version, updatedAt: revision.updatedAt, layoutError,
+              changes: [`此版本版面無法計算：${layoutError}；可選擇其他可用版本還原。`] };
+          }
           const previous = byVersion.get(revision.version - 1);
-          const content = previous && describeChanges(snapshot(previous, template), after, 8);
+          let content: string[] | undefined;
+          if (previous) {
+            try { content = describeChanges(snapshot(previous, template), after, 8); }
+            catch { content = ["前一版版面無法計算，無法比較內容版面差異。"]; }
+          }
           const targets = previous ? [...describeInfoChanges(previous, revision), ...describeTargetChanges(previous, revision)] : [];
           // A version that only changed line targets lists just those, without "版面沒有改變。".
           const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
@@ -965,23 +1367,24 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const olderVersions = Math.max(0, current.version - limit);
       return {
         structuredContent: { answerId, currentVersion: current.version, revisions, olderVersions },
-        content: textContent(revisions.map((revision) => `第 ${revision.version} 版（${revision.updatedAt}，${revision.totalLines} 行${revision.fits ? "" : "，超出"}）：`
+        content: textContent(revisions.map((revision) => `第 ${revision.version} 版（${revision.updatedAt}，${revision.layoutError ? "版面無法計算" : `${revision.totalLines} 行${revision.fits ? "" : "，超出"}`}）：`
           + revision.changes.join("；")).join("\n") + (olderVersions ? `\n另有 ${olderVersions} 個更早的版本未列出。` : "")),
       };
     },
   );
 
-  async function restoredAnswer(before: AnswerSnapshot, version: number): Promise<AnswerDocument> {
-    if (version === before.answer.version) throw new Error(`第 ${version} 版就是目前的版本，不需要還原。`);
-    if (version > before.answer.version) throw new Error(`目前最新是第 ${before.answer.version} 版，沒有第 ${version} 版。`);
+  async function restoredAnswer(before: AnswerDocument, version: number): Promise<AnswerDocument> {
+    if (version === before.version) throw new Error(`第 ${version} 版就是目前的版本，不需要還原。`);
+    if (version > before.version) throw new Error(`目前最新是第 ${before.version} 版，沒有第 ${version} 版。`);
     let revision: AnswerDocument;
     try {
-      revision = await store.getRevision(before.answer.id, version);
+      revision = await store.getRevision(before.id, version);
     } catch (error) {
       if (isStoreNotFound(error)) throw new Error(`找不到第 ${version} 版的紀錄；可用 list_revisions 查看可還原的版本。`);
       throw error;
     }
-    return hypotheticalAnswer({ ...before.answer, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
+    // Restore content and targets; keep current layoutOptions, like title and exam.
+    return hypotheticalAnswer({ ...before, lineTargets: revision.lineTargets }, inLayoutOrder(revision.sections));
   }
 
   const restoreRevisionTool = registerTool(
@@ -990,11 +1393,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "還原答案版本",
       description: "Use this when the user wants the answer's sections back as they were in an earlier version (see list_revisions). It saves a new version, so the current content stays in the history and can itself be restored. Pass the current version as expectedVersion.",
       inputSchema: {
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         version: z.number().int().positive(),
         expectedVersion: z.number().int().positive(),
       },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         ui: { visibility: ["model", "app"] },
@@ -1002,14 +1406,28 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "已還原版本並重新計算行數。",
       },
     },
-    async ({ answerId, version, expectedVersion }) => {
-      const before = await loadSnapshot(store, answerId);
-      assertExpectedVersion(before.answer, expectedVersion);
-      await store.saveAnswer(await restoredAnswer(before, version), { expectedVersion: before.answer.version });
+    async ({ responseDetail, answerId, version, expectedVersion }) => {
+      // Read the current document without rendering it: an older invalid layout must not
+      // block restoring valid history. Validate the chosen target before committing it.
+      const stored = await store.getAnswer(answerId);
+      const beforeAnswer = { ...stored, sections: inLayoutOrder(stored.sections) };
+      assertExpectedVersion(beforeAnswer, expectedVersion);
+      const restored = await restoredAnswer(beforeAnswer, version);
+      const template = await store.getTemplate(restored.templateId);
+      snapshot(restored, template);
+      let before: AnswerSnapshot | undefined;
+      let previousLayoutError: string | undefined;
+      try { before = snapshot(beforeAnswer, template); }
+      catch (error) { previousLayoutError = error instanceof Error ? error.message : "未知版面錯誤"; }
+      await store.saveAnswer(restored, { expectedVersion: beforeAnswer.version });
       const current = await loadSnapshot(store, answerId);
-      const changes = [...describeChanges(before, current), ...describeTargetChanges(before.answer, current.answer)];
+      const contentChanges = before ? describeChanges(before, current)
+        : [`先前版面無法計算：${previousLayoutError}；已從可用歷史版本還原，原紀錄仍保留。`];
+      const targetChanges = describeTargetChanges(beforeAnswer, current.answer);
+      const changes = targetChanges.length && contentChanges.join() === "版面沒有改變。"
+        ? targetChanges : [...contentChanges, ...targetChanges];
       return {
-        structuredContent: { ...current, changes },
+        structuredContent: writeResponse({ ...current, changes }, responseDetail),
         content: textContent(`已還原第 ${version} 版的內容，存為第 ${current.answer.version} 版；${summarizeLayout(current.layout)}`
           + changes.map((line) => `\n・${line}`).join("")),
       };
@@ -1020,7 +1438,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     "delete_answer",
     {
       title: "刪除申論答案",
-      description: "Use this only when the user explicitly asks to permanently delete a saved answer. Pass the current version from read_answer or list_answers as expectedVersion. The answer, its revision history and its exports are removed and cannot be restored.",
+      description: "Use only for explicit permanent deletion; pass the current expectedVersion. Deletes the answer, revisions, export files and exam bundles containing it; cannot be restored.",
       inputSchema: {
         answerId: answerIdSchema,
         expectedVersion: z.number().int().positive(),
@@ -1060,21 +1478,6 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
   );
 
   registerTool(
-    "reflow_answer",
-    {
-      title: "重新排版申論答案",
-      description: "Use this after content changes when the user wants the authoritative line-by-line wrapping and page assignment; it recalculates from stored sections without asking the model to estimate.",
-      inputSchema: { answerId: answerIdSchema },
-      outputSchema: snapshotOutputSchema,
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    },
-    async ({ answerId }) => {
-      const current = await loadSnapshot(store, answerId);
-      return { structuredContent: current, content: textContent(`已重新排版；${summarizeLayout(current.layout)}`) };
-    },
-  );
-
-  registerTool(
     "check_layout",
     {
       title: "檢查申論版面",
@@ -1087,8 +1490,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ answerId }) => {
       const current = await loadSnapshot(store, answerId);
       const plan = planLines(current.answer, current.layout);
-      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes: plan.notes };
-      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}`) };
+      const warnings = layoutWarnings(current.layout, await store.getTemplate(current.answer.templateId));
+      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes: plan.notes, warnings };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
     },
   );
 
@@ -1096,19 +1500,73 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     "render_answer_sheet",
     {
       title: "顯示申論答題紙畫板",
-      description: "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 166 preview uses the original paper and exact font outlines.",
-      inputSchema: { answerId: answerIdSchema },
+      description: "Use this when the user wants to view or edit a saved answer in an interactive canvas. Returns current answer/version and authoritative layout; 165 preview uses the original paper and exact font outlines.",
+      inputSchema: { answerId: answerIdSchema, responseDetail: responseDetailSchema },
       outputSchema: snapshotOutputSchema,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: ANSWER_SHEET_UI_META,
     },
-    async ({ answerId }) => {
+    async ({ answerId, responseDetail }) => {
       const current = await loadSnapshot(store, answerId);
       const template = await store.getTemplate(current.answer.templateId);
+      const paper = template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {};
+      const readOnly = Boolean(options.readOnly || (options.scopes && !options.scopes.includes("essay.write")));
       return {
-        structuredContent: current,
+        structuredContent: { ...renderSummary(current, layoutWarnings(current.layout, template).length), ...(responseDetail === "full" ? { ...current, readOnly, ...paper } : {}) },
         content: textContent(`已準備答題紙畫板；${summarizeLayout(current.layout)}`),
-        _meta: { readOnly: Boolean(options.readOnly || (options.scopes && !options.scopes.includes("essay.write"))), ...(template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {}) },
+        _meta: { snapshot: current, readOnly, ...paper },
+      };
+    },
+  );
+
+  registerTool(
+    "render_exam_overview",
+    {
+      title: "顯示整場考試畫板",
+      description: "Show exam progress and tabs, including missing questions; use once instead of render_answer_sheet per question.",
+      inputSchema: { examId: examIdSchema.optional(), answerIds: z.array(answerIdSchema).min(1).max(20).optional(), activeAnswerId: answerIdSchema.optional(), responseDetail: responseDetailSchema },
+      outputSchema: z.object({}).loose(),
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      _meta: ANSWER_SHEET_UI_META,
+    },
+    async ({ examId, answerIds, activeAnswerId, responseDetail }) => {
+      if (examId && answerIds) throw new Error("INVALID_INPUT：examId 與 answerIds 擇一。");
+      const progress = examId ? await examProgress(store, examId) : undefined;
+      answerIds ??= progress?.questions.flatMap(q => q.answerId ? [q.answerId] : []);
+      if (!answerIds || (!examId && !answerIds.length)) throw new Error("INVALID_INPUT：請提供 examId 或 answerIds。");
+      activeAnswerId ??= answerIds[0];
+      if (new Set(answerIds).size !== answerIds.length) throw new Error("INVALID_INPUT：answerIds 不可重複。");
+      if (activeAnswerId && !answerIds.includes(activeAnswerId)) throw new Error("INVALID_INPUT：activeAnswerId 必須是 answerIds 之一。");
+      const snapshots: AnswerSnapshot[] = [], templates: AnswerTemplate[] = [], failures: string[] = [];
+      for (const id of answerIds) {
+        let answer: AnswerDocument;
+        try { answer = await store.getAnswer(id); }
+        catch (error) { if (!isStoreNotFound(error)) throw error; failures.push(`ANSWER_NOT_FOUND ${id}`); continue; }
+        try {
+          const template = await store.getTemplate(answer.templateId);
+          snapshots.push(snapshot({ ...answer, sections: inLayoutOrder(answer.sections) }, template)); templates.push(template);
+        } catch (error) { failures.push(`LAYOUT_INVALID ${answer.id}：${publicExportMessage(errorMessage(error))}`); }
+      }
+      if (failures.length && !progress) throw new Error([...failures.filter(f => f.startsWith("ANSWER_NOT_FOUND")), ...failures.filter(f => !f.startsWith("ANSWER_NOT_FOUND"))].join("\n"));
+      activeAnswerId = snapshots.find(s => s.answer.id === activeAnswerId)?.answer.id ?? snapshots[0]?.answer.id;
+      const current = snapshots.find(s => s.answer.id === activeAnswerId);
+      const template = templates[snapshots.findIndex(s => s.answer.id === activeAnswerId)];
+      const summaries = snapshots.map(({ answer, layout }, index) => ({ answerId: answer.id, title: answer.title,
+        ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
+        version: answer.version, totalLines: layout.totalLines, capacity: layout.capacity, fits: layout.fits,
+        warnings: layoutWarnings(layout, templates[index]).length }));
+      const examAnswers = progress ? progress.questions.map(q => ({ ...q, ...summaries.find(a => a.answerId === q.answerId), title: summaries.find(a => a.answerId === q.answerId)?.title ?? (q.stage === "drafted" ? "版面待修正" : "未建立") })) : summaries;
+      const paper = current && template.paperProfile ? { paperSvgPages: originalPaperPreview(template, current.layout) } : {};
+      const readOnly = Boolean(options.readOnly || (options.scopes && !options.scopes.includes("essay.write")));
+      const overview = { activeAnswerId, examAnswers, ...(progress ? { examId, progress } : {}) };
+      const full = { ...current, ...overview, readOnly, ...paper };
+      return {
+        structuredContent: { ...(current ? renderSummary(current, layoutWarnings(current.layout, template).length) : {}), ...overview,
+          ...(responseDetail === "full" ? full : {}) },
+        content: textContent((progress?.summary ?? summaries.map((answer, index) => `第${answer.questionNo ?? index + 1}題 ${answer.title}：${answer.totalLines}/${answer.capacity} 行，`
+          + (answer.fits ? "符合" : `超出 ${answer.totalLines - answer.capacity} 行`) + `，警告 ${answer.warnings}`).join("\n") + "\n畫板以分頁切換題目。")
+          + "\nwarningCount 只計算目前顯示答案的版面警告；examAnswers[].warnings 為各題版面警告，並非全卷所有警告。PDF 字型警告另見匯出 files[].fontWarning，不能以版面警告 0 判定字型完全符合。"),
+        _meta: { snapshot: examId ? full : current, readOnly, ...paper },
       };
     },
   );
@@ -1120,84 +1578,21 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
   } as const;
 
   /** Exports one format of the given snapshot; the readable file name is used for the link and the download. */
-  async function exportSnapshot(current: AnswerSnapshot, format: ExportFormat, filename: string | undefined, allowOverflow: boolean) {
+  async function exportSnapshot(current: AnswerSnapshot, format: ExportFormat, filename: string | undefined, allowOverflow: boolean, textMode = "paper") {
     const answerId = current.answer.id;
     const template = await store.getTemplate(current.answer.templateId);
     const outputPath = store.resolveExportPath(filename ?? `${answerId}_${Date.now()}`, format);
     return withTemporaryExport(outputPath, async (outputPath, temporaryDir) => {
-      const output = await exporters[format].run(current.layout, template, outputPath, allowOverflow);
+      const paragraphs = format === "txt" && textMode === "paragraphs";
+      const output = await (paragraphs ? exportParagraphTextBundle([{ report: current.layout, template }], outputPath, allowOverflow)
+        : exporters[format].run(current.layout, template, outputPath, allowOverflow));
       const artifact = await store.createExportHandle(output.path, { answerId, answerVersion: current.answer.version, format, temporaryDir });
-      const fileName = answerFileName(current.answer, format);
+      const fileName = answerFileName(current.answer, format).replace(/\.txt$/, paragraphs ? "_段落.txt" : ".txt");
       const downloadUrl = options.downloadBaseUrl
         ? `${options.downloadBaseUrl}/downloads/${artifact.handle}/${encodeStrict(fileName)}` : undefined;
       return { output, artifact, exportUri: `essay://exports/${artifact.handle}`, fileName, downloadUrl };
     });
   }
-
-  function registerExportTool(name: "export_docx" | "export_text" | "export_pdf", format: ExportFormat, base: {
-    title: string; description: string; invoking: string; invoked: string;
-  }) {
-    return registerTool(
-      name,
-      {
-        title: base.title,
-        description: base.description,
-        inputSchema: {
-          answerId: answerIdSchema,
-          filename: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,120}$/).optional(),
-          allowOverflow: z.boolean().default(false),
-        },
-        outputSchema: exportOutputSchema,
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
-        _meta: {
-          "openai/toolInvocation/invoking": base.invoking,
-          "openai/toolInvocation/invoked": base.invoked,
-        },
-      },
-      async ({ answerId, filename, allowOverflow }) => {
-        const current = await loadSnapshot(store, answerId);
-        const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, filename, allowOverflow);
-        return {
-          structuredContent: {
-            answerId,
-            version: current.answer.version,
-            ...output,
-            exportUri,
-            exportExpiresAt: artifact.expiresAt,
-            layout: current.layout,
-            fileName,
-            ...(downloadUrl ? { downloadUrl } : {}),
-          },
-          content: [
-            ...textContent(`已輸出${exporters[format].label}：${output.path}；${summarizeLayout(current.layout)}`
-              + (downloadUrl ? `\n下載「${fileName}」（24 小時內有效）：${downloadUrl}` : "")),
-            exportArtifactLink(fileName, exportUri, artifact.mimeType),
-          ],
-        };
-      },
-    );
-  }
-
-  const exportDocxTool = registerExportTool("export_docx", "docx", {
-    title: "輸出申論 Word",
-    description: "Use this when the user wants a fixed-grid A4 Word document; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定格線 Word…",
-    invoked: "Word 已產生。",
-  });
-
-  const exportTextTool = registerExportTool("export_text", "txt", {
-    title: "輸出申論純文字",
-    description: "Use this when the user wants the authoritative wrapped answer as plain text with form-feed page breaks; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定換行純文字…",
-    invoked: "純文字已產生。",
-  });
-
-  const exportPdfTool = registerExportTool("export_pdf", "pdf", {
-    title: "輸出申論 PDF",
-    description: "Use this when the user wants a fixed-grid A4 PDF for printing; by default export is refused unless the answer fits the configured page capacity.",
-    invoking: "產生固定格線 PDF…",
-    invoked: "PDF 已產生。",
-  });
 
   const exportAnswerTool = registerTool(
     "export_answer",
@@ -1206,43 +1601,239 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       description: "Use this when the user wants the answer files: Word and PDF by default (formats picks any of docx, pdf, txt), all from the same version and named after the exam, question number and title. Refused unless the answer fits, unless allowOverflow.",
       inputSchema: {
         answerId: answerIdSchema,
+        expectedVersion: expectedVersionSchema,
         formats: z.array(z.enum(["docx", "pdf", "txt"])).min(1).max(3).default(["docx", "pdf"]),
+        textMode: textModeSchema,
         allowOverflow: z.boolean().default(false),
       },
-      outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(),
+      outputSchema: exportResultSchema(z.object({ answerId: answerIdSchema, version: z.number().int().positive(),
         files: z.array(z.object({ format: z.string(), fileName: z.string(), exportUri: z.string() }).loose()),
-        failed: z.array(z.object({ format: z.string(), error: z.string() })) }),
+        failed: z.array(z.object({ format: z.string(), error: z.string() })) }).loose()),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
       _meta: {
         "openai/toolInvocation/invoking": "產生答案檔案…",
         "openai/toolInvocation/invoked": "答案檔案已產生。",
       },
     },
-    async ({ answerId, formats, allowOverflow }) => {
-      const current = await loadSnapshot(store, answerId);
-      if (!allowOverflow && !current.layout.fits) {
-        throw new Error(`答案超出版面 ${current.layout.overflowLines} 行，請先壓縮到兩頁內；確定要輸出超出的版本時帶 allowOverflow=true。`);
+    async ({ answerId, expectedVersion, formats, allowOverflow, textMode }) => {
+      let answer: AnswerDocument;
+      try { answer = await store.getAnswer(answerId); }
+      catch (error) { throw new ExportFailure([exportIssue(isStoreNotFound(error) ? "ANSWER_NOT_FOUND" : error instanceof z.ZodError || error instanceof SyntaxError ? "LAYOUT_INVALID" : "EXPORT_FAILED", error, { id: answerId })]); }
+      try { assertExportVersion(answer, expectedVersion); }
+      catch (error) { throw new ExportFailure([exportIssue("VERSION_CONFLICT", errorMessage(error), answer)]); }
+      let current: AnswerSnapshot;
+      try {
+        const template = await store.getTemplate(answer.templateId).catch(error => {
+          if (isStoreNotFound(error) || error instanceof z.ZodError || error instanceof SyntaxError) throw error;
+          throw new ExportFailure([exportIssue("EXPORT_FAILED", error, answer)]);
+        });
+        current = snapshot(answer, template);
+        if (!allowOverflow && !current.layout.fits) {
+          throw new ExportFailure([exportIssue("LAYOUT_OVERFLOW", `答案超出版面 ${current.layout.overflowLines} 行，請先壓縮到兩頁內；確定要輸出超出的版本時帶 allowOverflow=true。`, answer)]);
+        }
+        outputPageCount(current.layout, template, allowOverflow);
+      } catch (error) {
+        if (error instanceof ExportFailure) throw error;
+        throw new ExportFailure([exportIssue("LAYOUT_INVALID", errorMessage(error), answer)]);
       }
       const files = [];
       const failed: Array<{ format: ExportFormat; error: string }> = [];
+      const errors: ExportIssue[] = [];
       // One failing format does not lose the files already made: they are returned with the failures.
       for (const format of [...new Set(formats)]) {
         try {
-          const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, undefined, allowOverflow);
+          const { output, artifact, exportUri, fileName, downloadUrl } = await exportSnapshot(current, format, undefined, allowOverflow, textMode);
           files.push({ format, fileName, exportUri, exportExpiresAt: artifact.expiresAt, pages: output.pages, mimeType: artifact.mimeType,
             ...("fontWarning" in output && output.fontWarning ? { fontWarning: output.fontWarning } : {}), ...(downloadUrl ? { downloadUrl } : {}) });
         } catch (error) {
-          failed.push({ format, error: error instanceof Error ? error.message : String(error) });
+          failed.push({ format, error: publicExportMessage(errorMessage(error)) });
+          errors.push(exportIssue("EXPORT_FAILED", error, answer, format));
         }
       }
-      if (files.length === 0) throw new Error(failed.map((item) => `${item.format}：${item.error}`).join("；"));
+      if (files.length === 0) throw new ExportFailure(errors, failed.map((item) => `${item.format}：${item.error}`).join("；"));
       return {
-        structuredContent: { answerId, version: current.answer.version, files, failed },
+        structuredContent: { answerId, version: current.answer.version, files, failed, ...(errors.length ? { errors } : {}) },
         content: [
           ...textContent(`已輸出第 ${current.answer.version} 版：${files.map((file) => `${file.fileName}（${file.pages} 頁）`).join("、")}；${summarizeLayout(current.layout)}`
             + files.filter((file) => file.fontWarning).map((file) => `\n${file.fileName}：${file.fontWarning}`).join("")
             + failed.map((item) => `\n${item.format} 沒有輸出：${item.error}`).join("")
             + files.filter((file) => file.downloadUrl).map((file) => `\n下載「${file.fileName}」（24 小時內有效）：${file.downloadUrl}`).join("")),
+          ...files.map((file) => exportArtifactLink(file.fileName, file.exportUri, file.mimeType)),
+        ],
+      };
+    },
+  );
+
+  const exportExamBundleTool = registerTool(
+    "export_exam_bundle",
+    {
+      title: "輸出整場考試合輯",
+      description: "Use this when the user wants several answers as PDF and Word by default, in the given order. Pin every expectedVersion from read_answer/check_layout; all answers are validated before rendering. PDF bookmarks identify questions; quality warnings do not block export.",
+      inputSchema: {
+        examId: examIdSchema.optional(),
+        answers: z.array(z.object({ answerId: answerIdSchema, expectedVersion: z.number().int().positive() })).min(1).max(20).optional(),
+        formats: examFormatsSchema.optional(),
+        title: z.string().min(1).max(100).optional(),
+        allowOverflow: z.boolean().default(false),
+      },
+      outputSchema: exportResultSchema(z.object({
+        files: z.array(z.object({ format: z.string(), fileName: z.string(), exportUri: z.string(), exportExpiresAt: z.string(),
+          pages: z.number().int().positive(), mimeType: z.string(), fontWarning: z.string().optional(), downloadUrl: z.string().optional() })),
+        answers: z.array(z.object({ answerId: answerIdSchema, version: z.number().int().positive(), title: z.string(),
+          pages: z.number().int().positive(), startPage: z.number().int().positive(), endPage: z.number().int().positive() }).loose()),
+        totalPages: z.number().int().positive(),
+      })),
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    },
+    async ({ examId, answers, formats, title, allowOverflow }, extra) => {
+      const plan = examId ? await store.getExam(examId) : undefined;
+      if (plan) {
+        const missing = plan.questions.filter(q => !q.answerId);
+        if (missing.length) throw new ExportFailure(missing.map(q => exportIssue("ANSWER_NOT_FOUND", `第${q.questionNo}題尚未建立。`, { questionNo: q.questionNo })));
+        const planned = [...plan.questions].sort((a, b) => a.questionNo - b.questionNo);
+        if (answers && (answers.length !== planned.length || planned.some((q, i) => q.answerId !== answers![i].answerId)))
+          throw new ExportFailure([exportIssue("LAYOUT_INVALID", "answers 必須包含計畫全部題目並依題號排序。")]);
+        answers ??= await Promise.all(planned.map(async q => {
+          try { return { answerId: q.answerId!, expectedVersion: (await store.getAnswer(q.answerId!)).version }; }
+          catch (error) { if (!isStoreNotFound(error)) throw error; throw new ExportFailure([exportIssue("ANSWER_NOT_FOUND", `第${q.questionNo}題答案不存在。`, { id: q.answerId, questionNo: q.questionNo })]); }
+        }));
+      }
+      if (!answers?.length) throw new ExportFailure([exportIssue("LAYOUT_INVALID", "請提供 examId 或 answers。")]);
+      const bundleFormats = [...new Set(formats ?? plan?.formats ?? ["pdf", "docx"] as const)];
+      const total = 1 + answers.length * bundleFormats.length + bundleFormats.length + 1;
+      let completed = 0;
+      const notify = async (message: string) => {
+        completed++;
+        if (extra._meta?.progressToken !== undefined) await extra.sendNotification({ method: "notifications/progress",
+          params: { progressToken: extra._meta.progressToken, progress: completed, total, message } }).catch(() => undefined);
+      };
+      const duplicates = [...new Set(answers.filter(({ answerId }, index) => answers.findIndex(answer => answer.answerId === answerId) < index).map(answer => answer.answerId))];
+      if (duplicates.length) throw new ExportFailure(duplicates.map(id => exportIssue("LAYOUT_INVALID", `answers 的 answerId 不可重複：${id}`, { id })));
+      const failures: ExportIssue[] = [];
+      const entries: Array<AnswerSnapshot & { report: AnswerSnapshot["layout"]; template: AnswerTemplate; bookmark: string }> = [];
+      const counts: number[] = [];
+      // Load and validate every pinned snapshot before rendering any format or creating handles.
+      for (const { answerId, expectedVersion } of answers) {
+        let answer: AnswerDocument;
+        try { answer = await store.getAnswer(answerId); }
+        catch (error) {
+          failures.push(exportIssue(isStoreNotFound(error) ? "ANSWER_NOT_FOUND" : error instanceof z.ZodError || error instanceof SyntaxError ? "LAYOUT_INVALID" : "EXPORT_FAILED",
+            isStoreNotFound(error) ? `ANSWER_NOT_FOUND ${answerId}：找不到答案。` : error, { id: answerId }));
+          continue;
+        }
+        if (answer.version !== expectedVersion) {
+          failures.push(exportIssue("VERSION_CONFLICT", `VERSION_CONFLICT ${answerId}：目前版本 ${answer.version}，預期 ${expectedVersion}；請用 read_answer/check_layout 重新讀取。`, answer));
+          continue;
+        }
+        try {
+          const template = await store.getTemplate(answer.templateId).catch(error => {
+            if (isStoreNotFound(error) || error instanceof z.ZodError || error instanceof SyntaxError) throw error;
+            throw new ExportFailure([exportIssue("EXPORT_FAILED", error, answer)]);
+          });
+          const current = snapshot(answer, template);
+          if (!allowOverflow && !current.layout.fits) {
+            failures.push(exportIssue("LAYOUT_OVERFLOW", `LAYOUT_OVERFLOW ${answerId}：超出 ${current.layout.overflowLines} 行。`, answer));
+            continue;
+          }
+          counts.push(outputPageCount(current.layout, template, allowOverflow));
+          entries.push({ ...current, report: current.layout, template,
+            bookmark: `第${answer.questionNo ?? entries.length + 1}題 ${answer.title}` });
+        } catch (error) {
+          if (error instanceof ExportFailure) failures.push(...error.errors);
+          else failures.push(exportIssue("LAYOUT_INVALID", `LAYOUT_INVALID ${answerId}：${errorMessage(error)}`, answer));
+        }
+      }
+      if (failures.length) throw new ExportFailure(failures);
+      await notify("已驗證全部題目與版本");
+      let totalPages = 0;
+      const manifest = entries.map(({ answer, report, template }, index) => {
+        const startPage = totalPages + 1;
+        totalPages += counts[index];
+        return { answerId: answer.id, version: answer.version, title: answer.title,
+          ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
+          pages: counts[index], startPage, endPage: totalPages, warnings: layoutWarnings(report, template) };
+      });
+      const first = entries[0].answer;
+      const bundleTitle = title ?? (first.exam ? `${first.exam}_合輯` : "申論合輯");
+      const files = await withTemporaryExport(`bundle_${randomUUID()}`, async (_, temporaryDir) => {
+        const rendered = [];
+        for (const format of bundleFormats) {
+          try {
+            const fileName = answerFileName({ title: bundleTitle }, format);
+            const outputPath = path.join(temporaryDir, path.basename(store.resolveExportPath(`bundle_${randomUUID()}`, format)));
+            const output = await (format === "pdf" ? exportPdfBundle : exportDocxBundle)(entries, outputPath, allowOverflow,
+              async index => notify(`${format.toUpperCase()} 第${entries[index].answer.questionNo ?? index + 1}題已繪製`));
+            await notify(`${format.toUpperCase()} 合輯已合併`);
+            rendered.push({ format, fileName, output });
+          } catch (error) { throw new ExportFailure([exportIssue("EXPORT_FAILED", error, undefined, format)]); }
+        }
+        const files = [];
+        const handles: string[] = [];
+        for (const { format, fileName, output } of rendered) {
+          let artifact;
+          try {
+            // Every member owns the bundle lifetime; deleting any member removes its content.
+            artifact = await store.createExportHandle(output.path, { answerId: first.id, answerVersion: first.version,
+              relatedAnswerIds: entries.map(entry => entry.answer.id), format, temporaryDir });
+          } catch (error) {
+            const orphans: string[] = [];
+            for (const handle of handles) {
+              try { await store.deleteExport(handle); }
+              catch { orphans.push(handle); }
+            }
+            throw new ExportFailure([exportIssue("EXPORT_FAILED", `合輯 ${format} 建立匯出 handle 失敗：${errorMessage(error)}`
+              + (orphans.length ? `；回收失敗，遺留 handle：${orphans.join("、")}` : "；先前 handle 已回收。"), undefined, format, error)]);
+          }
+          handles.push(artifact.handle);
+          const downloadUrl = options.downloadBaseUrl
+            ? `${options.downloadBaseUrl}/downloads/${artifact.handle}/${encodeStrict(fileName)}` : undefined;
+          files.push({ format, fileName, exportUri: `essay://exports/${artifact.handle}`, exportExpiresAt: artifact.expiresAt,
+            pages: output.pages, mimeType: artifact.mimeType,
+            ...("fontWarning" in output && output.fontWarning ? { fontWarning: output.fontWarning } : {}), ...(downloadUrl ? { downloadUrl } : {}) });
+        }
+        const failures: ExportIssue[] = [];
+        try {
+          for (const { answer } of entries) {
+            try { await store.getAnswer(answer.id); }
+            catch (error) { if (!isStoreNotFound(error)) throw error; failures.push(exportIssue("ANSWER_NOT_FOUND", `ANSWER_NOT_FOUND ${answer.id}：匯出期間已刪除`, answer)); }
+          }
+          if (failures.length) throw new ExportFailure(failures);
+          if (plan) for (let attempt = 0; ; attempt++) {
+            const latest = await store.getExam(plan.id);
+            const linked = [...latest.questions].sort((a, b) => a.questionNo - b.questionNo);
+            if (linked.length !== manifest.length || linked.some((q, i) => q.answerId !== manifest[i].answerId))
+              throw new ExportFailure([exportIssue("VERSION_CONFLICT", "考試成員已變更，請呼叫 get_exam_progress 後重新匯出。")]);
+            for (const member of manifest) {
+              const current = await store.getAnswer(member.answerId);
+              if (current.version !== member.version) throw new ExportFailure([exportIssue("VERSION_CONFLICT", "匯出期間答案已更新，請重新匯出。", current)]);
+            }
+            try {
+              await store.saveExam({ ...latest, updatedAt: new Date().toISOString(), lastBundle: {
+                formats: bundleFormats, members: manifest.map(m => ({ answerId: m.answerId, version: m.version })),
+                pages: Object.fromEntries(files.map(file => [file.format, file.pages])), exportedAt: new Date().toISOString(),
+              } }, { expectedVersion: latest.version });
+              break;
+            } catch (error) { if (attempt >= 2 || !isStoreConflict(error)) throw error; await conflictBackoff(attempt); }
+          }
+        } catch (error) {
+          const orphans: string[] = [];
+          for (const handle of handles) {
+            try { await store.deleteExport(handle); }
+            catch { orphans.push(handle); }
+          }
+          throw new ExportFailure(error instanceof ExportFailure ? error.errors : [exportIssue("EXPORT_FAILED", error)],
+            errorMessage(error) + (orphans.length ? `；回收失敗，遺留 handle：${orphans.join("、")}` : ""));
+        }
+        return files;
+      });
+      await notify("合輯已保存");
+      return {
+        structuredContent: { files, answers: manifest, totalPages },
+        content: [
+          ...textContent(manifest.map((answer) => `${answer.answerId}「${answer.title}」第 ${answer.version} 版：第 ${answer.startPage}–${answer.endPage} 頁`
+            + answer.warnings.map(warning => `\n  ${warning.code} 第 ${warning.page} 頁第 ${warning.line} 行：${warning.message}`).join("")).join("\n")
+            + `\n共 ${totalPages} 頁。` + files.map((file) => `\n${file.fileName}：${file.downloadUrl ?? file.exportUri}`).join("")
+            + files.filter((file) => file.fontWarning).map((file) => `\n${file.fileName}：${file.fontWarning}`).join("")),
           ...files.map((file) => exportArtifactLink(file.fileName, file.exportUri, file.mimeType)),
         ],
       };
@@ -1255,28 +1846,31 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       title: "修改答案資訊",
       description: "Use this when the user wants to rename an answer or record which exam and question number it belongs to (or the question text); null clears exam, questionNo or question. list_answers groups answers by exam and orders them by question number.",
       inputSchema: {
+        responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         title: z.string().min(1).max(300).optional(),
         exam: z.string().min(1).max(100).nullable().optional(),
         questionNo: z.number().int().min(1).max(20).nullable().optional(),
         question: z.string().max(10_000).nullable().optional(),
+        layoutOptions: layoutOptionsSchema.optional().describe("Partial update; false turns an option off."),
         expectedVersion: expectedVersionSchema,
       },
-      outputSchema: z.object({ ...compactSnapshotShape, changes: z.array(z.string()) }),
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     },
-    async ({ answerId, title, exam, questionNo, question, expectedVersion }) => {
+    async ({ responseDetail, answerId, title, exam, questionNo, question, layoutOptions, expectedVersion }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
       const pick = <T>(value: T | null | undefined, current: T | undefined) => value === undefined ? current : value ?? undefined;
       const updated = hypotheticalAnswer({ ...before.answer, title: title ?? before.answer.title, exam: pick(exam, before.answer.exam),
+        layoutOptions: layoutOptions === undefined ? before.answer.layoutOptions : { ...before.answer.layoutOptions, ...layoutOptions },
         questionNo: pick(questionNo, before.answer.questionNo), question: pick(question, before.answer.question) }, before.answer.sections);
       const changes = describeInfoChanges(before.answer, updated);
       if (changes.length === 0) throw new Error("答案資訊與目前相同，沒有需要儲存的變更。");
       await store.saveAnswer(updated, { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
       return {
-        structuredContent: { ...current, changes },
+        structuredContent: writeResponse({ ...current, changes }, responseDetail),
         content: textContent(`已更新答案資訊（版本 ${before.answer.version} → ${current.answer.version}）` + changes.map((line) => `\n・${line}`).join("")),
       };
     },
@@ -1287,31 +1881,33 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     {
       title: "複製申論答案",
       description: "Use this when the user wants to try another version of an answer without touching the original: copies the current content, formats, exam, question number and line targets into a new answer (version 1, own history).",
-      inputSchema: { answerId: answerIdSchema, title: z.string().min(1).max(300).optional() },
-      outputSchema: z.object(compactSnapshotShape),
+      inputSchema: { responseDetail: responseDetailSchema, answerId: answerIdSchema, title: z.string().min(1).max(300).optional() },
+      outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     },
-    async ({ answerId, title }) => {
+    async ({ responseDetail, answerId, title }) => {
       const source = await loadSnapshot(store, answerId);
       const fresh = createAnswerDocument({ templateId: source.answer.templateId, title: title ?? `${source.answer.title}（副本）`.slice(0, 300) });
       const copy = answerDocumentSchema.parse({ ...fresh, question: source.answer.question, exam: source.answer.exam,
+        layoutOptions: source.answer.layoutOptions,
         questionNo: source.answer.questionNo, lineTargets: source.answer.lineTargets, sections: source.answer.sections });
       await store.saveAnswer(copy);
       const current = await loadSnapshot(store, copy.id);
       return {
-        structuredContent: current,
+        structuredContent: writeResponse(current, responseDetail),
         content: textContent(`已複製「${source.answer.title}」第 ${source.answer.version} 版為新答案「${copy.title}」（${copy.id}）；${summarizeLayout(current.layout)}`),
       };
     },
   );
 
   for (const [name, tool] of [
-    ["create_answer", createAnswerTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
+    ["start_exam", startExamTool], ["delete_exam", deleteExamTool], ["create_answer", createAnswerTool], ["create_answers", createAnswersTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],
     ["update_answer_info", updateAnswerInfoTool], ["duplicate_answer", duplicateAnswerTool],
-    ["export_docx", exportDocxTool], ["export_text", exportTextTool], ["export_pdf", exportPdfTool], ["export_answer", exportAnswerTool],
+    ["set_answer_review", setAnswerReviewTool],
+    ["export_answer", exportAnswerTool], ["export_exam_bundle", exportExamBundleTool],
   ] as const) {
     if (options.readOnly || (options.scopes && !options.scopes.includes(toolScope(name)))) tool.remove();
   }
@@ -1334,7 +1930,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           text: [
             `請回答申論題：${question}`,
             scoringPoints ? `採點方向：${scoringPoints}` : "",
-            "請先規劃 sections，再呼叫 create_answer 或 write_answer。寫入後務必呼叫 check_layout；若超過44行，依 compressionHints 修改後重試。",
+            DRAFT_INSTRUCTION,
+            REVIEW_INSTRUCTION,
           ].filter(Boolean).join("\n"),
         },
       }],
@@ -1356,7 +1953,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         role: "user",
         content: {
           type: "text",
-          text: `請讀取答案 ${answerId}，目前預估超出 ${overflowLines ?? "若干"} 行。依 sections 的 required、priority、compressible 與 check_layout 的 compressionHints，優先濃縮非核心說明；每次修改後都重新 check_layout，直到 fits=true。`,
+          text: [`answerId=${answerId}; estimatedOverflowLines=${overflowLines ?? "unknown"}`, COMPRESS_INSTRUCTION, REVIEW_INSTRUCTION].join("\n"),
         },
       }],
     }),

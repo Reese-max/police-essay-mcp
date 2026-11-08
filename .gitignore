@@ -30,4 +30,5 @@ exports/
 tmp/
 tmp-*/
 coverage/
+output/pdf/quality-*/
 *.bak-*

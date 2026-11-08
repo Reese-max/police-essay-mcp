@@ -1,19 +1,30 @@
 # 國考申論答題紙 MCP — 需求規格 v1
 
+## 小問與驗收清單增補
+
+詳見 [小問與驗收紀錄](docs/answer-review.md) 及 MCP JSON Schema 資源 `essay://schemas/review-plan`。
+
+- `set_answer_review({ answerId, expectedVersion, plan })` 是 `essay.write` 工具，必要版本 CAS、完整替換／null 清除，成功遞增答案版本；不改內容或版面。資料儲存在 optional 頂層 `answer.review`，沿用既有 codec、owner 隔離、歷史與文件大小限制。
+- `review_answer({ answerId, expectedVersion? })` 是唯讀 `essay.read` 工具，核對小問與 section id 映射、正文、配分相加關係、來源核對紀錄、掃描頁與實際行數分配。清單須由呼叫者對照原題；無清單為 `not_checked`，缺資訊為 pending，無法推定所有題意已列出。
+- 核對證據含方法（human／model）、核對者、時間、具體筆記及 checked／rejected 結果，均是呼叫者紀錄；版本與完整內容／模板指紋必須同時相符才 current，後續任何版本更新為 stale。`mapped`、`recorded`、`no_structural_issues` 都不是內容／法律正確保證。`semantic` 與 `sourceVerification` 固定 not_checked。
+- `get_exam_progress.questions[].review` 提供狀態、freshness 及待處理數；`delivery.checks.content/source/visual` 保留 not_checked。未改既有 done、匯出阻擋規則、模板預設或 Word 幾何。本增補工具僅提供核對輔助，沒有 LLM、OCR、外部來源擷取或新的付費服務。
+- 起草與匯出指示增加清單核對及未核項揭露。完整 strict plan schema 置於獨立 resource 以維持 tools/list 80,000 bytes 上限；工具仍以此 schema 驗證輸入，既有工具的輸入合約不變。
+
 ## 1. 目標與範圍
 
 本專案把「警察資訊三等申論答案」建模成可讀、可寫、可局部修改、可重新排版與可匯出的 MCP 文件，而不是一段游離文字。
 
-v1 的預設模板為：
+新建答案的預設模板為 `police_information_essay_165`（165 原稿紙）；舊代碼 `police_information_essay_166` 保留為相容別名，兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」，不遷移既有答案。代碼與名稱以外的模板設定、底圖資產及內部 `original_166` profile 保持不變：
 
-- 紙張：A4
-- 頁數：2 頁
-- 每頁：22 行
-- 總容量：44 行
-- 預設寬度：42 個顯示欄位；全形中文字占 2 欄，ASCII 字元占 1 欄
-- 支援正式段落格式：首行／左右縮排、左／右／左右／分散對齊、段前／段後格線行距、Tab 定位、粗體與斜體
-- 支援標題預設樣式：自動粗體與中文／阿拉伯數字編號
-- 版面設定全部由 template JSON 提供，不寫死在排版器中
+- A4、2 頁、每頁 22 行，共 44 行上限；不縮字、不自動增加頁數。
+- 19pt 教育部標準楷書 5.1、原稿紙底圖及自然字距；以字型實測寬度換行。
+- 須設定 `ESSAY_MCP_PAPER_FONT` 並通過既有 SHA-256 及缺字校驗，缺少時明確失敗；不替換字型或模板。
+- 165 原有左對齊、無粗體與無 tab 等格式限制維持不變。
+- `create_answer`、`create_answers` 及全卷建立省略模板均適用。明確選擇其他模板仍有效；讀取、預覽、複製、匯出既有答案沿用儲存的 `templateId`，不遷移正式資料。
+- `load_exam_paper` 省略模板且帶答案 ID 時沿用該答案；只有模板的呼叫使用新預設。明確模板與答案不符仍拒絕。
+- 舊預設建立的冪等重試保留已存模板，完整請求雜湊仍防止不同請求重用 key。
+
+一般模板 `police_information_essay` 仍保留 42 欄、14pt 正黑體及縮排、對齊、段距、Tab、粗斜體、標題格式等功能，須明確指定。以下一般模板 JSON 為可選範例，不是新建預設。
 
 MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修改，但不得自行估算「大約幾行」來取代後端計算。
 
@@ -22,10 +33,10 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 1. 答案一定隸屬於一個模板與一組有順序的 sections。
 2. 每個 section 都有穩定 `id`、文字、必要性、採點優先級與可壓縮程度。
 3. 每次讀取、寫入或局部修改，都可以得到同一套 `LayoutReport`。
-4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，166 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
+4. `totalLines` 由模板的 deterministic wrapping 計算；一般模板採顯示欄寬，165 原稿紙採字型實際寬度及 Word 間距預留；不得用 token 數或模型估計替代。
 5. `fits=true` 才代表符合模板的頁數／行數限制。
 6. 局部修改使用 `expectedVersion` 時，版本不一致必須拒絕，避免舊內容覆蓋新內容。
-7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，166 原稿紙始終拒絕超頁與 override。
+7. DOCX 與 PDF 預設拒絕輸出溢出版；一般模板可明確指定 `allowOverflow=true` 供除錯，165 原稿紙始終拒絕超頁與 override。
 
 ## 3. 模板資料結構
 
@@ -140,8 +151,9 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `list_templates` | 列出可用模板 | 否 |
 | `load_exam_paper` | 讀模板，或依 `answerId` 載入答案與版面 | 否 |
 | `list_answers` | 列出已儲存答案 | 否 |
-| `create_answer` | 建立答案文件，可附初始 sections | 是 |
-| `read_answer` | 讀完整 sections、版本、逐行結果與版面報告 | 否 |
+| `create_answer` | 建立答案文件，可附 sections、exam、questionNo、lineTargets（版本 1） | 是 |
+| `create_answers` | 1–10 題共用建立流程，全數驗證後依序儲存，逐題摘要；essay.write | 是 |
+| `read_answer` | 讀完整 sections、版本、逐行結果與版面報告，不掛載畫板 | 否 |
 | `preview_change` | 預覽任一修改工具（`operation` 填工具名稱，其餘參數與該工具相同）的差異與版面結果，不寫入 | 否 |
 | `write_answer` | 以完整 sections 覆寫答案後重新計算 | 是 |
 | `replace_text` | 替換指定 `sectionId`，保留其他段落 | 是 |
@@ -153,17 +165,17 @@ MCP 後端是唯一的行數真相來源。模型可以產生內容與提出修�
 | `set_line_targets` | 設定各節目標行數，供 `check_layout` 回報差距 | 是 |
 | `update_answer_info` | 修改標題、題目、考試名稱與題號 | 是 |
 | `duplicate_answer` | 複製答案為新的一份（版本與紀錄重新開始） | 是 |
-| `export_answer` | 一次輸出多種格式，檔名用考試、題號與標題 | 是，建立檔案 |
-| `reflow_answer` | 重新計算固定欄寬、分頁與行數 | 否 |
-| `check_layout` | 回傳每頁使用量、剩餘量、溢出量與濃縮提示 | 否 |
+| `export_answer` | 以 expectedVersion 釘選版本，一次輸出多種格式，檔名用考試、題號與標題 | 是，建立檔案 |
+| `export_exam_bundle` | 逐題必要 expectedVersion，先驗證全部，再依順序合成 PDF 與 Word（DOCX）；PDF 含書籤，回傳頁碼範圍 | 是，建立檔案 |
+| `check_layout` | 回傳每頁使用量、剩餘量、溢出量、濃縮提示與品質警告 | 否 |
 | `render_answer_sheet` | 回傳 authoritative snapshot 並掛載 ChatGPT Apps SDK 互動畫板 | 否 |
-| `export_docx` | 產生 A4 固定格線 Word | 是，建立檔案 |
-| `export_pdf` | 產生 A4 固定格線 PDF | 是，建立檔案 |
-| `export_text` | 產生依實際換行與分頁的純文字 | 是，建立檔案 |
+| `start_exam` | 建立 1–20 題考試計畫，支援 idempotencyKey，essay.write | 是 |
+| `get_exam_progress` | 讀取逐題真實進度、合輯版本與續寫 nextStep，essay.read | 否 |
+| `render_exam_overview` | examId 或 1–20 個不重複 answerIds 共用一個題目分頁畫板；缺題保留未建立，essay.read | 否 |
 
-所有修改工具接受可選 `expectedVersion`。寫入成功後 `version + 1`，並回傳更新後的 authoritative snapshot。
+修改時以 `expectedVersion` 防止覆蓋新版本（`restore_revision`、`delete_answer` 必填）。內容修改成功後 `version + 1`；建立或複製為版本 1。版面在讀取／寫入時依儲存內容重新計算，不另行保存。寫入預設回傳摘要，指定 `responseDetail: "full"` 才回傳完整 authoritative snapshot。
 
-`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
+`preview_change` 的輸入 schema 僅宣告 `answerId`、`operation`、`expectedVersion`；被預覽工具的參數仍放在頂層，由該工具的 schema 驗證，未知參數會拒絕。`preview_change` 回傳 `changeId`、`baseVersion`、修改前後 snapshot、行數差異與 `fits` 結果，但不會寫入檔案；確認後必須以相同的 `expectedVersion` 呼叫正式修改工具。若期間答案已被其他修改更新，版本檢查會拒絕套用。
 
 ## 6. Resources 與 Prompts
 
@@ -171,7 +183,7 @@ Resources：
 
 - `essay://templates/police_information_essay`：模板 JSON。
 - `essay://instructions/workflow`：讀取、修改、檢查與匯出的工作流程。
-- `ui://widget/police-essay-answer-sheet-v5.html`：ChatGPT Apps SDK 的互動答題紙畫板資源（URI 帶版本，畫板或其呼叫的工具改變時遞增，讓宿主不沿用快取的舊畫板）。
+- `ui://widget/police-essay-answer-sheet-v12.html`：ChatGPT Apps SDK 的互動答題紙畫板資源（URI 帶版本，畫板或其呼叫的工具改變時遞增，讓宿主不沿用快取的舊畫板）。
 
 Prompts：
 
@@ -179,6 +191,14 @@ Prompts：
 - `compress_answer`：提示模型依 `compressionHints` 濃縮非核心內容，反覆檢查到符合容量。
 
 ## 7. 排版演算法
+
+答案可儲存 strict `layoutOptions: { wholeLatinWords?: boolean, keepHeadingWithNext?: boolean }`；缺少欄位視為 false，`layoutSections(template, sections, options?)` 的雙參數行為不變。建立工具共用路徑才將新答案的兩個選項預設為 true（部分輸入的省略鍵也為 true）；`createAnswerDocument` 不套用新預設。`update_answer_info` 局部更新選項並另存版本；`duplicate_answer` 原樣複製，`restore_revision` 保留目前答案選項。
+
+一般與 165 換行器在 ASCII 英數字元間斷行時，先向後讀到完整字詞結尾；只有完整字詞能容納於下一行可用寬度，且目前行仍留下至少一個非空白字元時，才將行末英數字移至下一行，否則沿用原斷行。空白不移除或重排，超長字詞仍可斷行；165 共用字型量測並計入緊接字詞的標點攜帶寬度。
+
+`SPLIT_LATIN_WORD` 以跨越斷點的完整 ASCII 英數字詞（可延續多行）判斷原因：一般模板比較顯示寬度與扣除左右縮排的欄寬，165 比較共用字型量測與非首行可用寬度。能容納一行者建議以 `update_answer_info` 設定 `layoutOptions.wholeLatinWords=true` 或改寫，超長者建議縮短字詞或調整縮排；兩者均不阻擋匯出。
+
+編頁前若標題末行與同節首個非 spacer 內文行分頁，且標題未在頁首、標題到首行內文可容納一頁，於標題前補空白到下一頁。這些行有 `isSpacer: true, isPadding: true`，歸屬同節，計入總行數、各節行數與溢出；匯出與畫板視為普通空白行，段落 TXT 捨棄 spacer。沒有內文行或標題區塊過長時不補行。
 
 1. 依 `order` 排序 sections。
 2. 每個有標題的 section 先套用 `headingStyle`，必要時產生自動編號，再把標題視為獨立段落。
@@ -223,10 +243,10 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 - 建立與插入輸入可只提供 `paragraphs`，不必複製一份相同的 `text`。
 - 標題可依模板或 section 設定自動粗體與中文／阿拉伯數字編號。
 - 版本衝突會被拒絕，不會靜默覆蓋。
-- `export_docx`、`export_pdf`、`export_text` 能產生檔案；溢出時預設拒絕。
+- `export_answer` 可選 DOCX、PDF、TXT 產生檔案；溢出時預設拒絕。
 - 可透過 `MCP_TRANSPORT=stdio` 接本機 MCP client，也可透過 `http://localhost:8787/mcp` 使用 Streamable HTTP。
 - Server 提供 tools、resources、prompts，且工具 schema 與安全標記明確。
-- `render_answer_sheet` 透過 `_meta.ui.resourceUri` 掛載畫板；畫板使用 `structuredContent` 顯示真實行數，並透過 MCP bridge 呼叫版面檢查與預覽／套用修改。
+- `render_answer_sheet` 透過 `_meta.ui.resourceUri` 掛載畫板；畫板優先使用元件專用 `_meta.snapshot` 顯示逐行版面，其次使用 full `structuredContent`，並透過 MCP bridge 呼叫版面檢查與預覽／套用修改。
 
 ## 10. 明確不納入 v1
 
@@ -240,6 +260,42 @@ DOCX 會保留兩頁空白格線，即使答案未填滿；DOCX 與 PDF 共用�
 
 ## 原稿紙畫板整合
 
-`render_answer_sheet` 回傳最新答案、版本及 LayoutReport。UI 中繼資料提供唯讀狀態；166 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
+`render_answer_sheet` 回傳最新答案、版本、LayoutReport 及 warningCount（該版面的品質警告數）。UI 中繼資料提供唯讀狀態；165 模式另提供兩頁原稿紙 SVG，採原始底圖與字型輪廓，無需在 iframe 載入外部字型。畫板只顯示設定頁數，溢出行數由狀態列提示，避免建立無限頁面。
+
+多題只呼叫一次 `render_exam_overview`：預設 responseDetail=summary，模型端 structuredContent 只回傳目前題目的答案 id／版本及版面統計（totalLines、capacity、fits、overflowLines）、activeAnswerId 與依輸入順序排列的 examAnswers（題號、版本、行數、容量、fits、警告數）。同時回傳目前題目的 warningCount；兩種 render 工具的完整 snapshot（包含 layout.lines 與編輯用 sections）始終放在元件專用 `_meta.snapshot`；重用 responseDetail schema，full 模式也在 structuredContent 回傳完整 snapshot、readOnly（與 _meta.readOnly 相同）及適用的 paperSvgPages。v12 畫板所有自行 render 呼叫均帶 responseDetail=full；讀取順序為結果 _meta.snapshot、full structuredContent、宿主初始輸出的 OpenAI toolResponseMetadata。唯讀狀態依序取結果 _meta.readOnly、structuredContent.readOnly、僅宿主初始輸出的 toolResponseMetadata.readOnly、同答案既有狀態；皆未知時停用編輯。openai:set_globals 只接受同次事件提供且 answerId/version 與 toolOutput 相符的 metadata，不使用殘留全域 metadata；資料不足時只呼叫一次 full render。paperSvgPages 依序取結果 _meta、structuredContent，兩者皆無時僅保留同 answerId/version 已顯示的 SVG，絕不沿用其他答案或版本。逐題驗證並彙整 ANSWER_NOT_FOUND 與 LAYOUT_INVALID <id>：原因（套用與匯出錯誤相同的路徑與堆疊遮蔽），任一失敗皆不顯示部分結果。畫板以分頁切換，左右鍵移動焦點；焦點題目移除時以選取題目作為 Tab 入口。分頁有獨立的無障礙名稱；按下其他分頁透過 render_answer_sheet 載入，重按目前分頁保留草稿。載入若被並行的畫板刷新取代，顯示通知供使用者再次點選，不自動重試；寫入後更新對應分頁統計（包含已切換離開的題目），目前題目只顯示最新已知警告數，顯示清單外答案時隱藏分頁。
 
 畫板遵循 MCP Apps 初始化程序；宿主若提供 `window.openai.callTool` 則使用該 API。預覽後修改草稿會使預覽失效；套用時仍須帶版本。保留原有段落格式；段落數改變時，未改動的段落保留格式，改寫的段落沿用被取代那段的格式。字句修改走 `preview_change`（`edit_text`）再 `edit_text`；上移／下移呼叫 `move_section`；重新編號先以 `preview_change`（`renumber_items`）預覽，第二次點擊才呼叫 `renumber_items`；版本紀錄讀 `list_revisions`，還原呼叫 `restore_revision`。這些工具都宣告 `_meta.ui.visibility` 含 `app`。唯讀連線停用修改；逾時不自動重送。DOM/橋接測試與真實 ChatGPT 宿主驗收分開記錄。
+
+寫入工具預設 `responseDetail: "summary"`，回傳答案識別資訊、版面統計及各節行數；`"full"` 保留完整快照。明確讀取／排版工具仍回傳完整資料。畫板的初始 toolOutput、openai:set_globals 與 ui/notifications/tool-result 收到摘要時，會以 render_answer_sheet 取得完整快照；失敗顯示通知，過期載入不覆蓋較新的畫面。create_answer.lineTargets.sectionId 必須等於 sections 明確提供的 id。`check_layout.warnings` 與合輯逐題 warnings 偵測 `ORPHAN_HEADING`、`SPLIT_LATIN_WORD`，不修改換行或文字，也不阻擋匯出。
+
+`export_exam_bundle.answers` 接受 1–20 個不重複 answerId，重複時逐個在結構化錯誤 answerId 與訊息列出重複 id，逐項指定 expectedVersion。驗證失敗彙整 `ANSWER_NOT_FOUND`、`VERSION_CONFLICT`、`LAYOUT_OVERFLOW`、`LAYOUT_INVALID`，不建立匯出；版本衝突的答案不再檢查版面；所有格式完成繪製後才建立 handle。成功回傳 files、answers 頁碼範圍與 totalPages；PDF 字型警告保留於 files[].fontWarning 與文字結果，逐題品質警告也列於文字結果（含頁／行）。合輯 PDF/DOCX 沿用單題紙張、固定格線、字型與每頁行數規則，每題從新頁開始；DOCX 以 nextPage section 分隔成員，以段落 pageBreakBefore 分隔成員內頁面，第一格含對應題號與標題的書籤，165 同樣嵌入原稿紙與楷書字型。兩種格式頁數相同，無封面或額外空頁；儲存 manifest 新增 optional relatedAnswerIds（最多 20 個 answerId），關聯全部成員；刪除任一成員會回收合輯並計入 deletedExports，舊 manifest 仍有效。後續 createExportHandle 失敗時，以 deleteExport 盡力回收所有先前 handle；錯誤列出失敗格式及回收失敗的遺留 handle。deleteExport 移除 manifest 與 bytes，已不存在時成功，雲端維持 owner／objectName／generation 檢查。
+
+`create_answer.idempotencyKey` 符合 `^[A-Za-z0-9_-]{8,128}$`。id 為 `ans_idem-` 加 SHA-256(key) 前 40 hex；owner 隔離不變。createRequestHash 為 templateId（套用預設）、title、question、exam、questionNo、lineTargets、sections 輸入原貌的排序鍵 JSON SHA-256（只有請求提供 layoutOptions 時才納入該欄位，省略時舊雜湊不變）（optional、64 位小寫 hex；duplicate_answer 不複製）。相同 key／雜湊回傳答案目前版本、replayed=true，不寫入；不同或缺少雜湊回報 IDEMPOTENCY_KEY_REUSED。重送的 TEMPLATE_NOT_FOUND 與 LAYOUT_INVALID 訊息會標明此 key 的既有答案 id；暫時性模板儲存錯誤原樣傳回。create-only 寫入競態後重讀並套用同一規則。無 key 維持原行為。
+
+`create_answers.answers` 為 1–10 個 strict 建立物件（欄位同 create_answer，無 responseDetail）；sections 的公開 schema 保持寬鬆，伺服器共用真實 answerSectionInputSchema 驗證。先檢查全部輸入、模板、唯一 section id／明確 lineTargets id、可計算版面與 key 重用；批次內 key 不可重複。錯誤逐項為「第 N 項 INVALID_INPUT／TEMPLATE_NOT_FOUND／LAYOUT_INVALID／IDEMPOTENCY_KEY_REUSED：原因」，不儲存任何答案。通過後逐項儲存，重送項目不寫入；中途儲存失敗停止並列出已完成 index／id 與失敗項次。相同批次使用原 keys 可安全重試，未給 key 的已建立項目不可直接重送。輸出 answers 含 index（1 起算）、answerId、title、exam?、questionNo?、version、fits、totalLines、capacity、overflowLines、replayed?，不掛載畫板。
+
+單題 `export_answer.textMode` 預設 paper，僅影響 TXT；paragraphs 從 LayoutLine.text 重建顯示標題與各段（去除視覺換行，保留版面編號，不使用填充／對齊空白，捨棄 spacer），每段一行、節間空行。檔名為 *_段落.txt；pages 仍是內容的稿紙頁數，fits／allowOverflow／165 驗證與 paper 相同。read_answer 不宣告 ui.resourceUri 或 openai/outputTemplate；render_answer_sheet／load_exam_paper／create_answer 保留畫板。
+
+
+### 匯出錯誤與內部欄位
+
+`export_answer`、`export_exam_bundle` 執行失敗回傳 `isError: true`，`structuredContent.errors` 為 `{ code, answerId?, questionNo?, format?, retryable, message }[]`；題號取自已知儲存答案。代碼為 ANSWER_NOT_FOUND、VERSION_CONFLICT、LAYOUT_OVERFLOW、LAYOUT_INVALID、EXPORT_FAILED。驗證失敗 retryable=false；匯出／儲存失敗用 EXPORT_FAILED，僅 Node ETIMEDOUT、ECONNRESET、ECONNREFUSED、EAI_AGAIN、EBUSY、EMFILE、ENFILE、EPIPE 或儲存／HTTP 狀態 408、429、500、502、503、504 為 retryable=true；雲端保留內部 cause，Firestore gRPC 4/8/13/14 對應 408/429/500/503。未知、字型、內容、確定性 renderer 錯誤均不可重試。structuredContent.errors[].message 與文字結果的 Windows/POSIX/file:// 絕對路徑遮蔽為 <path>，移除內部堆疊；部分成功的 failed[].error 同樣處理。單題部分格式成功仍回傳成功 files 與原有 failed，另附失敗格式的 errors，不設 isError；合輯維持全有或全無。SDK client 也會驗證錯誤 structuredContent，因此 outputSchema 以 anyOf 接受原有成功必填欄位或 errors。
+
+export_answer 可選填 expectedVersion，透過 assertExportVersion 在排版或匯出前拒絕過期版本，回傳 VERSION_CONFLICT。PDF 合輯在同一 document 內依字型路徑與 face 共用已註冊字型，不逐題重複開啟及內嵌。createRequestHash 僅保留於儲存，所有工具輸出（完整回應、預覽與元件 metadata 也包括在內）均移除。
+
+
+## 考試計畫、進度與斷點續寫
+
+- `start_exam`（essay.write）接受 `{ title, questions: [{ questionNo, question?, targetPages? }], formats?, idempotencyKey? }`。題數 1–20、題號 1–20 且唯一，title 最長 100、question 最長 10,000 字元、targetPages 為 1–20；合輯格式僅 pdf／docx，預設 ["pdf", "docx"]。回傳 `examId`、`summary` 與 replayed。key 沿用 8–128 字元的英數、底線與連字號規則；同 key 不同請求回報 IDEMPOTENCY_KEY_REUSED。
+- 計畫 `{ id, title, questions: [{ questionNo, question?, targetPages?, answerId? }], formats?, createdAt, updatedAt, version, lastBundle? }` 在 FileStore 的 answers 同層 `answers-exams` 目錄原子替換，CloudStore 在同 principal 路徑的 exams collection 以 Firestore transaction 寫入；examCreateKeys 以 key 雜湊作文件 ID，在同一 transaction 防止跨計畫併發重用 key，刪除計畫時解除預留。FileStore 沿用程序內寫入鎖，計畫寫入序列化並檢查同資料目錄的 key 唯一性。計畫 JSON 上限 256 KiB；所有更新／刪除使用 expectedVersion CAS，更新版本遞增，保留 createdAt。FileStore 與本機答案共用同樣存取邊界；CloudStore 沿用答案的 ownerKey 隔離與唯讀拒寫。
+- `create_answer` 與 `create_answers`（最外層及 answers[]）增加可選 examId，最外層與逐題值須一致；exam、questionNo、question 省略時由計畫補入。已連結且仍存在的答案直接回傳既有內容與 replayed=true，不建立新版本；未建立的題目使用依計畫／題號決定的 answerId，併發重送也不重複。key 在 commit 階段以 CAS 預留（批次預驗證不寫入）；儲存失敗時保留同 key 的原請求供重試。內部儲存的 key 請求雜湊只供重送驗證，不輸出給模型或畫板。批次先驗證全部輸入，再逐題儲存；部分 I/O 失敗仍回報已完成項目供續寫。delete_answer 解除所有計畫中的連結並清除已被刪除的 lastBundle，避免重建同 id／版本 1 時誤判已匯出；CloudStore 與答案刪除在同一 transaction 內完成。
+- `get_exam_progress`（essay.read，readOnlyHint=true）接受 `{ examId }`。每次由真實答案、當前版面及 lastBundle 釘選版本推導，不保存可過期的 stage 旗標。輸出 `{ examId, title, questions: [{ questionNo, stage, answerId?, version?, totalLines?, capacity?, overflowLines?, warningCount? }], bundle: { status, exportedAt? }, nextStep: { action, questionNo?, message }, summary }`，text content 同樣為 summary，不輸出百分比。
+- stage：沒有有效答案為 not_started；不符合容量為 drafted；當前版面通過為 layout_ok；當前版本且版面通過、已收入 lastBundle 為 exported。bundle 為 none／current／outdated；任一成員修改、缺失、計畫格式未涵蓋或成員集合不同即 outdated。nextStep 優先建立最前面的缺題，其次修正最前面的版面，再匯出合輯，最後 done。fits 與 layout_ok 不代表內容查證。
+- 另回傳 `delivery: { status, checks: { layoutCapacity, content, source, visual } }`。status 為 not_ready／awaiting_review；只有目前版本與要求格式皆已匯出才是 awaiting_review。layoutCapacity 為 pending／passed，只檢查容量；content、source、visual 固定為 not_checked，只反映軟體可驗證的範圍；呼叫者核對紀錄另由 review 工具提供。保留既有 nextStep.action 的 done 作為匯出流程終點，摘要改為「合輯已匯出」並明示尚待驗收，不能視為成品品質通過；不因此重複匯出。
+- 一般模板的可選 `layoutOptions.avoidPunctuationOnlyLines` 在新答案預設 true，舊答案省略時維持既有換行；僅調整自然換行且只剩結尾標點的行，保留字素、英文整詞（可容納時）、所有文字及字級，不修改明確輸入的換行。未啟用的自然純標點行列為 `PUNCTUATION_ONLY_LINE`。一般 PDF 在整行可容納時使用實際字形 advance 防止覆畫；放不下則保留原欄位位置並透過既有 fontWarning 回報合輯頁、行、不重疊排版所需寬度的超出點數。不縮字、不裁字，也不宣稱已完成視覺驗收。
+- `render_exam_overview` 接受 examId 或 answerIds（二擇一），計畫依題號排序，缺題保留「未建立」分頁，全部缺題也可顯示進度。回傳 progress 與 examAnswers；頂端單一 polite status 區域原地更新，不建立第二個畫板。分頁載入或寫入完成後呼叫 get_exam_progress；保留 OpenAI 與 MCP Apps 的 metadata → full structuredContent → 初始 host metadata 回退，以及未知 readOnly 時停用寫入的規則。
+- `export_exam_bundle` 增加 examId；未提供 answers 時由計畫按題號讀取並釘選目前版本，缺題以 ANSWER_NOT_FOUND 與 questionNo 回報。明確提供 answers 時須與計畫成員及順序一致。成功後 CAS 保存 lastBundle `{ formats, pages: { pdf?, docx? }, members: [{ answerId, version }], exportedAt }`；保存失敗同樣回收 handle，保持全有或全無。formats 未提供時依計畫 formats，沒有計畫則預設 ["pdf", "docx"]。合輯不接受 txt 或 textMode；單題 TXT 相容介面保留。計畫在匯出期間改動時重新讀取並最多嘗試三次 CAS，成員順序及釘選版本須仍一致，否則回收 handle。
+- 合輯帶 request `_meta.progressToken` 才發送 notifications/progress：驗證成功一次、每格式每題實際完成繪製、每格式合併完成、全部格式與計畫紀錄保存完成。progress 為已完成階段數，total 為 `1 + 題數 × 格式數 + 格式數 + 1`；成功最後一筆等於 total，失敗不宣稱完成。
+- 指示詞最短流程為 start_exam → create_answers(examId) → 修正版面 → render_exam_overview(examId) → export_exam_bundle(examId)。全部題目版面通過後自動匯出一次，同一則訊息直接交付 PDF 與 Word 兩個連結，不詢問是否匯出。中斷或「繼續」先 get_exam_progress，將 summary 告知一次，從 nextStep 接續。tools/list 預算維持 80,000 bytes；重複的工作流說明移入 server instructions，既有輸入契約保持不變，僅增加已宣告的可選欄位。
+
+版面無效的舊答案逐題回傳 drafted 與遮蔽路徑的 error，不阻斷 get_exam_progress／render_exam_overview(examId)；修正動作為 fix_layout。完成摘要使用 lastBundle.pages 的實際匯出頁數（舊資料缺少頁數時不猜測）。建立答案後連結 CAS 重試耗盡時，回傳已保存答案及 linkPending/message，提示 get_exam_progress 或相同請求重試；版本衝突以 store error type/code 判斷，重試含退避。FileStore 先重試解除計畫連結，再刪除匯出／版本／答案；兩種 store 均跳過並記錄不可讀計畫。

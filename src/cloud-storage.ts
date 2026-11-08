@@ -1,3 +1,4 @@
+import { encodeAnswer, decodeAnswer } from "./answer-codec.js";
 import { Firestore, FieldValue, Timestamp } from "@google-cloud/firestore";
 import { Storage } from "@google-cloud/storage";
 import { createHash, randomUUID } from "node:crypto";
@@ -5,21 +6,24 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
-import { answerDocumentSchema, type AnswerDocument } from "./domain.js";
+import { answerDocumentSchema, MAX_ANSWER_BYTES, validateExamPlan, type ExamPlan, type AnswerDocument } from "./domain.js";
 import { layoutSections } from "./layout.js";
 import {
-  FileStore, StoreNotFoundError, safeId, exportMimeType, exportArtifactHandlePattern,
+  FileStore, StoreNotFoundError, StoreConflictError, assertExamVersion, safeId, exportMimeType, exportArtifactHandlePattern,
   EXPORT_ARTIFACT_TTL_MS, type DeletedAnswer, type EssayStore, type ExportDetails,
 } from "./storage.js";
 
-export const MAX_ANSWER_BYTES = 700 * 1024;
 export const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 export type FirestoreClient = Pick<Firestore, "doc" | "collection" | "runTransaction">;
 export type StorageClient = Pick<Storage, "bucket">;
 
-class StoreConflictError extends Error {}
 export class StoreUnavailableError extends Error {
-  constructor() { super("儲存暫時故障"); }
+  constructor(cause?: unknown) {
+    // Firestore gRPC statuses: deadline exceeded, resource exhausted, internal, unavailable.
+    const code = Number((cause as { code?: unknown })?.code);
+    const status = ({ 4: 408, 8: 429, 13: 500, 14: 503 } as Record<number, number>)[code];
+    super("儲存暫時故障", { cause: status ? { status, cause } : cause });
+  }
 }
 function errorCode(error: unknown): number | undefined {
   return Number((error as { code?: unknown })?.code) || undefined;
@@ -27,19 +31,23 @@ function errorCode(error: unknown): number | undefined {
 function logStorageFailure(classification: string): void {
   console.error(JSON.stringify({ requestId: randomUUID(), classification }));
 }
+class AnswerSizeError extends Error {
+  constructor() { super("Answer exceeds 700 KiB document limit."); }
+}
 async function backend<T>(operation: () => Promise<T>, missing = false): Promise<T> {
   try { return await operation(); }
   catch (error) {
-    if (error instanceof StoreConflictError || error instanceof StoreNotFoundError || error instanceof StoreUnavailableError) throw error;
+    if (error instanceof StoreConflictError || error instanceof StoreNotFoundError || error instanceof StoreUnavailableError || error instanceof AnswerSizeError) throw error;
     if (missing && [404, 5].includes(errorCode(error)!)) throw new StoreNotFoundError("找不到");
     logStorageFailure("storage_unavailable");
-    throw new StoreUnavailableError();
+    throw new StoreUnavailableError(error);
   }
 }
 
 const manifestSchema = z.object({
   schemaVersion: z.literal(1), handle: z.string().regex(exportArtifactHandlePattern),
-  ownerKey: z.string(), answerId: z.string(), answerVersion: z.number().int().positive(),
+  ownerKey: z.string(), answerId: answerDocumentSchema.shape.id, answerVersion: z.number().int().positive(),
+  relatedAnswerIds: z.array(answerDocumentSchema.shape.id).max(20).optional(),
   format: z.enum(["docx", "pdf", "txt"]), name: z.string(), mimeType: z.string(),
   bucket: z.string(), objectName: z.string(), generation: z.string().regex(/^[1-9][0-9]*$/),
   sha256: z.string().regex(/^[a-f0-9]{64}$/), sizeBytes: z.number().int().nonnegative(),
@@ -90,9 +98,52 @@ export class CloudStore implements EssayStore {
     if (!value || (value as { ownerKey?: string }).ownerKey !== this.options.ownerKey) {
       throw new StoreNotFoundError("Answer not found.");
     }
-    const parsed = answerDocumentSchema.safeParse(value);
-    if (!parsed.success) throw new StoreUnavailableError();
-    return parsed.data;
+    try { return decodeAnswer(value); } catch { throw new StoreUnavailableError(); }
+  }
+  private examRef(id: string) { return this.options.firestore.doc(this.userPath + "/exams/" + safeId(id)); }
+  private parseExam(value: unknown): ExamPlan {
+    if (!value || (value as { ownerKey?: string }).ownerKey !== this.options.ownerKey) throw new StoreNotFoundError("Exam not found.");
+    try { return validateExamPlan(value as ExamPlan); } catch { throw new StoreUnavailableError(); }
+  }
+  async getExam(id: string): Promise<ExamPlan> {
+    return this.parseExam((await backend(() => this.examRef(id).get(), true)).data());
+  }
+  async listExams(): Promise<ExamPlan[]> {
+    const result = await backend(() => this.options.firestore.collection(this.userPath + "/exams").get());
+    return result.docs.flatMap(doc => {
+      try { return [this.parseExam(doc.data())]; }
+      catch { logStorageFailure("unreadable_exam_plan"); return []; }
+    });
+  }
+  async saveExam(plan: ExamPlan, options: { expectedVersion?: number } = {}): Promise<void> {
+    this.requireWriter();
+    const normalized = JSON.parse(JSON.stringify(validateExamPlan(plan))) as ExamPlan;
+    await backend(() => this.options.firestore.runTransaction(async tx => {
+      const ref = this.examRef(normalized.id);
+      const value = (await tx.get(ref)).data();
+      const current = value ? this.parseExam(value) : undefined;
+      assertExamVersion(current, options.expectedVersion);
+      const keys = Object.entries(normalized.createRequests ?? {}).map(([key, request]) => ({
+        ref: this.options.firestore.doc(this.userPath + "/examCreateKeys/" + key), request,
+      }));
+      for (const key of keys) {
+        const value = (await tx.get(key.ref)).data();
+        if (value && (value.examId !== normalized.id || value.requestHash !== key.request.requestHash))
+          throw new StoreConflictError("IDEMPOTENCY_KEY_REUSED：此 key 已用於不同的建立請求。", "ESSAY_IDEMPOTENCY_CONFLICT");
+      }
+      for (const key of keys) tx.set(key.ref, { examId: normalized.id, requestHash: key.request.requestHash });
+      tx.set(ref, { ...normalized, version: current ? current.version + 1 : 1,
+        createdAt: current?.createdAt ?? normalized.createdAt, ownerKey: this.options.ownerKey });
+    }));
+  }
+  async deleteExam(id: string, options: { expectedVersion: number }): Promise<void> {
+    this.requireWriter();
+    await backend(() => this.options.firestore.runTransaction(async tx => {
+      const ref = this.examRef(id); const current = this.parseExam((await tx.get(ref)).data());
+      assertExamVersion(current, options.expectedVersion);
+      for (const key of Object.keys(current.createRequests ?? {})) tx.delete(this.options.firestore.doc(this.userPath + "/examCreateKeys/" + key));
+      tx.delete(ref);
+    }));
   }
   async getAnswer(id: string): Promise<AnswerDocument> {
     const result = await backend(() => this.answerRef(id).get(), true);
@@ -122,10 +173,10 @@ export class CloudStore implements EssayStore {
     const ref = this.answerRef(normalized.id);
     const ids = normalized.sections.map(section => section.id);
     if (new Set(ids).size !== ids.length) throw new Error("Duplicate section id.");
-    if (Buffer.byteLength(JSON.stringify(normalized)) > MAX_ANSWER_BYTES) throw new Error("Answer exceeds 700 KiB document limit.");
-    if (normalized.templateId === "police_information_essay_166") {
-      layoutSections(await this.getTemplate(normalized.templateId), normalized.sections);
-    }
+    if (Buffer.byteLength(JSON.stringify(encodeAnswer(normalized))) > MAX_ANSWER_BYTES) throw new AnswerSizeError();
+    // An unrenderable candidate must not enter the transaction or revision history.
+    // A calculable layout that exceeds the page limit remains editable and may be saved.
+    layoutSections(await this.getTemplate(normalized.templateId), normalized.sections, normalized.layoutOptions);
     await backend(() => this.options.firestore.runTransaction(async transaction => {
       const existing = (await transaction.get(ref)).data();
       const current = existing ? this.parseAnswer(existing) : undefined;
@@ -136,7 +187,9 @@ export class CloudStore implements EssayStore {
       } else if (current) {
         throw new StoreConflictError("答案 " + normalized.id + " 已存在；更新既有答案時必須提供 expectedVersion。");
       }
-      const committed = { ...normalized, version: current ? current.version + 1 : 1,
+      const encoded = encodeAnswer(normalized, existing);
+      if (Buffer.byteLength(JSON.stringify(encoded)) > MAX_ANSWER_BYTES) throw new AnswerSizeError();
+      const committed = { ...encoded, version: current ? current.version + 1 : 1,
         createdAt: current?.createdAt ?? normalized.createdAt,
         schemaVersion: 1, ownerKey: this.options.ownerKey, committedAt: FieldValue.serverTimestamp() };
       transaction.set(ref, committed);
@@ -160,7 +213,21 @@ export class CloudStore implements EssayStore {
         throw new StoreConflictError("Version conflict: expected " + options.expectedVersion + ", current version is " + answer.version + ". Read the answer again before deleting.");
       }
       const revisions = (await transaction.get(ref.collection("revisions").select())).docs;
-      const manifests = (await transaction.get(artifacts)).docs.filter(doc => doc.data().answerId === answer.id);
+      const manifests = (await transaction.get(artifacts)).docs.filter(doc => {
+        const value = doc.data();
+        return value.answerId === answer.id || (Array.isArray(value.relatedAnswerIds) && value.relatedAnswerIds.includes(answer.id));
+      });
+      const plans = (await transaction.get(this.options.firestore.collection(this.userPath + "/exams"))).docs;
+      for (const doc of plans) {
+        let plan: ExamPlan;
+        try { plan = this.parseExam(doc.data()); }
+        catch { logStorageFailure("unreadable_exam_plan"); continue; }
+        const { lastBundle, ...rest } = plan;
+        if (plan.questions.some(q => q.answerId === id)) transaction.set(doc.ref, { ...rest,
+          ...(lastBundle && !lastBundle.members.some(m => m.answerId === id) ? { lastBundle } : {}),
+          ownerKey: this.options.ownerKey, version: plan.version + 1, updatedAt: new Date(this.now()).toISOString(),
+          questions: plan.questions.map(q => { const { answerId, ...rest } = q; return answerId === id ? rest : q; }) });
+      }
       for (const doc of [...revisions, ...manifests]) transaction.delete(doc.ref);
       transaction.delete(ref);
       return { answer, revisions: revisions.length, manifests: manifests.map(doc => doc.data()) };
@@ -169,7 +236,7 @@ export class CloudStore implements EssayStore {
     // the bucket lifecycle, which still covers any delete that fails here.
     for (const value of deleted.manifests) {
       const parsed = manifestSchema.safeParse(value);
-      if (!parsed.success || parsed.data.bucket !== this.options.artifactBucket
+      if (!parsed.success || parsed.data.ownerKey !== this.options.ownerKey || parsed.data.bucket !== this.options.artifactBucket
         || !parsed.data.objectName.startsWith(this.options.environment + "/" + this.options.ownerKey + "/")) continue;
       const { objectName, generation } = parsed.data;
       try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
@@ -180,6 +247,7 @@ export class CloudStore implements EssayStore {
 
   async createExportHandle(outputPath: string, details: ExportDetails) {
     this.requireWriter();
+    const relatedAnswerIds = manifestSchema.shape.relatedAnswerIds.parse(details.relatedAnswerIds);
     const answer = await this.getAnswer(details.answerId);
     // Export refers to the rendered snapshot, even if an edit has since committed.
     if (!Number.isSafeInteger(details.answerVersion) || details.answerVersion < 1 || details.answerVersion > answer.version) {
@@ -225,17 +293,18 @@ export class CloudStore implements EssayStore {
       await this.options.firestore.doc(this.userPath + "/artifacts/" + handle).create({
         schemaVersion: 1, handle, ownerKey: this.options.ownerKey,
         answerId: answer.id, answerVersion: details.answerVersion, format: details.format, name, mimeType,
+        ...(relatedAnswerIds ? { relatedAnswerIds } : {}),
         bucket: this.options.artifactBucket, objectName, generation,
         sha256, sizeBytes: data.length,
         createdAt: Timestamp.fromMillis(createdAt), expiresAt: Timestamp.fromMillis(expiresAt),
       });
-    } catch {
+    } catch (error) {
       if (generation && /^[1-9][0-9]*$/.test(generation)) {
         try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
         catch { logStorageFailure("artifact_compensation_failed"); }
       } else logStorageFailure("artifact_generation_unknown");
       logStorageFailure("storage_unavailable");
-      throw new StoreUnavailableError();
+      throw new StoreUnavailableError(error);
     }
     return { handle, name, mimeType, expiresAt: new Date(expiresAt).toISOString() };
   }
@@ -258,7 +327,7 @@ export class CloudStore implements EssayStore {
       this.resolveExportPath(value.name, value.format);
       if (exportMimeType(value.name) !== value.mimeType) throw notFound();
       // A manifest committed after a concurrent delete_answer must not expose deleted content.
-      await this.getAnswer(value.answerId);
+      for (const id of new Set([value.answerId, ...value.relatedAnswerIds ?? []])) await this.getAnswer(id);
       const file = this.bucket.file(value.objectName, { generation: value.generation });
       const [metadata] = await backend(() => file.getMetadata(), true);
       if (String(metadata.generation) !== value.generation || Number(metadata.size) !== value.sizeBytes) throw notFound();
@@ -271,6 +340,28 @@ export class CloudStore implements EssayStore {
       if (error instanceof StoreUnavailableError) throw error;
       throw notFound();
     }
+  }
+
+  async deleteExport(handle: string): Promise<void> {
+    this.requireWriter();
+    if (!exportArtifactHandlePattern.test(handle)) throw new StoreNotFoundError("Export artifact not found.");
+    const ref = this.options.firestore.doc(this.userPath + "/artifacts/" + handle);
+    const result = await backend(() => ref.get());
+    const raw = result.data();
+    if (raw === undefined) return;
+    const parsed = manifestSchema.safeParse(raw);
+    if (!parsed.success || parsed.data.ownerKey !== this.options.ownerKey || parsed.data.handle !== handle
+      || parsed.data.bucket !== this.options.artifactBucket
+      || parsed.data.objectName !== this.options.environment + "/" + this.options.ownerKey + "/" + handle + "." + parsed.data.format) {
+      throw new StoreNotFoundError("Export artifact not found.");
+    }
+    const { objectName, generation } = parsed.data;
+    // Keep the manifest on a byte-delete failure so rollback can be retried by handle.
+    await backend(async () => {
+      try { await this.bucket.file(objectName, { generation }).delete({ ifGenerationMatch: generation }); }
+      catch (error) { if (errorCode(error) !== 404) throw error; }
+      await ref.delete();
+    });
   }
 
   async checkReadiness(): Promise<void> {

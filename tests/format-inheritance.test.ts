@@ -52,7 +52,7 @@ test("the 166 paper accepts numbered headings without asking to turn off bold",
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     try {
-      const created = await client.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay_166", title: "編號",
+      const created = await client.callTool({ name: "create_answer", arguments: { responseDetail: "full", templateId: "police_information_essay_166", title: "編號",
         sections: [{ id: "a", heading: "前言", headingStyle: { numbered: true }, text: "內容。" }] } });
       assert.equal(created.isError, undefined, JSON.stringify(created.content));
       const layout = (created.structuredContent as { layout: { lines: Array<{ isHeading: boolean; text: string; format: { bold: boolean } }> } }).layout;

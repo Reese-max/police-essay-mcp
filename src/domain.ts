@@ -1,8 +1,39 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { answerReviewSchema } from "./review-schema.js";
 
-function normalizeNewlines(text: string): string {
-  return text.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+export const MAX_ANSWER_BYTES = 700 * 1024;
+
+export const MAX_EXAM_BYTES = 256 * 1024;
+export const examQuestionSchema = z.object({
+  questionNo: z.number().int().min(1).max(20), question: z.string().max(10_000).optional(),
+  targetPages: z.number().int().min(1).max(20).optional(),
+  answerId: z.string().regex(/^ans_[A-Za-z0-9-]+$/).optional(),
+});
+export const examQuestionsSchema = z.array(examQuestionSchema).min(1).max(20).refine(
+  questions => new Set(questions.map(q => q.questionNo)).size === questions.length, "questionNo 不可重複。",
+);
+export const examFormatsSchema = z.array(z.enum(["pdf", "docx"])).min(1).max(2);
+export const examPlanSchema = z.object({
+  id: z.string().regex(/^exam_[A-Za-z0-9-]+$/), title: z.string().min(1).max(100),
+  questions: examQuestionsSchema, formats: examFormatsSchema.optional(),
+  createdAt: z.string().datetime(), updatedAt: z.string().datetime(), version: z.number().int().positive(),
+  createRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  createRequests: z.record(z.string().regex(/^[a-f0-9]{64}$/), z.object({ requestHash: z.string().regex(/^[a-f0-9]{64}$/), questionNo: z.number().int().min(1).max(20) })).optional(),
+  lastBundle: z.object({ formats: examFormatsSchema, members: z.array(z.object({
+    answerId: z.string().regex(/^ans_[A-Za-z0-9-]+$/), version: z.number().int().positive(),
+  })).min(1).max(20), pages: z.object({ pdf: z.number().int().positive().optional(), docx: z.number().int().positive().optional() }).optional(),
+    exportedAt: z.string().datetime() }).optional(),
+});
+export type ExamPlan = z.infer<typeof examPlanSchema>;
+export function validateExamPlan(value: ExamPlan): ExamPlan {
+  const plan = examPlanSchema.parse(value);
+  if (Buffer.byteLength(JSON.stringify(plan)) > MAX_EXAM_BYTES) throw new Error("Exam exceeds 256 KiB document limit.");
+  return plan;
+}
+
+export function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n|[\r\u0085\u2028\u2029\u000b\u000c]/gu, "\n");
 }
 
 type WithoutDefaults<Shape extends z.ZodRawShape> = {
@@ -139,6 +170,14 @@ export const paragraphFormatPatchSchema = z.object({
 
 export type ParagraphFormatPatch = z.input<typeof paragraphFormatPatchSchema>;
 
+export const layoutOptionsSchema = z.strictObject({
+  wholeLatinWords: z.boolean().optional(),
+  keepHeadingWithNext: z.boolean().optional(),
+  avoidPunctuationOnlyLines: z.boolean().optional(),
+  compactPaper: z.boolean().optional().describe('165/166 only: remove unformatted blank paragraphs and join short headings with their first body paragraph; false preserves standalone headings and blanks.'),
+});
+export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;
+
 export const answerDocumentSchema = z.object({
   id: z.string().regex(/^ans_[A-Za-z0-9-]+$/),
   templateId: z.string().min(1),
@@ -150,6 +189,9 @@ export const answerDocumentSchema = z.object({
   sections: z.array(answerSectionSchema).max(100),
   /** Planned lines per section id (heading and spacing included); set with set_line_targets. */
   lineTargets: z.record(z.string(), z.number().int().min(1).max(200)).optional(),
+  createRequestHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  layoutOptions: layoutOptionsSchema.optional(),
+  review: answerReviewSchema.optional(),
   version: z.number().int().positive(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
@@ -167,6 +209,7 @@ export interface LayoutLine {
   paragraphIndex: number;
   isHeading: boolean;
   isSpacer: boolean;
+  isPadding?: boolean;
   isFirstLineOfParagraph: boolean;
   isLastLineOfParagraph: boolean;
   format: ParagraphFormat;
@@ -217,6 +260,7 @@ export const layoutLineSchema = z.object({
   paragraphIndex: z.number().int().nonnegative(),
   isHeading: z.boolean(),
   isSpacer: z.boolean(),
+  isPadding: z.boolean().optional(),
   isFirstLineOfParagraph: z.boolean(),
   isLastLineOfParagraph: z.boolean(),
   format: paragraphFormatSchema,
@@ -273,11 +317,9 @@ export function normalizeSection(
   const sourceText = input.text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
   const sourceParagraphs = input.paragraphs?.length
     ? input.paragraphs
-    : sourceText.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraphInput => ({ text }));
+    : normalizeNewlines(sourceText).split("\n").map((text): AnswerParagraphInput => ({ text }));
   const paragraphs = sourceParagraphs.flatMap((paragraph) =>
-    paragraph.text
-      .replaceAll("\r\n", "\n")
-      .replaceAll("\r", "\n")
+    normalizeNewlines(paragraph.text)
       .split("\n")
       .map((text) => ({ text, format: paragraph.format })),
   );
@@ -329,7 +371,7 @@ export function updateSectionFormatting(
 ): AnswerSection {
   const sourceParagraphs = section.paragraphs?.length
     ? section.paragraphs
-    : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text }));
+    : normalizeNewlines(section.text).split("\n").map((text): AnswerParagraph => ({ text }));
   const overrides = new Map<number, ParagraphFormatInput>();
   for (const patch of input.paragraphFormats ?? []) {
     if (patch.index >= sourceParagraphs.length) {
@@ -406,7 +448,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     heading: section.heading,
     paragraphs: (section.paragraphs?.length
       ? section.paragraphs
-      : section.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").map((text): AnswerParagraph => ({ text })))
+      : normalizeNewlines(section.text).split("\n").map((text): AnswerParagraph => ({ text })))
       .map((paragraph) => ({ ...paragraph, edited: false })),
     changed: false,
   }));
@@ -476,7 +518,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     // Blank paragraphs that no edit touched stay as they are.
     for (const item of new Set(selected.map((match) => match.item))) {
       item.paragraphs = item.paragraphs.flatMap((paragraph) => !paragraph.edited ? [paragraph]
-        : paragraph.text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n").filter((text) => text !== "")
+        : normalizeNewlines(paragraph.text).split("\n").filter((text) => text !== "")
           .map((text) => ({ text, format: paragraph.format, edited: false })));
       if (item.paragraphs.length === 0) {
         throw new Error(`${label}：會清空區塊「${item.heading || item.section.heading || item.section.id}」的全部內容；要刪除整個區塊請用 delete_text。`);

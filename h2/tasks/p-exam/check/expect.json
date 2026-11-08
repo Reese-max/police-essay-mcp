@@ -1,0 +1,65 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "three answers created",
+    "eq": 3
+  },
+  {
+    "kind": "all_fit",
+    "label": "all answers fit"
+  },
+  {
+    "kind": "tool_called",
+    "label": "exam plan started",
+    "tool": "start_exam",
+    "min": 1
+  },
+  {
+    "kind": "tool_order",
+    "label": "plan before answer creation",
+    "first_of": [
+      "start_exam"
+    ],
+    "before": [
+      "create_answer",
+      "create_answers"
+    ]
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "one overview instead of per-question canvas",
+    "tool": "render_answer_sheet"
+  },
+  {
+    "kind": "tool_called",
+    "label": "at most one overview",
+    "tool": "render_exam_overview",
+    "max": 1
+  },
+  {
+    "kind": "tool_called",
+    "label": "bundle exported once",
+    "tool": "export_exam_bundle",
+    "min": 1,
+    "max": 2
+  },
+  {
+    "kind": "exports_kinds",
+    "label": "PDF and Word provided",
+    "pdf": 1,
+    "docx": 1
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "bounded tool calls",
+    "n": 14
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

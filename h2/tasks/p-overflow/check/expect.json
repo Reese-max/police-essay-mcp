@@ -1,0 +1,57 @@
+[
+  {
+    "kind": "all_fit",
+    "label": "answer fits"
+  },
+  {
+    "kind": "answer_where",
+    "label": "keep all four sections",
+    "match": {
+      "title": "資通安全管理法申論"
+    },
+    "checks": {
+      "section_titles_eq": [
+        "一、法制架構與適用範圍",
+        "二、風險評估與資產管理",
+        "三、防護措施與存取控制",
+        "四、事件通報與應變改善"
+      ],
+      "total_lines_min": 34
+    }
+  },
+  {
+    "kind": "exports_kinds",
+    "label": "PDF and Word provided",
+    "pdf": 1,
+    "docx": 1
+  },
+  {
+    "kind": "tool_called",
+    "label": "layout checked",
+    "tool": "check_layout",
+    "min": 1
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "no deletion",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "bounded tool calls",
+    "n": 16
+  },
+  {
+    "kind": "final_message_not_matches",
+    "label": "no unsupported verification claim",
+    "regex": "已查證|內容正確無誤"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

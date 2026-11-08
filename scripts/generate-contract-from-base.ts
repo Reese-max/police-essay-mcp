@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { BASE_COMMIT, INTENTIONAL_DIFFERENCES, collectContract, oauthToolLists } from "./check-mcp-contract.js";
@@ -14,7 +14,8 @@ export async function generateContractFromBase(basePath: string) {
   assert.equal(git("status", "--porcelain", "--", "src"), "", "Base source must be unmodified.");
   const sourceSha256: Record<string, string> = {};
   for (const file of (await readdir(path.join(base, "src"))).filter(name => name.endsWith(".ts")).sort()) {
-    sourceSha256[file] = createHash("sha256").update(await readFile(path.join(base, "src", file))).digest("hex");
+    // Hash the committed blob, not checkout bytes (core.autocrlf changes LF to CRLF on Windows).
+    sourceSha256[file] = createHash("sha256").update(execFileSync("git", ["-C", base, "show", `${sourceCommit}:src/${file}`], { windowsHide: true })).digest("hex");
   }
   const { createEssayMcpServer } = await import(pathToFileURL(path.join(base, "src/server.ts")).href);
   const contract = await collectContract(createEssayMcpServer, 21, 12);

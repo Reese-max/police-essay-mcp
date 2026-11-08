@@ -1,0 +1,65 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "原答案保留",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "只改寫第二節",
+    "match": {
+      "title": "警察資訊勤務紀錄"
+    },
+    "checks": {
+      "version_min": 2,
+      "section_text_contains": {
+        "sectionTitle": "二",
+        "text": "完整保存並定期檢視"
+      },
+      "section_text_not_contains": {
+        "sectionTitle": "二",
+        "text": "妥善保存"
+      },
+      "section_text_unchanged": {
+        "sectionIndex": 0,
+        "text": "系統應依職務設定權限並定期檢視。"
+      },
+      "section_text_unchanged2": {
+        "sectionIndex": 2,
+        "text": "機關應辦理教育訓練並持續改善。"
+      }
+    }
+  },
+  {
+    "kind": "tool_called",
+    "label": "使用段落改寫",
+    "tool": "replace_text",
+    "min": 1
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "不整份重寫",
+    "tool": "write_answer"
+  },
+  {
+    "kind": "every_call_has_arg",
+    "label": "寫入帶版本",
+    "tools": [
+      "replace_text"
+    ],
+    "arg": "expectedVersion"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "呼叫精簡",
+    "n": 8
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

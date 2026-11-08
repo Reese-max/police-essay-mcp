@@ -1,0 +1,31 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "答案保留",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "答案未受損",
+    "match": {
+      "title": "數位鑑識證據保全"
+    },
+    "checks": {
+      "version_eq": 1,
+      "section_count_eq": 2
+    }
+  },
+  {
+    "kind": "final_message_matches",
+    "label": "說明不支援",
+    "regex": "不支援|無法|不能"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

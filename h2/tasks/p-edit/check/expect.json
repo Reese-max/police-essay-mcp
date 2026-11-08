@@ -1,0 +1,62 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "one answer",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "only section 二 phrase changed",
+    "match": {
+      "title": "警察資訊安全管理"
+    },
+    "checks": {
+      "version_min": 2,
+      "section_count_eq": 3,
+      "section_text_contains": {
+        "sectionTitle": "二",
+        "text": "資通安全"
+      },
+      "section_text_not_contains": {
+        "sectionTitle": "二",
+        "text": "資訊安全"
+      },
+      "section_text_unchanged": {
+        "sectionIndex": 0,
+        "text": "警察資訊系統應落實權限控管與操作紀錄。"
+      },
+      "section_text_unchanged2": {
+        "sectionIndex": 2,
+        "text": "機關應定期檢視制度並持續改善。"
+      }
+    }
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "no write_answer",
+    "tool": "write_answer"
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "no deletion",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "total_calls_max",
+    "label": "bounded tool calls",
+    "n": 8
+  },
+  {
+    "kind": "failed_calls_max",
+    "label": "at most one failure",
+    "n": 1
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]
