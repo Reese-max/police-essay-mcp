@@ -15,7 +15,7 @@ export function createReadinessCheck(store: EssayStore, options: {
     if (!paper || now() >= templatesUntil) {
       templatesPending ??= (async () => {
         const templates = await Promise.all([
-          store.getTemplate("police_information_essay"), store.getTemplate("police_information_essay_166"),
+          store.getTemplate("police_information_essay"), store.getTemplate("police_information_essay_165"),
         ]);
         if (!templates[0] || !templates[1]) throw new Error("Templates are not readable.");
         paper = templates[1];
@@ -25,7 +25,7 @@ export function createReadinessCheck(store: EssayStore, options: {
     }
     const fontPath = (options.fontPath ?? (() => process.env.ESSAY_MCP_PAPER_FONT))();
     if (options.requirePaperFont ?? process.env.REQUIRE_PAPER_FONT === "true") {
-      if (!fontPath) throw new Error("166 font is missing.");
+      if (!fontPath) throw new Error("165 font is missing.");
     }
     if (fontPath) await validateRuntimeFont(paper!, fontPath);
     if (!store.checkReadiness || now() < readyUntil) return;

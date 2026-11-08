@@ -1,0 +1,65 @@
+{
+  "id": "ans_h2-t-boundary-unsupported",
+  "templateId": "police_information_essay_165",
+  "title": "數位鑑識證據保全",
+  "sections": [
+    {
+      "id": "sec-h2-t-boundary-unsupported-1",
+      "heading": "一",
+      "text": "採證時應記錄來源、時間及處理人員。",
+      "paragraphs": [
+        {
+          "text": "採證時應記錄來源、時間及處理人員。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-t-boundary-unsupported-2",
+      "heading": "二",
+      "text": "原始資料應妥善保存並維持完整性。",
+      "paragraphs": [
+        {
+          "text": "原始資料應妥善保存並維持完整性。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

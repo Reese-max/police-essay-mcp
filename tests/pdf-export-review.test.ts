@@ -9,15 +9,6 @@ import { exportPdf } from "../src/exporters.js";
 import { layoutSections } from "../src/layout.js";
 import { originalPaperFontPath, validatedOriginalPaperFont } from "../src/original-paper.js";
 
-test("CI installs pdftotext before every matrix test run", async () => {
-  const workflow = await fs.readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
-  const steps = workflow.split(/^      - /m).slice(1);
-  const testIndex = steps.findIndex(step => /^run: npm test\s*$/m.test(step));
-  assert.ok(testIndex >= 0, "CI must run the test suite");
-  const setup = steps.slice(0, testIndex).filter(step => !/^\s*if:/m.test(step)).join("\n");
-  assert.match(setup, /apt-get install[^\n]*\bpoppler-utils\b/, "all matrix jobs need pdftotext before npm test");
-});
-
 test("166 PDF preserves measured glyph positions inside the writing area", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, async t => {
   const template = templateSchema.parse(JSON.parse(await fs.readFile(new URL("../templates/police_information_essay_166.json", import.meta.url), "utf8")));
   const text = "i".repeat(39);

@@ -9,7 +9,7 @@ import { layoutSections } from '../src/layout.js';
 const template = JSON.parse(readFileSync(new URL('../templates/police_information_essay.json', import.meta.url), 'utf8')) as AnswerTemplate;
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 type Args = { answerId: string; operation?: string; sectionId?: string; expectedVersion?: number; newText?: string; paragraphs?: Array<{text: string; format?: unknown}> };
-async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle?: HeadingStyleInput; italic?: boolean} = {}) {
+async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle?: HeadingStyleInput; italic?: boolean; metadata?: boolean} = {}) {
   let answer = createAnswerDocument({templateId:template.id,title:'測試答案',sections:[{id:'a',heading:'（一）',headingStyle:options.headingStyle,paragraphs:[{text:'第一段',format:{firstLineIndent:2,italic:options.italic}},{text:'第二段',format:{leftIndent:2}}]}]});
   const calls: Array<{name: string; args: Args}> = [];
   const protocol: string[] = [];
@@ -18,7 +18,8 @@ async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle
   const errors: Error[] = [];
   let window: DOMWindow;
   const snapshot = () => ({answer,layout:layoutSections(template,answer.sections)});
-  const result = () => ({structuredContent:snapshot(),_meta:{readOnly:Boolean(options.readOnly)}});
+  const result = () => ({structuredContent: options.metadata ? {answer:{id:answer.id,version:answer.version},layout:{totalLines:snapshot().layout.totalLines}} : snapshot(),
+    _meta:{readOnly:Boolean(options.readOnly),...(options.metadata ? {snapshot:snapshot()} : {})}});
   const tools = async (name: string, args: Args) => {
     calls.push({name,args});
     if (name === 'preview_change') {
@@ -56,7 +57,7 @@ async function host(options: {readOnly?: boolean; legacy?: boolean; headingStyle
   const dom = new JSDOM(POLICE_ESSAY_WIDGET_HTML,{runScripts:'dangerously',url:'https://view.test',virtualConsole:console,beforeParse(w) {
     window=w;
     Object.defineProperty(w,'parent',{value:parent});
-    if (options.legacy) Object.defineProperty(w,'openai',{value:{toolOutput:snapshot(),toolResponseMetadata:result()._meta,callTool:tools}});
+    if (options.legacy) Object.defineProperty(w,'openai',{value:{toolOutput:result().structuredContent,toolResponseMetadata:result()._meta,callTool:tools}});
   }});
   await tick();await tick();assert.deepEqual(errors,[]);
   const element = <T extends HTMLElement = HTMLElement>(id:string) => dom.window.document.getElementById(id) as T;
@@ -128,4 +129,14 @@ test('widget grid shows bold and italic only where the line format sets them',as
   assert.deepEqual(weight(styled,'（一）'),['800','']);assert.deepEqual(weight(styled,'第二段'),['','']);
   assert.deepEqual(weight(styled,'第一段'),['','italic']);
  }finally{styled.dom.window.close();}
+});
+
+for (const legacy of [false,true]) test(`widget renders metadata-only lines in ${legacy ? "OpenAI toolResponseMetadata" : "MCP Apps tool-result"}`,async()=>{
+ const h=await host({legacy,metadata:true});try {
+  assert.equal(h.element<HTMLTextAreaElement>('text').value,'第一段\n第二段');
+  assert.ok([...h.dom.window.document.querySelectorAll('.line-text')].some(line=>line.textContent==='第一段'));
+  assert.equal(h.calls.length,0,'metadata renders without another tool call');
+  h.input('修改第一段\n第二段');await h.click('preview-edit');await h.click('apply-edit');
+  assert.equal(h.answer.version,2);assert.equal(h.element<HTMLTextAreaElement>('text').value,'修改第一段\n第二段');
+ }finally{h.dom.window.close();}
 });

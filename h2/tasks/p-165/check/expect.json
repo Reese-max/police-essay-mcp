@@ -1,0 +1,73 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "one existing answer",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "left-aligned answer preserved without unsupported formatting",
+    "match": {
+      "title": "165原稿紙警政資訊題目",
+      "templateId": "police_information_essay_165"
+    },
+    "checks": {
+      "version_eq": 1,
+      "section_count_eq": 1,
+      "section_text_unchanged": {
+        "sectionIndex": 0,
+        "text": "警察資訊系統應落實資通安全與個人資料保護。"
+      },
+      "any_paragraph_bold": false,
+      "all_align": "left"
+    }
+  },
+  {
+    "kind": "no_unsupported_formatting",
+    "label": "no attempt at unsupported emphasis or alignment, even failed/previewed",
+    "tools": [
+      "create_answer",
+      "create_answers",
+      "write_answer",
+      "replace_text",
+      "format_section",
+      "insert_text",
+      "preview_change"
+    ]
+  },
+  {
+    "kind": "tool_called",
+    "label": "show the supported original-paper answer",
+    "tool": "render_answer_sheet",
+    "min": 1,
+    "max": 1
+  },
+  {
+    "kind": "failed_calls_max",
+    "label": "no unsupported trial writes",
+    "n": 0
+  },
+  {
+    "kind": "final_message_matches",
+    "label": "explains unsupported formatting",
+    "regex": "不支援|無法|不能"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  },
+  {
+    "kind": "final_message_matches",
+    "label": "explains the bold heading limitation",
+    "regex": "粗體|粗字|bold"
+  },
+  {
+    "kind": "final_message_matches",
+    "label": "explains the centred title limitation",
+    "regex": "置中|居中|center|centre"
+  }
+]

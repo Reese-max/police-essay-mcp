@@ -1,8 +1,10 @@
-import { promises as fs, createWriteStream, existsSync } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {
   Header,
+  Bookmark,
+  SectionType,
   ImageRun,
   HorizontalPositionRelativeFrom,
   VerticalPositionRelativeFrom,
@@ -25,7 +27,7 @@ import {
 import PDFDocument from "pdfkit";
 import * as fontkit from "fontkit";
 import type { AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
-import { characterDisplayWidth, expandTabs, lineIndentColumns, renderTextLine, splitGraphemes } from "./layout.js";
+import { characterDisplayWidth, splitGraphemes, lineIndentColumns, renderTextLine } from "./layout.js";
 import {
   gridMetrics,
   mmToTwips,
@@ -36,7 +38,7 @@ function pageLines(report: LayoutReport, page: number): LayoutLine[] {
   return report.lines.filter((line) => line.page === page);
 }
 
-import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath } from "./original-paper.js";
+import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath, originalPaperRenderBaseline } from "./original-paper.js";
 import { subsetFont } from "./font-subset.js";
 
 /** Printable ASCII and common full-width marks stay editable in Word beyond the answer's own characters. */
@@ -62,10 +64,10 @@ export function embeddedFontTable(document: Document, fontFamily: string, altNam
     + `<w:embedRegular r:id="rId1" w:fontKey="{${fontKey}}" w:subsetted="1"/></w:font></w:fonts>` }];
 }
 
-function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
+export function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
   if (template.paperProfile) {
     validateOriginalPaper(template);
-    if (!report.fits || allowOverflow) throw new Error("166 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
+    if (!report.fits || allowOverflow) throw new Error("165 原稿紙限兩頁44行，請先修改答案並重新檢查；不允許延伸稿紙。");
   }
   if (!report.fits && !allowOverflow && template.overflowPolicy !== "report") {
     throw new Error(
@@ -101,7 +103,7 @@ function makeTabStops(template: AnswerTemplate, tabSize: number): Array<{ type: 
   return stops;
 }
 
-function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragraph {
+function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine, bookmark?: string): Paragraph {
   const format = line?.format ?? {
     firstLineIndent: 0,
     leftIndent: 0,
@@ -129,6 +131,7 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragra
       lineRule: LineRuleType.EXACT,
     },
     children: [
+      ...(bookmark ? [new Bookmark({ id: bookmark, children: [] })] : []),
       new TextRun({
         text: line?.text ?? "",
         size: Math.round(template.fontSizePt * 2),
@@ -144,13 +147,13 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine): Paragra
   });
 }
 
-function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: number): Table {
+function makeDocxPageTable(template: AnswerTemplate, lines: LayoutLine[], page: number, bookmark?: string): Table {
   const rows = Array.from({ length: template.linesPerPage }, (_, index) => {
     const line = lines[index];
     const cell = new TableCell({
       verticalAlign: template.paperProfile ? VerticalAlign.BOTTOM : VerticalAlign.CENTER,
       margins: { top: 0, bottom: 0, left: template.paperProfile ? 0 : 80, right: template.paperProfile ? 0 : 80 },
-      children: [makeLineParagraph(template, line)],
+      children: [makeLineParagraph(template, line, index === 0 ? bookmark : undefined)],
     });
     return new TableRow({
       cantSplit: true,
@@ -183,49 +186,66 @@ export async function exportDocx(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "docx" }> {
-  const pages = outputPageCount(report, template, allowOverflow);
+  return exportDocxBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+/** The single-answer builder also supplies every bundle section, including 165 paper geometry. */
+function docxSection({ report, template, bookmark }: ExportPages, pages: number, index: number) {
+  // Reject before creating a file or export handle: DOCX cannot contain XML 1.0
+  // controls, isolated surrogates or Unicode noncharacters.
+  for (const line of report.lines) {
+    for (const character of line.text) {
+      const code = character.codePointAt(0)!;
+      if ((code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d)
+        || (code >= 0xd800 && code <= 0xdfff) || (code >= 0xfdd0 && code <= 0xfdef)
+        || (code & 0xffff) === 0xfffe || (code & 0xffff) === 0xffff) {
+        throw new Error(`Word 不支援的字元 U+${code.toString(16).toUpperCase().padStart(4, "0")}；請移除或替換後重新輸出。`);
+      }
+    }
+  }
   const children: Array<Table | Paragraph> = [];
   for (let page = 1; page <= pages; page += 1) {
     // Keep the break paragraph near zero height so every page's table starts at the top margin.
     if (page > 1) children.push(new Paragraph({ pageBreakBefore: true, children: [], spacing: { before: 0, after: 0, line: 1, lineRule: LineRuleType.EXACT }, run: { size: 2 } }));
-    children.push(makeDocxPageTable(template, pageLines(report, page), page));
+    children.push(makeDocxPageTable(template, pageLines(report, page), page, page === 1 && bookmark ? `Q${index + 1}_${bookmark.replace(/[^\p{L}\p{N}_]/gu, "_").slice(0, 32)}` : undefined));
   }
 
-  // Word substitutes another face for a font that is not installed, which moves and clips the
-  // measured 166 rows; embed the used glyphs so the file renders identically without the font.
-  const embedded = template.paperProfile ? embeddedFontOptions(template.fontFamily,
-    await subsetFont(originalPaperFontPath(), [EDITABLE_PAPER_CHARACTERS, ...report.lines.filter(line => line.page <= pages).map(line => line.text)])) : undefined;
-  const document = new Document({
-    ...embedded,
-    creator: "police-essay-mcp",
-    title: "國考申論答題紙",
-    description: "由警察資訊申論答題紙 MCP 產生的固定版面文件",
-    sections: [
-      {
-        properties: {
-          page: {
-            size: {
-              width: mmToTwips(210),
-              height: mmToTwips(297),
-            },
-            margin: {
-              top: mmToTwips(template.marginsMm.top),
-              right: mmToTwips(template.marginsMm.right),
-              bottom: mmToTwips(template.paperProfile ? 190 * 25.4 / 72 : template.marginsMm.bottom),
-              left: mmToTwips(template.marginsMm.left),
-            },
-          },
+  return {
+    properties: {
+      type: SectionType.NEXT_PAGE,
+      page: {
+        size: {
+          width: mmToTwips(210),
+          height: mmToTwips(297),
         },
-        ...(template.paperProfile ? { headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ type: "jpg", data: originalPaperImage(), transformation: { width: (originalPaper.imageRect[2] - originalPaper.imageRect[0]) * 4 / 3, height: (originalPaper.imageRect[3] - originalPaper.imageRect[1]) * 4 / 3 }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[0] * 12700) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[1] * 12700) }, behindDocument: true, allowOverlap: true } })] })] }) } } : {}),
-        children,
+        margin: {
+          top: mmToTwips(template.marginsMm.top),
+          right: mmToTwips(template.marginsMm.right),
+          bottom: mmToTwips(template.paperProfile ? 190 * 25.4 / 72 : template.marginsMm.bottom),
+          left: mmToTwips(template.marginsMm.left),
+        },
       },
-    ],
-  });
+    },
+    ...(template.paperProfile ? { headers: { default: new Header({ children: [new Paragraph({ children: [new ImageRun({ type: "jpg", data: originalPaperImage(), transformation: { width: (originalPaper.imageRect[2] - originalPaper.imageRect[0]) * 4 / 3, height: (originalPaper.imageRect[3] - originalPaper.imageRect[1]) * 4 / 3 }, floating: { horizontalPosition: { relative: HorizontalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[0] * 12700) }, verticalPosition: { relative: VerticalPositionRelativeFrom.PAGE, offset: Math.round(originalPaper.imageRect[1] * 12700) }, behindDocument: true, allowOverlap: true } })] })] }) } } : { headers: { default: new Header({ children: [] }) } }),
+    children,
+  };
+}
 
-  const overrides = embedded ? embeddedFontTable(document, template.fontFamily, "教育部標準楷書") : [];
+export async function exportDocxBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
+  : Promise<{ path: string; pages: number; format: "docx" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const sections = entries.map((entry, index) => docxSection(entry, counts[index], index));
+  const paper = entries.find(entry => entry.template.paperProfile);
+  // Embed one shared original-paper face with every member's used glyphs, as single-answer export does.
+  const embedded = paper ? embeddedFontOptions(paper.template.fontFamily, await subsetFont(originalPaperFontPath(),
+    [EDITABLE_PAPER_CHARACTERS, ...entries.flatMap(({ report }, index) => report.lines.filter(line => line.page <= counts[index]).map(line => line.text))])) : undefined;
+  const document = new Document({ ...embedded, creator: "police-essay-mcp", title: "國考申論答題紙",
+    description: "由警察資訊申論答題紙 MCP 產生的固定版面文件", sections });
+  const overrides = paper ? embeddedFontTable(document, paper.template.fontFamily, "教育部標準楷書") : [];
+  for (const index of entries.keys()) await onMember?.(index);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, await Packer.toBuffer(document, false, overrides));
-  return { path: outputPath, pages, format: "docx" };
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "docx" };
 }
 
 function findPdfFont(bold = false): string | undefined {
@@ -255,10 +275,85 @@ function findPdfItalicFont(): string | undefined {
   return configured && existsSync(configured) ? configured : undefined;
 }
 
-function openPdfFont(fontPath: string): unknown {
+/**
+ * Noto Sans CJK is shipped as a TrueType Collection (TTC) whose face 0 is Japanese.
+ * The configured ESSAY_MCP_PDF_FONT points at the collection, so openPdfFont must
+ * select the Traditional Chinese face by postscriptName instead of always taking
+ * fonts[0]. The TC postscript name is derived from the configured path's basename
+ * (NotoSansCJK-Regular.ttc -> NotoSansCJKtc-Regular). A renamed Noto collection
+ * still selects TC from its face metadata; other collections retain their fallback.
+ */
+function preferredCjkTcFace(fontPath: string): string | undefined {
+  const match = path.basename(fontPath).match(/^(NotoSansCJK)-(Regular|Bold)\.ttc$/i);
+  return match ? `${match[1]}tc-${match[2]}` : undefined;
+}
+
+function openPdfFont(fontPath: string, preferredFace?: string): unknown {
   const opened = fontkit.openSync(fontPath);
-  if ("fonts" in opened && Array.isArray(opened.fonts)) return opened.fonts[0];
+  if (opened && typeof opened === "object" && "fonts" in opened && Array.isArray(opened.fonts)) {
+    if (preferredFace) {
+      const match = opened.fonts.find((face: { postscriptName?: string; familyName?: string }) =>
+        face.postscriptName === preferredFace || face.familyName === preferredFace);
+      if (match) return match;
+    }
+    const traditionalChinese = opened.fonts.find((face: { postscriptName?: string; familyName?: string }) =>
+      /^Noto(?:Sans|Serif)CJKtc-/i.test(face.postscriptName ?? "") || /^Noto (?:Sans|Serif) CJK TC$/i.test(face.familyName ?? ""));
+    if (traditionalChinese) return traditionalChinese;
+    return opened.fonts[0];
+  }
   return opened;
+}
+
+/** Draw the layout's actual columns without a PDFKit width/height wrapper that can discard a tail. */
+function drawGridLine(
+  document: PDFKit.PDFDocument,
+  line: LayoutLine,
+  startColumn: number,
+  baseX: number,
+  y: number,
+  columnWidthPt: number,
+  availableWidthPt: number,
+  syntheticObliquePt = 0,
+): { overflow: number; slantRisk: number } {
+  const characters = splitGraphemes(line.text);
+  const positions: Array<{ text: string; x: number; columnX: number }> = [];
+  let currentColumn = startColumn;
+  let inkEnd = 0;
+  for (const character of characters) {
+    if (character !== "\t") {
+      // A wide Latin glyph can be wider than its nominal half-width column.
+      // Compute the actual advance; use it only if the complete run fits below.
+      const columnX = columnWidthPt * (currentColumn - startColumn);
+      const x = Math.max(columnX, inkEnd);
+      positions.push({ text: character, x, columnX });
+      inkEnd = x + document.widthOfString(character);
+    }
+    currentColumn += characterDisplayWidth(character, line.format.tabSize, currentColumn);
+  }
+  const last = positions.at(-1);
+  if (!last) return { overflow: 0, slantRisk: 0 };
+  const requiredWidth = inkEnd;
+  // When the complete run cannot fit at this font size, preserve its legacy column
+  // positions and warn. Expanding it would push additional glyphs off the page.
+  if (requiredWidth > availableWidthPt) positions.forEach(part => { part.x = part.columnX; });
+  const inkWidth = Math.max(...positions.map(part => part.x + document.widthOfString(part.text)));
+  const extra = Math.max(0, availableWidthPt - inkWidth);
+  const alignment = line.format.alignment;
+  const distributed = alignment === "distributed";
+  const justify = alignment === "justify" && !line.isLastLineOfParagraph;
+  const gapCount = distributed ? positions.length - 1 : justify ? positions.slice(0, -1).filter(part => part.text === " ").length : 0;
+  let gaps = 0;
+  positions.forEach((part, index) => {
+    const offset = alignment === "right" ? extra : gapCount > 0 ? extra * gaps / gapCount : 0;
+    // No width or height: lineBreak:false must reach PDFKit's non-wrapping path.
+    document.text(part.text, baseX + part.x + offset, y, { lineBreak: false, oblique: syntheticObliquePt ? 12 : false });
+    if (index < positions.length - 1 && (distributed || (justify && part.text === " "))) gaps += 1;
+  });
+  // A conservative ink overhang allowance; preserve advances/wrapping and report risk.
+  const slantOverhang = syntheticObliquePt * Math.tan(12 * Math.PI / 180);
+  const alignedWidth = alignment === "right" || distributed || justify ? availableWidthPt : requiredWidth;
+  return { overflow: Math.max(0, requiredWidth - availableWidthPt),
+    slantRisk: syntheticObliquePt ? Math.max(0, alignedWidth + slantOverhang - availableWidthPt) : 0 };
 }
 
 function drawPdfPage(
@@ -268,7 +363,10 @@ function drawPdfPage(
   regularFont: unknown,
   boldFont: unknown,
   italicFont: unknown,
-): void {
+  regularFace: unknown = regularFont,
+  outputPage = 1,
+): string[] {
+  const warnings: string[] = [];
   const metrics = gridMetrics(template);
   const left = metrics.leftPt;
   const right = left + metrics.contentWidthPt;
@@ -296,20 +394,21 @@ function drawPdfPage(
     else if (regularFont) document.font(regularFont as never);
     else document.font("Helvetica");
     document.fontSize(template.fontSizePt).fillColor("#111111");
-    const y = template.paperProfile
-      ? originalPaper.rows[row][1] - 3.5 - template.fontSizePt * ((regularFont as { ascent: number; unitsPerEm: number }).ascent / (regularFont as { unitsPerEm: number }).unitsPerEm)
-      : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
+    const indent = lineIndentColumns(line);
+    const x = left + gridWidth * indent + (template.paperProfile ? 0 : 4);
+    const width = Math.max(1, template.paperProfile ? 496 - x - gridWidth * line.format.rightIndent : gridWidth * (template.columns - indent - line.format.rightIndent) - 8);
+    const y = template.paperProfile ? originalPaperRenderBaseline(row) - template.fontSizePt * ((regularFace as { ascent: number; unitsPerEm: number }).ascent / (regularFace as { unitsPerEm: number }).unitsPerEm) : top + row * rowHeight + (rowHeight - template.fontSizePt) / 2;
     if (template.paperProfile) {
-      document.text(line.text, left + gridWidth * lineIndentColumns(line), y, { lineBreak: false });
-      continue;
-    }
-    let x = left;
-    const rendered = renderTextLine(line, template);
-    for (const grapheme of splitGraphemes(rendered)) {
-      document.text(grapheme, x, y, { lineBreak: false });
-      x += characterDisplayWidth(grapheme, line.format.tabSize, 0) * gridWidth;
+      // This profile is measured with the actual font and forbids tabs/alignment changes.
+      document.text(line.text, x, y, { lineBreak: false });
+    } else {
+      const syntheticOblique = Boolean(regularFont) && line.format.italic && !italicFont && process.env.ESSAY_MCP_PDF_SYNTHETIC_ITALIC === "true";
+      const { overflow, slantRisk } = drawGridLine(document, line, indent, x, y, gridWidth, width, syntheticOblique ? template.fontSizePt : 0);
+      if (slantRisk > 0.1) warnings.push(`第 ${outputPage} 頁第 ${row + 1} 行合成斜體筆畫可能超出文字範圍（保守預估 ${slantRisk.toFixed(2)} pt）；未改換行，需視覺驗收。`);
+      if (overflow > 0.1) warnings.push(`第 ${outputPage} 頁第 ${row + 1} 行實際字形在不重疊下所需寬度超出可用格寬 ${overflow.toFixed(2)} pt；欄數符合不代表實際字形符合，請明確換行後重新匯出。`);
     }
   }
+  return warnings;
 }
 
 export async function exportPdf(
@@ -318,72 +417,112 @@ export async function exportPdf(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
-  const pages = outputPageCount(report, template, allowOverflow);
-  let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
-  let boldFontPath = findPdfFont(true);
-  let italicFontPath = findPdfItalicFont();
-  let regularFont: unknown;
-  let boldFont: unknown;
-  let italicFont: unknown;
+  return exportPdfBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+export interface ExportPages {
+  report: LayoutReport;
+  template: AnswerTemplate;
+  bookmark?: string;
+}
+
+/** Single answers and bundles use the same fonts and page drawing. */
+export async function exportPdfBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
+  : Promise<{ path: string; pages: number; format: "pdf"; font: string; fontWarning?: string }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
   const document = new PDFDocument({ autoFirstPage: false, size: "A4", margin: 0 });
-  await fs.mkdir(path.dirname(outputPath), { recursive: true });
-
-  const result = new Promise<void>((resolve, reject) => {
-    const stream = createWriteStream(outputPath);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-    document.pipe(stream);
+  // ponytail: buffer one PDF in memory; stream if large overflow bundles need it.
+  const chunks: Buffer[] = [];
+  const result = new Promise<Buffer>((resolve, reject) => {
+    document.on("data", (chunk: Buffer) => chunks.push(chunk));
+    document.on("end", () => resolve(Buffer.concat(chunks)));
+    document.on("error", reject);
   });
-
-  if (fontPath) {
-    try {
-      regularFont = openPdfFont(fontPath);
-      document.font(regularFont as never);
-    } catch {
-      if (template.paperProfile) throw new Error("166 稿紙字型無法載入，停止輸出以避免缺字。");
-      fontPath = undefined;
-      document.font("Helvetica");
+  const allWarnings = new Set<string>();
+  const fonts = new Set<string>();
+  const openedFonts = new Map<string, unknown>();
+  const bundleFont = (fontPath: string, preferredFace?: string) => {
+    const key = `${fontPath}#${preferredFace ?? ""}`;
+    if (!openedFonts.has(key)) {
+      const face = openPdfFont(fontPath, preferredFace);
+      document.registerFont(key, face as never);
+      openedFonts.set(key, face);
     }
-  } else {
-    document.font("Helvetica");
-  }
-
-  if (boldFontPath) {
-    try {
-      boldFont = openPdfFont(boldFontPath);
-    } catch {
-      boldFontPath = undefined;
-    }
-  }
-
-  if (italicFontPath) {
-    try {
-      italicFont = openPdfFont(italicFontPath);
-    } catch {
-      italicFontPath = undefined;
-    }
-  }
-
-  for (let page = 1; page <= pages; page += 1) {
-    document.addPage({ size: "A4", margin: 0 });
-    drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont);
-  }
-  document.end();
-  await result;
-
-  const warnings: string[] = [];
-  if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
-  if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
-  if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
-    warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
-  }
-  return {
-    path: outputPath,
-    pages,
-    format: "pdf",
-    font: fontPath ?? "Helvetica",
-    ...(warnings.length ? { fontWarning: warnings.join(" ") } : {}),
+    return { key, face: openedFonts.get(key) };
   };
+  try {
+    for (const [index, { report, template, bookmark }] of entries.entries()) {
+      let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
+      let boldFontPath = findPdfFont(true);
+      let italicFontPath = findPdfItalicFont();
+      let regularFont: unknown;
+      let regularFace: unknown;
+      let boldFont: unknown;
+      let italicFont: unknown;
+      if (fontPath) {
+        try {
+          const font = bundleFont(fontPath, preferredCjkTcFace(fontPath));
+          regularFont = font.key;
+          regularFace = font.face;
+          document.font(regularFont as never);
+        } catch {
+          if (template.paperProfile) throw new Error("165 稿紙字型無法載入，停止輸出以避免缺字。");
+          fontPath = undefined;
+          document.font("Helvetica");
+        }
+      } else {
+        document.font("Helvetica");
+      }
+
+      if (boldFontPath) {
+        try {
+          boldFont = bundleFont(boldFontPath, preferredCjkTcFace(boldFontPath)).key;
+        } catch {
+          boldFontPath = undefined;
+        }
+      }
+
+      if (italicFontPath) {
+        try {
+          const candidate = bundleFont(italicFontPath, preferredCjkTcFace(italicFontPath));
+          const face = candidate.face as { hasGlyphForCodePoint: (code: number) => boolean };
+          const chars = report.lines.filter(line => line.format.italic).flatMap(line => [...line.text]).filter(c => !/\s/u.test(c));
+          if (chars.some(c => !face.hasGlyphForCodePoint(c.codePointAt(0)!))) throw new Error("Italic font lacks required glyphs");
+          italicFont = candidate.key;
+        } catch {
+          italicFontPath = undefined;
+        }
+      }
+
+      for (let page = 1; page <= counts[index]; page += 1) {
+        document.addPage({ size: "A4", margin: 0 });
+        if (page === 1 && bookmark) document.outline.addItem(bookmark);
+        drawPdfPage(document, template, pageLines(report, page), regularFont, boldFont, italicFont, regularFace,
+          counts.slice(0, index).reduce((sum, value) => sum + value, 0) + page).forEach(warning => allWarnings.add(warning));
+      }
+      const warnings: string[] = [];
+      if (!fontPath) warnings.push("找不到可用的中文字型，PDF 以 Helvetica 輸出；可設定 ESSAY_MCP_PDF_FONT。");
+      if (fontPath && report.lines.some(line => line.format.bold) && !boldFontPath) warnings.push("找不到粗體中文字型；粗體段落將以一般中文字型輸出，可設定 ESSAY_MCP_PDF_BOLD_FONT。");
+      if (fontPath && report.lines.some((line) => line.format.italic) && !italicFontPath) {
+        warnings.push("答案含斜體但找不到斜體中文字型；可設定 ESSAY_MCP_PDF_ITALIC_FONT。");
+        if (!template.paperProfile && process.env.ESSAY_MCP_PDF_SYNTHETIC_ITALIC === "true")
+          warnings.push("已明確啟用合成斜體：以原字型傾斜 12 度，並非真正 italic 字型；未改字級、換行或 DOCX，邊界需視覺驗收。");
+      }
+      warnings.forEach((warning) => allWarnings.add(warning));
+      fonts.add(fontPath ?? "Helvetica");
+      await onMember?.(index);
+    }
+    document.end();
+    await result;
+  } catch (error) {
+    document.end();
+    await result.catch(() => undefined);
+    throw error;
+  }
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, await result);
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "pdf", font: [...fonts].join(", "),
+    ...(allWarnings.size ? { fontWarning: [...allWarnings].join(" ") } : {}) };
 }
 
 export async function exportText(
@@ -392,15 +531,51 @@ export async function exportText(
   outputPath: string,
   allowOverflow = false,
 ): Promise<{ path: string; pages: number; format: "txt" }> {
-  const pages = outputPageCount(report, template, allowOverflow);
-  const pageTexts = Array.from({ length: pages }, (_, pageIndex) => {
+  return exportTextBundle([{ report, template }], outputPath, allowOverflow);
+}
+
+export async function exportTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
+  : Promise<{ path: string; pages: number; format: "txt" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const pageTexts: string[] = [];
+  for (const [index, { report, template }] of entries.entries()) {
+    pageTexts.push(...Array.from({ length: counts[index] }, (_, pageIndex) => {
     const lines = pageLines(report, pageIndex + 1).map((line) => renderTextLine(line, template));
     while (lines.length < template.linesPerPage) lines.push("");
     return lines.join("\n");
-  });
+    }));
+    await onMember?.(index);
+  }
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, `${pageTexts.join("\n\f\n")}\n`, "utf8");
-  return { path: outputPath, pages, format: "txt" };
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "txt" };
+}
+
+export async function exportParagraphTextBundle(entries: ExportPages[], outputPath: string, allowOverflow = false, onMember?: (index: number) => Promise<void>)
+  : Promise<{ path: string; pages: number; format: "txt" }> {
+  const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
+  const texts: string[] = [];
+  for (const [index, { report, bookmark }] of entries.entries()) {
+    const sections: string[][] = [];
+    let sectionId: string | undefined, paragraphIndex = -1, isHeading = false;
+    for (const line of report.lines) {
+      if (line.isSpacer) continue;
+      if (line.sectionId !== sectionId) {
+        sections.push([]); sectionId = line.sectionId; paragraphIndex = -1;
+      }
+      const paragraphs = sections.at(-1)!;
+      if (line.paragraphIndex !== paragraphIndex || line.isHeading !== isHeading) paragraphs.push("");
+      paragraphs[paragraphs.length - 1] += line.text;
+      paragraphIndex = line.paragraphIndex; isHeading = line.isHeading;
+    }
+    const text = sections.map(section => section.join("\n")).join("\n\n");
+    texts.push((bookmark ? `${bookmark}\n\n` : "") + text);
+    await onMember?.(index);
+  }
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  await fs.writeFile(outputPath, texts.join("\n\n") + "\n", "utf8");
+  // pages remains the paper page count of the content, including in paragraphs mode.
+  return { path: outputPath, pages: counts.reduce((sum, pages) => sum + pages, 0), format: "txt" };
 }
 
 

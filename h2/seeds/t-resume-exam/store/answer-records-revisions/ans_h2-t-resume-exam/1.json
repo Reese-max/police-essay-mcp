@@ -1,0 +1,43 @@
+{
+  "id": "ans_h2-t-resume-exam",
+  "templateId": "police_information_essay_165",
+  "title": "114年警察特考資訊申論",
+  "exam": "114年警察特考資訊申論",
+  "questionNo": 1,
+  "sections": [
+    {
+      "id": "sec-h2-t-resume-exam-1",
+      "heading": "一",
+      "text": "警察資訊系統依職務控管權限，並保存操作紀錄。",
+      "paragraphs": [
+        {
+          "text": "警察資訊系統依職務控管權限，並保存操作紀錄。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "id": "ans_h2-t-fit-short",
+  "templateId": "police_information_essay_165",
+  "title": "警察職權行使法與個資保護",
+  "sections": [
+    {
+      "id": "sec-h2-t-fit-short-1",
+      "heading": "一",
+      "text": "依警察職權行使法，蒐集資料應有明確目的。",
+      "paragraphs": [
+        {
+          "text": "依警察職權行使法，蒐集資料應有明確目的。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-t-fit-short-2",
+      "heading": "二",
+      "text": "存取權限應依職務分級。",
+      "paragraphs": [
+        {
+          "text": "存取權限應依職務分級。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    },
+    {
+      "id": "sec-h2-t-fit-short-3",
+      "heading": "三",
+      "text": "定期檢視並刪除逾期資料。",
+      "paragraphs": [
+        {
+          "text": "定期檢視並刪除逾期資料。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 2
+    }
+  ],
+  "lineTargets": {
+    "sec-h2-t-fit-short-1": 12,
+    "sec-h2-t-fit-short-2": 12,
+    "sec-h2-t-fit-short-3": 12
+  },
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

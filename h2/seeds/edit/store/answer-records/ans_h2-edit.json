@@ -1,0 +1,89 @@
+{
+  "id": "ans_h2-edit",
+  "templateId": "police_information_essay_165",
+  "title": "警察資訊安全管理",
+  "sections": [
+    {
+      "id": "sec-h2-edit-1",
+      "heading": "一",
+      "text": "警察資訊系統應落實權限控管與操作紀錄。",
+      "paragraphs": [
+        {
+          "text": "警察資訊系統應落實權限控管與操作紀錄。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-edit-2",
+      "heading": "二",
+      "text": "資訊安全是維護勤務資料與服務穩定的基礎。",
+      "paragraphs": [
+        {
+          "text": "資訊安全是維護勤務資料與服務穩定的基礎。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    },
+    {
+      "id": "sec-h2-edit-3",
+      "heading": "三",
+      "text": "機關應定期檢視制度並持續改善。",
+      "paragraphs": [
+        {
+          "text": "機關應定期檢視制度並持續改善。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 2
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

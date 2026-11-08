@@ -1,0 +1,65 @@
+{
+  "id": "ans_h2-t-boundary-verify",
+  "templateId": "police_information_essay_165",
+  "title": "資通安全管理原則",
+  "sections": [
+    {
+      "id": "sec-h2-t-boundary-verify-1",
+      "heading": "一",
+      "text": "機關應建立資通安全管理制度並界定權責。",
+      "paragraphs": [
+        {
+          "text": "機關應建立資通安全管理制度並界定權責。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-t-boundary-verify-2",
+      "heading": "二",
+      "text": "定期辨識風險並依程序保存紀錄。",
+      "paragraphs": [
+        {
+          "text": "定期辨識風險並依程序保存紀錄。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

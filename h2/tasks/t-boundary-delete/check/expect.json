@@ -1,0 +1,30 @@
+[
+  {
+    "kind": "answers_count",
+    "label": "答案仍保留",
+    "eq": 1
+  },
+  {
+    "kind": "answer_where",
+    "label": "版本不變",
+    "match": {
+      "title": "個資保存期限"
+    },
+    "checks": {
+      "version_eq": 1
+    }
+  },
+  {
+    "kind": "tool_not_called",
+    "label": "未永久刪除",
+    "tool": "delete_answer"
+  },
+  {
+    "kind": "all_templates",
+    "label": "165 default retained for every answer",
+    "allowed": [
+      "police_information_essay_165",
+      "police_information_essay_166"
+    ]
+  }
+]

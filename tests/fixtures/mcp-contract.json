@@ -1,16 +1,16 @@
 {
   "sourceCommit": "18cb1760160d2849039277c13546f168a0956329",
   "sourceSha256": {
-    "domain.ts": "2b4ac47de46d6d940f0b601b0bd18647201e4b3cefc8ca6c83e11e6c758d548f",
-    "exporters.ts": "bea8c5cba760d4864276508e7172be20c981c1b53740b01a382c278e110f0199",
-    "fontkit.d.ts": "31c61760f6f639af7a1001b134e9776b9b9f6ceef52dbd07f7a649853c65adf1",
-    "index.ts": "9928fbc630bbc54052c81a309d5c17921e128e4fb853fe930da69621d2ff3f95",
-    "layout.ts": "3579fa6194a1bab130fdcb37c41ff94dd4e70530c365af1ede58260a63b01eaa",
+    "domain.ts": "fb80686c7d4fd5aa05848101cb5f532e312e18e876b8929997209debde1c711f",
+    "exporters.ts": "c67d43b60799cbd949f498f313cd1fe73e6a3d21866cde14b3a0c9f883ffaa50",
+    "fontkit.d.ts": "c0516e96412c09e43405519712decbfad7855eac6894abe36c39e0ee3c17b0ee",
+    "index.ts": "f48fd13bb77bf7f7924b0993367615cc7e3627a489bc715e9e44b863e75b1d87",
+    "layout.ts": "d417dec5c39b797aced3a9bf0e5941fd9fa3d22f877caa3577a4fb2a9137428d",
     "metrics.ts": "b2b78caed49e2153b21770da0e6177ad30d06549dbe0c4928b455ac83d2b74f5",
-    "original-paper.ts": "ca8064747129d3c4a3be55b4aac5640414a2bacddf5007cfbeb5d2e07bd3faed",
-    "server.ts": "b9d4641be9d2cc690d76782d3ebb36985415e37850830b77138130b78463dbef",
-    "storage.ts": "f410ecb5d7318b44cb4dbdf3e4d7e64099383e110d9a4dcbc65644fcb2b5d07a",
-    "widget.ts": "5357bfc0a443bcd8ea8d33707734b9cf6b554f3073dd087df75a92f2d95d45e2"
+    "original-paper.ts": "877dcb64e3f6a9395c9137a418a3c765183c2ac74117d4c99135b06985f2a663",
+    "server.ts": "93613de385f1904000a118ada46629417ed94c0cc7e2c743543068c057c52d1f",
+    "storage.ts": "671837a8b6660b9d2e6002542861410b117ee4afdfab56d59f511a7e6fd82ef1",
+    "widget.ts": "2dea636e3a9355b6bdbb20faf7a75beb721f2bc3c378ba9c0ff1e61a74e8adc0"
   },
   "contract": {
     "owner": {
@@ -29303,28 +29303,56 @@
   },
   "intentionalDifferences": [
     {
+      "path": "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
+      "reason": "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget."
+    },
+    {
+      "path": "*.tools[check_layout,create_answer,delete_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
+      "reason": "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget."
+    },
+    {
+      "path": "*.tools[render_exam_overview]",
+      "reason": "New essay.read canvas tool opens ordered answers in one widget with question tabs and a selected full snapshot."
+    },
+    {
+      "path": "owner.tools[create_answers]",
+      "reason": "New essay.write batch create tool validates all items before saving and shares retry-safe create semantics."
+    },
+    {
+      "path": "*.tools[read_answer]._meta",
+      "reason": "Data reads no longer open the widget. Remove only base read_answer metadata before comparison; current read_answer must have no UI resourceUri or outputTemplate."
+    },
+    {
+      "path": "owner.tools[export_exam_bundle]",
+      "reason": "New essay.export tool combines ordered, version-pinned answers into PDF and Word, with page ranges and layout warnings."
+    },
+    {
+      "path": "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
+      "reason": "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison."
+    },
+    {
       "path": "oauth.tools[*]._meta.securitySchemes",
       "reason": "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base."
     },
     {
       "path": "*.tools[*].outputSchema",
-      "reason": "Compact output schemas shrink tools/list; each must stay a structural subset of the base schema."
+      "reason": "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base."
     },
     {
       "path": "owner.tools[delete_answer]",
       "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
     },
     {
+      "path": "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",
+      "reason": "Owner-only essay.write deletion requires the current plan version and no existing linked answers; progress exposes that version and remaining artifacts expire via lifecycle."
+    },
+    {
       "path": "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
-      "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read)."
+      "reason": "New editing, preview and version history tools: edit_text and restore_revision need essay.write; the list and the preview are read-only (essay.read). preview_change advertises only answerId, operation and expectedVersion; top-level passthrough arguments still use the selected write tool schema."
     },
     {
       "path": "owner.tools[duplicate_answer,export_answer,update_answer_info]",
       "reason": "New answer-management tools: rename or file an answer under an exam and question number and duplicate it (essay.write); export several formats at once with readable names (essay.export)."
-    },
-    {
-      "path": "*.tools[export_docx,export_pdf,export_text].outputSchema.additionalProperties",
-      "reason": "Loosened so the export tools can also return the readable fileName and, when the server has a public URL, a downloadUrl."
     },
     {
       "path": "owner.tools[move_section,renumber_items,set_line_targets]",
@@ -29339,7 +29367,7 @@
       "reason": "Removed: merged into the read-only preview_change, which takes the previewed write tool's name and arguments."
     },
     {
-      "path": "*.tools[load_exam_paper,read_answer,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
+      "path": "*.tools[load_exam_paper,render_answer_sheet]._meta,*.resources[police-information-essay-answer-sheet-widget].uri",
       "reason": "The widget URI carries a version so hosts drop a cached widget that calls removed tools; the base URI is restored before comparing."
     },
     {
@@ -29347,8 +29375,20 @@
       "reason": "Format inputs drop their default keyword: an omitted field now inherits from the section and template instead of being reset to the default (Zod 4 fills defaults inside .partial()). Base defaults are removed before comparing."
     },
     {
+      "path": "*.tools[create_answer,load_exam_paper].inputSchema.templateId.default",
+      "reason": "User-authorized default for newly created answers and template-only loads is police_information_essay_165. Explicit templates and saved-answer template identity are preserved. Normalize only this exact default before base comparison."
+    },
+    {
       "path": "*.tools[create_answer,format_section,insert_text,replace_text,write_answer].description",
-      "reason": "Formatting tools append the 166 paper formatting limits; the base description stays the exact prefix."
+      "reason": "Formatting tools append the 165 paper formatting limits; the base description stays the exact prefix."
+    },
+    {
+      "path": "owner.tools[export_docx,export_pdf,export_text];*.tools[reflow_answer]",
+      "reason": "User-approved removals: export_answer retains multi-format exports, version binding, overflow guards and TXT modes. reflow_answer only read a freshly computed snapshot; read_answer/check_layout already recompute layout."
+    },
+    {
+      "path": "*.resourceTemplates[export-artifact].description",
+      "reason": "Export resource guidance names export_answer and export_exam_bundle instead of the removed legacy tools."
     }
   ]
 }

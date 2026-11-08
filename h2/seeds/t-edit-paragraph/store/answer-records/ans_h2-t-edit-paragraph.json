@@ -1,0 +1,89 @@
+{
+  "id": "ans_h2-t-edit-paragraph",
+  "templateId": "police_information_essay_165",
+  "title": "警察資訊勤務紀錄",
+  "sections": [
+    {
+      "id": "sec-h2-t-edit-paragraph-1",
+      "heading": "一",
+      "text": "系統應依職務設定權限並定期檢視。",
+      "paragraphs": [
+        {
+          "text": "系統應依職務設定權限並定期檢視。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-t-edit-paragraph-2",
+      "heading": "二",
+      "text": "操作紀錄應妥善保存，以供稽核追蹤。",
+      "paragraphs": [
+        {
+          "text": "操作紀錄應妥善保存，以供稽核追蹤。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    },
+    {
+      "id": "sec-h2-t-edit-paragraph-3",
+      "heading": "三",
+      "text": "機關應辦理教育訓練並持續改善。",
+      "paragraphs": [
+        {
+          "text": "機關應辦理教育訓練並持續改善。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 2
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "requirements": [
+    {
+      "id": "definition",
+      "prompt": "用定義與具體例子回答第一小問（匿名合成示例）。",
+      "sectionIds": ["definition"],
+      "sourceIds": ["reference"],
+      "points": 2
+    },
+    {
+      "id": "comparison",
+      "prompt": "依題目指定的分類軸比較第二小問（匿名合成示例）。",
+      "sectionIds": ["comparison"],
+      "sourceIds": ["reference"],
+      "points": 3
+    }
+  ],
+  "sources": [
+    {
+      "id": "reference",
+      "locator": "fixture://synthetic-reference#page-1",
+      "role": "required"
+    }
+  ],
+  "scoring": { "total": 5, "mode": "additive" }
+}

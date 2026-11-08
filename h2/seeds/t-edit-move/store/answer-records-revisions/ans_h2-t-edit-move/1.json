@@ -1,0 +1,89 @@
+{
+  "id": "ans_h2-t-edit-move",
+  "templateId": "police_information_essay_165",
+  "title": "個資事故應變順序",
+  "sections": [
+    {
+      "id": "sec-h2-t-edit-move-1",
+      "heading": "一、通報",
+      "text": "發現疑似事件應立即通報權責單位。",
+      "paragraphs": [
+        {
+          "text": "發現疑似事件應立即通報權責單位。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 0
+    },
+    {
+      "id": "sec-h2-t-edit-move-2",
+      "heading": "三、檢討",
+      "text": "事後檢討原因並修正管理措施。",
+      "paragraphs": [
+        {
+          "text": "事後檢討原因並修正管理措施。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 1
+    },
+    {
+      "id": "sec-h2-t-edit-move-3",
+      "heading": "四、控制",
+      "text": "先限制存取並保存相關紀錄。",
+      "paragraphs": [
+        {
+          "text": "先限制存取並保存相關紀錄。"
+        }
+      ],
+      "paragraphFormat": {
+        "alignment": "left",
+        "bold": false,
+        "italic": false
+      },
+      "headingStyle": {
+        "bold": false,
+        "italic": false,
+        "alignment": "left"
+      },
+      "required": false,
+      "priority": 3,
+      "compressible": 2,
+      "order": 2
+    }
+  ],
+  "layoutOptions": {
+    "wholeLatinWords": true,
+    "keepHeadingWithNext": true
+  },
+  "version": 1,
+  "createdAt": "2026-11-03T00:00:00.000Z",
+  "updatedAt": "2026-11-03T00:00:00.000Z",
+  "layoutExtensions": {
+    "avoidPunctuationOnlyLines": true
+  }
+}
