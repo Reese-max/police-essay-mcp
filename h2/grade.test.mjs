@@ -58,6 +58,25 @@ const bad = {
   't-boundary-unsupported': d=>{d.final='已經改成 B4 並加上圖片。';},
 };
 
+const cleanQuality = {
+  fill: 0.72,
+  flattenedStructure: false,
+  embeddedHeadingParagraphs: 0,
+  misalignedContinuations: 0,
+  hierarchyIssues: 0,
+  indentInconsistency: 0,
+  shortTailLines: 0,
+  punctuationOnlyLines: 0,
+};
+for (const id of ['t-create-format', 't-create-targets', 't-create-compress']) {
+  data[id].state.answers[0].quality = { ...cleanQuality };
+}
+const layoutBad = {
+  't-create-format': d=>{d.state.answers[0].quality.embeddedHeadingParagraphs=1;},
+  't-create-targets': d=>{d.state.answers[0].quality.hierarchyIssues=1;},
+  't-create-compress': d=>{d.state.answers[0].quality.shortTailLines=3;},
+};
+
 async function run(id, adversarial = false) {
   const dir = path.join(root, 'h2', `.grade-${process.pid}-${id}`);
   const d = structuredClone(data[id]);
@@ -162,6 +181,35 @@ test('indent data cannot be missing, empty or below two cells in any section', a
     d=>{d.state.answers[0].sections[1].paragraphs=[];},
     d=>{d.state.answers[0].sections[1].paragraphs[0].firstLineIndent=3;},
   ])assert.equal((await run('t-create-format',mutate)).code,1);
+});
+
+test('each create-task layout_quality negative fixture fails on its dedicated metric', async () => {
+  for (const [id, mutate] of Object.entries(layoutBad)) {
+    const result = await run(id, mutate);
+    assert.equal(result.code, 1, result.output);
+    assert.match(result.output, /FAIL 排版品質/);
+    assert.match(result.output, /ans_a\.(embeddedHeadingParagraphs|hierarchyIssues|shortTailLines)=/);
+  }
+});
+
+test('layout_quality checks every answer against numeric bounds and boolean limits', async () => {
+  const criterion = {
+    kind: 'layout_quality',
+    max: { flattenedStructure: false, shortTailLines: 2 },
+    min: { fill: 0.5 },
+  };
+  const clean = { ...answer('良好', [section('一、第一節', '內容。')]), quality: { ...cleanQuality } };
+  const other = { ...answer('良好二', [section('二、第二節', '內容。')]), quality: { ...cleanQuality } };
+  assert.equal((await gradeCriterion(criterion, { answers: [clean, other] })).code, 0);
+  other.quality.shortTailLines = 3;
+  const rejected = await gradeCriterion(criterion, { answers: [clean, other] });
+  assert.equal(rejected.code, 1);
+  assert.match(rejected.output, /ans_a\.shortTailLines=3 \(max 2\)/);
+  other.quality = { ...cleanQuality, fill: 0.2, flattenedStructure: true };
+  const belowMinimum = await gradeCriterion(criterion, { answers: [other] });
+  assert.equal(belowMinimum.code, 1);
+  assert.match(belowMinimum.output, /flattenedStructure=true/);
+  assert.match(belowMinimum.output, /fill=0\.2 \(min 0\.5\)/);
 });
 
 test('all 17 active tasks have good/bad fixtures and identical standalone graders', async () => {
