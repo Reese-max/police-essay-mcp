@@ -60,6 +60,7 @@
     "max": {
       "flattenedStructure": false,
       "embeddedHeadingParagraphs": 0,
+      "misalignedContinuations": 0,
       "hierarchyIssues": 0,
       "indentInconsistency": 0,
       "punctuationOnlyLines": 0,
