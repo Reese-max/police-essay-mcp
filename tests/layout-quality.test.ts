@@ -121,3 +121,23 @@ test("165 paper hanging-indent measurements distinguish aligned and top-aligned 
   assert.equal(good.misalignedContinuations, 0);
   assert.ok(bad.misalignedContinuations > 0);
 });
+
+test("review regressions: tens numerals, heavenly stems, quoted sentence ends and blank paragraphs", () => {
+  const twenties = score(standard, Array.from({ length: 22 }, (_, index) => ({
+    heading: `${["", "十", "二十"][Math.floor((index + 1) / 10)]}${["", "一", "二", "三", "四", "五", "六", "七", "八", "九"][(index + 1) % 10]}、第${index + 1}節`,
+    text: "內容。",
+  })));
+  assert.equal(twenties.hierarchyIssues, 0);
+  const stems = score(standard, [{ text: "內文。", paragraphs: [
+    { text: "一般內文說明。", format: { firstLineIndent: 4 } },
+    { text: "甲、天干編號段落說明。" },
+    { text: "另一段一般內文。", format: { firstLineIndent: 4 } },
+  ] }]);
+  assert.equal(stems.indentInconsistency, 0);
+  const quoted = score(standard, [{ text: "一、他說：「依法處理。」" }]);
+  assert.equal(quoted.embeddedHeadingParagraphs, 0);
+  const blank = score(standard, [{ heading: "一、甲", text: "x", paragraphs: [
+    { text: "內文一段落。", format: { firstLineIndent: 4 } }, { text: "" }, { text: "內文二段落。", format: { firstLineIndent: 4 } },
+  ] }]);
+  assert.equal(blank.indentInconsistency, 0);
+});

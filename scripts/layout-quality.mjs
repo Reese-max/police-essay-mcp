@@ -43,10 +43,11 @@ function metricTotal(results, metric) {
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { answerDir, options, jsonPath } = parseArgs(process.argv.slice(2));
-const [{ layoutSections }, { scoreLayout }, { templateSchema }] = await Promise.all([
+const [{ layoutSections }, { scoreLayout }, { templateSchema }, { decodeAnswer }] = await Promise.all([
   import(pathToFileURL(path.join(root, 'dist/src/layout.js'))),
   import(pathToFileURL(path.join(root, 'dist/src/layout-quality.js'))),
   import(pathToFileURL(path.join(root, 'dist/src/domain.js'))),
+  import(pathToFileURL(path.join(root, 'dist/src/answer-codec.js'))),
 ]);
 
 const templateCache = new Map();
@@ -66,7 +67,7 @@ const results = [];
 for (const filename of (await fs.readdir(answerDir)).filter(name => name.toLowerCase().endsWith('.json')).sort()) {
   const file = path.join(answerDir, filename);
   try {
-    const answer = JSON.parse(await fs.readFile(file, 'utf8'));
+    const answer = decodeAnswer(JSON.parse(await fs.readFile(file, 'utf8')));
     const template = await loadTemplate(answer.templateId);
     const layoutOptions = { ...(answer.layoutOptions ?? {}), ...options };
     const report = layoutSections(template, answer.sections, layoutOptions);

@@ -37,17 +37,12 @@ const CHINESE_DIGITS: Record<string, number> = {
 };
 
 function parseChineseNumber(value: string): number | undefined {
-  const financial = /^[壹貳參肆伍陸柒捌玖拾]+$/u.test(value);
-  if (financial) {
-    if (value === "拾") return 10;
-    if (value.startsWith("拾")) return 10 + (CHINESE_DIGITS[value.slice(1)] ?? 0);
-    return CHINESE_DIGITS[value];
-  }
-  if (value === "十") return 10;
-  if (value.startsWith("十")) return 10 + (CHINESE_DIGITS[value.slice(1)] ?? 0);
-  if (value.endsWith("十")) return (CHINESE_DIGITS[value[0]] ?? 0) * 10;
-  if (value.startsWith("二十")) return 20;
-  return value.length === 1 ? CHINESE_DIGITS[value] : undefined;
+  const tens = value.split(/[十拾]/u);
+  if (tens.length > 2) return undefined;
+  const digit = (text: string, empty: number) => text === "" ? empty : text.length === 1 ? CHINESE_DIGITS[text] : undefined;
+  if (tens.length === 1) return digit(value, NaN);
+  const high = digit(tens[0], 1), low = digit(tens[1], 0);
+  return high === undefined || low === undefined ? undefined : high * 10 + low;
 }
 
 function asciiDigits(value: string): string {
@@ -62,7 +57,7 @@ function classifyNumbering(text: string): Numbering | undefined {
     if (number !== undefined) return { level: 1, family: "financial-chinese", value: number, prefix: match[0] };
   }
 
-  match = value.match(/^((?:二十|十[一二三四五六七八九]?|[一二三四五六七八九]))、/u);
+  match = value.match(/^([一二三四五六七八九十]+)、/u);
   if (match) {
     const number = parseChineseNumber(match[1]);
     if (number !== undefined) return { level: 2, family: "chinese", value: number, prefix: match[0] };
@@ -89,6 +84,9 @@ function classifyNumbering(text: string): Numbering | undefined {
   if (match) {
     return { level: 5, family: "parenthesized-arabic", value: Number(asciiDigits(match[1])), prefix: match[0] };
   }
+
+  match = value.match(/^([甲乙丙丁戊己庚辛壬癸])、/u);
+  if (match) return { level: 6, family: "heavenly-stem", value: "甲乙丙丁戊己庚辛壬癸".indexOf(match[1]) + 1, prefix: match[0] };
   return undefined;
 }
 
@@ -155,7 +153,7 @@ export function scoreLayout(
   const numberedParagraphs = bodyParagraphs.filter(paragraph => classifyNumbering(paragraph.lines[0]?.text ?? ""));
 
   const embeddedHeadings = bodyParagraphs.filter(paragraph =>
-    classifyNumbering(paragraph.lines[0]?.text ?? "") && !/[。！？]\s*$/u.test(paragraph.text));
+    classifyNumbering(paragraph.lines[0]?.text ?? "") && !/[。！？][」』）)]*\s*$/u.test(paragraph.text));
 
   let misalignedContinuations = 0;
   for (const paragraph of numberedParagraphs) {
@@ -168,13 +166,13 @@ export function scoreLayout(
   }
 
   const hierarchyItems = paragraphs.flatMap((paragraph, index) => {
-    if (!paragraph.isHeading && /[。！？]\s*$/u.test(paragraph.text)) return [];
+    if (!paragraph.isHeading && /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return [];
     const numbering = classifyNumbering(paragraph.lines[0]?.text ?? "");
     return numbering ? [{ numbering, order: index }] : [];
   });
 
   const bodyIndents = new Set(bodyParagraphs
-    .filter(paragraph => !classifyNumbering(paragraph.lines[0]?.text ?? ""))
+    .filter(paragraph => paragraph.text.trim() && !classifyNumbering(paragraph.lines[0]?.text ?? ""))
     .map(paragraph => paragraph.lines[0]?.format.firstLineIndent ?? 0));
 
   let shortTailLines = 0;
