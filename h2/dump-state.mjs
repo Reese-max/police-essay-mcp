@@ -9,6 +9,7 @@ if (!buildDir || !answerDir || !exportDir || !outFile) {
 const root = path.resolve(buildDir);
 const { FileStore } = await import(pathToFileURL(path.join(root, 'dist/src/storage.js')));
 const { layoutSections } = await import(pathToFileURL(path.join(root, 'dist/src/layout.js')));
+const { scoreLayout } = await import(pathToFileURL(path.join(root, 'dist/src/layout-quality.js')));
 const { examProgress } = await import(pathToFileURL(path.join(root, 'dist/src/exam-progress.js')));
 const store = new FileStore({ templateDir: path.join(root, 'templates'),
   answerDir: path.resolve(answerDir), exportDir: path.resolve(exportDir) });
@@ -16,11 +17,12 @@ const answers = [];
 for (const answer of await store.listAnswers()) {
   const template = await store.getTemplate(answer.templateId);
   const report = layoutSections(template, answer.sections, answer.layoutOptions);
+  const quality = scoreLayout(template, answer, report);
   answers.push({ id: answer.id, ...(answer.exam ? { exam: answer.exam } : {}),
     ...(answer.examId ? { examId: answer.examId } : {}),
     ...(answer.questionNo ? { questionNo: answer.questionNo } : {}),
     title: answer.title, templateId: answer.templateId, version: answer.version,
-    fits: report.fits, totalLines: report.totalLines, capacity: report.capacity,
+    fits: report.fits, totalLines: report.totalLines, capacity: report.capacity, quality,
     sections: answer.sections.map(section => ({ id: section.id, title: section.heading ?? '', text: section.text,
       headingStyle: { ...template.headingDefaults, ...section.headingStyle },
       paragraphs: (section.paragraphs ?? [{ text: section.text }]).map(paragraph => ({
