@@ -29328,7 +29328,7 @@
     },
     {
       "path": "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
-      "reason": "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison."
+      "reason": "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison. Paragraph and heading format objects also gain optional hangingIndent (continuation-line indent beside firstLineIndent); strip only that key."
     },
     {
       "path": "oauth.tools[*]._meta.securitySchemes",

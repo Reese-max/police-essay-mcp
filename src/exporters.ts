@@ -106,6 +106,7 @@ function makeTabStops(template: AnswerTemplate, tabSize: number): Array<{ type: 
 function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine, bookmark?: string): Paragraph {
   const format = line?.format ?? {
     firstLineIndent: 0,
+    hangingIndent: 0,
     leftIndent: 0,
     rightIndent: 0,
     alignment: "left" as const,
@@ -119,7 +120,7 @@ function makeLineParagraph(template: AnswerTemplate, line?: LayoutLine, bookmark
     alignment: docxAlignment(format.alignment),
     ...(template.paperProfile ? { autoSpaceEastAsianText: false, widowControl: false } : {}),
     indent: {
-      left: gridColumnTwips(template) * format.leftIndent,
+      left: gridColumnTwips(template) * (format.leftIndent + (line && !line.isFirstLineOfParagraph ? format.hangingIndent : 0)),
       right: gridColumnTwips(template) * format.rightIndent,
       firstLine: line?.isFirstLineOfParagraph ? gridColumnTwips(template) * format.firstLineIndent : 0,
     },
