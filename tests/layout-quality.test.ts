@@ -172,3 +172,19 @@ test("layout quality notes name skipped levels and disabled auto hanging indent"
   const off = notesFor([{ id: "a", text: `1. ${"甲".repeat(60)}` }], { autoHangingIndent: false });
   assert.match(off.join(""), /autoHangingIndent=true/);
 });
+
+test("compactPaper inlined headings and colon list items are not embedded headings", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, () => {
+  const options = { compactPaper: true, autoHangingIndent: true };
+  const result = score(paper165, [
+    { id: "a", heading: "壹、原因", text: "（一）門檻過高，告警未通報。\n（二）無人覆核。" },
+    { id: "b", heading: "貳、對策", text: "（一）流程\n1.分級：分重大與一般兩級\n2.時限：訂定通報完成時限" },
+  ], options);
+  assert.equal(result.embeddedHeadingParagraphs, 0);
+  // Mixed inlined (short) and standalone (too wide) headings must still read as 壹→貳→參→肆, not 貳→肆.
+  const long = "乙".repeat(20);
+  const mixed = score(paper165, [
+    { id: "a", heading: "壹、甲", text: "說明。" }, { id: "b", heading: `貳、${long}`, text: "說明。" },
+    { id: "c", heading: "參、丙", text: "說明。" }, { id: "d", heading: `肆、${long}`, text: "說明。" },
+  ], options);
+  assert.equal(mixed.hierarchyIssues, 0);
+});

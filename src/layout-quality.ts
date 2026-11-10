@@ -29,7 +29,11 @@ interface Paragraph {
   isHeading: boolean;
   lines: LayoutLine[];
   text: string;
+  /** Body text after a compactPaper heading inlined into the first line. */
+  lead?: string;
 }
+
+const firstText = (paragraph: Paragraph) => paragraph.lead ?? paragraph.lines[0]?.text ?? "";
 
 const CHINESE_DIGITS: Record<string, number> = {
   零: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9,
@@ -166,8 +170,22 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   return notes;
 }
 
+/** compactPaper inlines a short heading into the first body line ("一、標題：內文"); split it back out. */
+function splitInlinedHeadings(paragraphs: Paragraph[], answer: AnswerDocument): Paragraph[] {
+  const headings = new Map(answer.sections.map(section => [section.id, section.heading?.trim()]));
+  const done = new Set(paragraphs.filter(paragraph => paragraph.isHeading).map(paragraph => paragraph.sectionId));
+  return paragraphs.flatMap(paragraph => {
+    const heading = headings.get(paragraph.sectionId);
+    if (paragraph.isHeading || !heading || done.has(paragraph.sectionId) || !paragraph.text.startsWith(heading)) return [paragraph];
+    done.add(paragraph.sectionId);
+    const rest = paragraph.text.slice(heading.length).replace(/^[：:]/u, "");
+    return [{ ...paragraph, isHeading: true, text: heading },
+      ...(rest.trim() ? [{ ...paragraph, text: rest, lead: rest }] : [])];
+  });
+}
+
 function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport) {
-  const paragraphs = collectParagraphs(report);
+  const paragraphs = splitInlinedHeadings(collectParagraphs(report), answer);
   const measure = template.paperProfile
     ? (() => {
         const paperMeasure = originalPaperMeasure(template);
@@ -175,20 +193,23 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
       })()
     : (text: string) => displayWidth(text);
   const bodyParagraphs = paragraphs.filter(paragraph => !paragraph.isHeading);
-  const numberedParagraphs = bodyParagraphs.filter(paragraph => classifyNumbering(paragraph.lines[0]?.text ?? ""));
+  const numberedParagraphs = bodyParagraphs.filter(paragraph => classifyNumbering(firstText(paragraph)));
 
   // A title-like numbered paragraph leading deeper-numbered items in its section is a legitimate sub-heading:
   // sections carry only one heading level.
   const embeddedHeadings = bodyParagraphs.filter((paragraph, index) => {
-    const numbering = classifyNumbering(paragraph.lines[0]?.text ?? "");
+    const numbering = classifyNumbering(firstText(paragraph));
     if (!numbering || /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return false;
+    // 「1.取得搜索票：票面載明……」 is a list item with content, not a title.
+    if (/[：:，；].*\S/u.test(paragraph.text.slice(paragraph.text.indexOf(numbering.prefix) + numbering.prefix.length))) return false;
     const next = bodyParagraphs[index + 1];
-    const nextNumbering = next?.sectionId === paragraph.sectionId ? classifyNumbering(next.lines[0]?.text ?? "") : undefined;
+    const nextNumbering = next?.sectionId === paragraph.sectionId ? classifyNumbering(firstText(next)) : undefined;
     return !(nextNumbering && nextNumbering.level > numbering.level);
   });
 
   let misalignedContinuations = 0;
   for (const paragraph of numberedParagraphs) {
+    if (paragraph.lead !== undefined) continue; // the marker sits after an inlined heading, not at the line start
     const numbering = classifyNumbering(paragraph.lines[0]?.text ?? "");
     if (!numbering) continue;
     const requiredStart = lineIndentColumns(paragraph.lines[0]) + Math.round(measure(numbering.prefix)); // columns are whole display units
@@ -199,12 +220,12 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
 
   const hierarchyItems = paragraphs.flatMap((paragraph, index) => {
     if (!paragraph.isHeading && /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return [];
-    const numbering = classifyNumbering(paragraph.lines[0]?.text ?? "");
+    const numbering = classifyNumbering(firstText(paragraph));
     return numbering ? [{ numbering, order: index }] : [];
   });
 
   const bodyIndents = new Set(bodyParagraphs
-    .filter(paragraph => paragraph.text.trim() && !classifyNumbering(paragraph.lines[0]?.text ?? ""))
+    .filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)))
     .map(paragraph => paragraph.lines[0]?.format.firstLineIndent ?? 0));
 
   let shortTailLines = 0;
