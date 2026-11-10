@@ -53,7 +53,10 @@ export function planLines(answer: AnswerDocument, layout: LayoutReport): { secti
     const first = targetsExplainOverflow
       ? over.map((section) => `${label(section)}超出目標 ${section.overTarget} 行`).join("、")
       : fallback.slice(0, 3).map((hint) => `${name({ id: hint.sectionId, heading: hint.heading })}（${hint.currentLines} 行）`).join("、");
-    notes.push(`超出答案紙 ${layout.overflowLines} 行；建議先壓縮：${first}。`);
+    // A character budget lets the assistant trim once instead of guessing (over-cutting or several rounds).
+    const textLines = layout.lines.filter(line => !line.isSpacer && !line.isPadding);
+    const perLine = Math.round(textLines.reduce((sum, line) => sum + [...line.text.replace(/\s/gu, "")].length, 0) / Math.max(1, textLines.length));
+    notes.push(`超出答案紙 ${layout.overflowLines} 行（每行約 ${perLine} 字，約需刪 ${layout.overflowLines * perLine} 字；段落尾行字數少的先刪最省行）；建議先壓縮：${first}。`);
   } else if (layout.remainingLines > 0) {
     notes.push(under.length
       ? `還可再寫 ${layout.remainingLines} 行；低於目標的區塊：${under.map((section) => `${label(section)}少 ${-section.overTarget!} 行`).join("、")}。`

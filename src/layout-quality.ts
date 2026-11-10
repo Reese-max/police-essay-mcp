@@ -116,9 +116,9 @@ function collectParagraphs(report: LayoutReport): Paragraph[] {
   return paragraphs;
 }
 
-type HierarchyIssue = { order: number; kind: "skip" | "family" | "gap"; prefix: string; expectedLevel?: number };
+type HierarchyIssue = { order: number; kind: "skip" | "family" | "gap" | "headless"; prefix: string; expectedLevel?: number };
 
-function hierarchyIssueList(items: Array<{ numbering: Numbering; order: number }>): HierarchyIssue[] {
+function hierarchyIssueList(items: Array<{ numbering: Numbering; order: number; restart?: boolean }>): HierarchyIssue[] {
   const issues: HierarchyIssue[] = [];
   const stack: Array<{ level: number; key: number }> = [];
   const siblings = new Map<string, { family: string; value: number }>();
@@ -134,7 +134,7 @@ function hierarchyIssueList(items: Array<{ numbering: Numbering; order: number }
     const previous = siblings.get(siblingKey);
     if (previous) {
       if (previous.family !== family) issues.push({ order: item.order, kind: "family", prefix });
-      if (value !== previous.value + 1) issues.push({ order: item.order, kind: "gap", prefix });
+      if (value !== previous.value + 1) issues.push({ order: item.order, kind: item.restart && value === 1 ? "headless" : "gap", prefix });
     }
     siblings.set(siblingKey, { family, value });
     stack.push({ level, key: item.order + 1 });
@@ -162,7 +162,9 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
       ? `結構提醒：${at}跳過中間層級（應依 壹、→一、→（一）→1.→（1） 逐層往下）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
       : issue.kind === "family"
         ? `結構提醒：${at}與同層前一項的編號樣式不同；同層請用同一種編號。`
-        : `結構提醒：${at}與同層前一項不連號；請依序編號。`);
+        : issue.kind === "headless"
+          ? `結構提醒：${at}所在的節沒有標題，編號又從頭起算，看不出屬於哪一點；請補上該節 heading（如「二、○○」或名詞名稱），不必增加內文。`
+          : `結構提醒：${at}與同層前一項不連號；請依序編號。`);
   }
   for (const paragraph of offIndentParagraphs) notes.push(`結構提醒：${start(paragraph.text)}首行縮排 ${paragraph.lines[0]?.format.firstLineIndent ?? 0}，與其他內文段落的 ${usualIndent} 不同；內文請統一（firstLineIndent 單位為顯示寬度，2 格＝4）。`);
   if (quality.misalignedContinuations) notes.push(answer.layoutOptions?.autoHangingIndent === false
@@ -219,10 +221,16 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     }
   }
 
+  // Body items count too: list items ending in 。 are the common case, and skipping them hid restarts.
+  const headed = new Set(paragraphs.filter(paragraph => paragraph.isHeading).map(paragraph => paragraph.sectionId));
+  const seenSections = new Set<string>();
   const hierarchyItems = paragraphs.flatMap((paragraph, index) => {
-    if (!paragraph.isHeading && /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return [];
     const numbering = classifyNumbering(firstText(paragraph));
-    return numbering ? [{ numbering, order: index }] : [];
+    const firstInSection = !seenSections.has(paragraph.sectionId);
+    seenSections.add(paragraph.sectionId);
+    // A later section without a heading that starts its list over leaves the reader without the point it belongs to.
+    const restart = firstInSection && seenSections.size > 1 && !headed.has(paragraph.sectionId);
+    return numbering ? [{ numbering, order: index, restart }] : [];
   });
 
   const proseParagraphs = bodyParagraphs.filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)));

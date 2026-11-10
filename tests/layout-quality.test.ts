@@ -195,3 +195,31 @@ test("compactPaper inlined headings and colon list items are not embedded headin
   ], options);
   assert.equal(mixed.hierarchyIssues, 0);
 });
+test("hierarchy checks sentence-ending list items and names headless sections that restart numbering", async () => {
+  const { layoutQualityNotes } = await import("../src/layout-quality.js");
+  const notesFor = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) => {
+    const answer = createAnswerDocument({ templateId: standard.id, title: "t", sections });
+    return layoutQualityNotes(standard, answer, layoutSections(standard, answer.sections));
+  };
+  const skipped = notesFor([{ id: "a", heading: "壹、概念", text: "（一）驗證：確認身分。\n（二）授權：最小權限。" }]);
+  assert.match(skipped.join(""), /「（一）驗證：確認身分。」跳過中間層級/);
+  const headless = notesFor([
+    { id: "a", text: "（一）意義：甲說明。\n（二）比較：乙說明。" },
+    { id: "b", text: "（一）意義：丙說明。\n（二）比較：丁說明。" },
+  ]);
+  assert.equal(headless.length, 1);
+  assert.match(headless[0], /「（一）意義：丙說明。」所在的節沒有標題.*補上該節 heading/);
+  assert.deepEqual(notesFor([
+    { id: "a", heading: "一、甲", text: "（一）意義：甲說明。\n（二）比較：乙說明。" },
+    { id: "b", heading: "二、乙", text: "（一）意義：丙說明。\n（二）比較：丁說明。" },
+  ]), []);
+});
+
+test("overflow note gives a character budget from the measured characters per line", async () => {
+  const { planLines } = await import("../src/planning.js");
+  const answer = createAnswerDocument({ templateId: standard.id, title: "t", sections: [{ text: "甲".repeat(5000) }] });
+  const layout = layoutSections(standard, answer.sections);
+  const perLine = [...layout.lines[0].text].length;
+  const note = planLines(answer, layout).notes.find(text => text.startsWith("超出答案紙"))!;
+  assert.match(note, new RegExp(`每行約 ${perLine} 字，約需刪 ${layout.overflowLines * perLine} 字`));
+});

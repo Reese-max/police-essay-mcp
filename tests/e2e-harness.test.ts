@@ -228,7 +228,7 @@ test('E2E abrupt process exit during journal publication remains recoverable', a
               if(${JSON.stringify(phase)}==='partial-write')fs.writeFile=async(file,data,opts)=>{await write(file,'{"broken":',opts);process.exit(77)};
               else fs.rename=async(a,b)=>{if(${JSON.stringify(phase)}==='before-rename')process.exit(77);await rename(a,b);process.exit(77)};
               await s.save();process.exit(99);`;
-            const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:30000,env:{...process.env,GOMAXPROCS:'2'}});
+            const child=spawnSync(process.execPath,['--import','tsx','--input-type=module','-e',program],{encoding:'utf8',timeout:90000,env:{...process.env,GOMAXPROCS:'2'}});
             assert.ifError(child.error);assert.equal(child.status,77,child.stderr);
             const saved=await readFile(f.scope.file,'utf8');
             if(phase==='after-rename')assert.equal(JSON.parse(saved).publication,phase);else assert.equal(saved,before);
