@@ -569,7 +569,11 @@ export function unwrapItemArrays(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(unwrapItemArrays);
   if (!value || typeof value !== "object") return value;
   const entries = Object.entries(value);
-  if (entries.length === 1 && entries[0][0] === "item" && Array.isArray(entries[0][1])) return unwrapItemArrays(entries[0][1]);
+  // Seen from MiniMax: {"item":[…]}, nested {"item":{"item":[…]}} and a one-element {"item":"x"}; no tool input has an "item" key.
+  if (entries.length === 1 && entries[0][0] === "item") {
+    const inner = unwrapItemArrays(entries[0][1]);
+    return Array.isArray(inner) ? inner : [inner];
+  }
   return Object.fromEntries(entries.map(([key, inner]) => [key, unwrapItemArrays(inner)]));
 }
 

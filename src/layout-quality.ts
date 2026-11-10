@@ -205,8 +205,14 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     if (!numbering || /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return false;
     // 「1.取得搜索票：票面載明……」 is a list item with content, not a title.
     if (/[：:，；].*\S/u.test(paragraph.text.slice(paragraph.text.indexOf(numbering.prefix) + numbering.prefix.length))) return false;
-    const next = bodyParagraphs[index + 1];
-    const nextNumbering = next?.sectionId === paragraph.sectionId ? classifyNumbering(firstText(next)) : undefined;
+    const near = (offset: number) => {
+      const other = bodyParagraphs[index + offset];
+      return other?.sectionId === paragraph.sectionId ? classifyNumbering(firstText(other)) : undefined;
+    };
+    const nextNumbering = near(1);
+    // Consecutive same-family siblings ("一、CPU暫存器", "二、路由表") are a short list, not headings.
+    const sibling = (other: Numbering | undefined, step: number) => other?.family === numbering.family && other.value === numbering.value + step;
+    if (sibling(near(-1), -1) || sibling(nextNumbering, 1)) return false;
     return !(nextNumbering && nextNumbering.level > numbering.level);
   });
 

@@ -280,3 +280,10 @@ test("cloud adapter persists review evidence and revisions under existing owner 
   await cloud().saveAnswer({ ...second, version: 3, question: "Updated" }, { expectedVersion: 2 });
   assert.equal(report(await cloud().getAnswer(answer.id)).freshness, "stale");
 });
+
+test("unwrapItemArrays handles nested and single-value item wrappers", async () => {
+  const { unwrapItemArrays } = await import("../src/server.js");
+  assert.deepEqual(unwrapItemArrays({ sectionIds: { item: { item: ["a", "b"] } }, sourceIds: { item: "x" }, list: { item: [{ id: { item: "y" } }] } }),
+    { sectionIds: ["a", "b"], sourceIds: ["x"], list: [{ id: ["y"] }] });
+  assert.deepEqual(unwrapItemArrays({ item: "x", other: 1 }), { item: "x", other: 1 });
+});

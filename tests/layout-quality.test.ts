@@ -51,6 +51,10 @@ test("embedded heading paragraphs count only numbered body paragraphs without se
   assert.equal(leadIn.embeddedHeadingParagraphs, 0);
   const proseBelow = score(standard, [{ text: "（三）流程\n擬具需求並公告周知。" }]);
   assert.equal(proseBelow.embeddedHeadingParagraphs, 1);
+  const shortList = score(standard, [{ heading: "貳、順序", text: "一、CPU暫存器與快取\n二、記憶體\n三、磁碟" }]);
+  assert.equal(shortList.embeddedHeadingParagraphs, 0);
+  const titlesWithProse = score(standard, [{ text: "一、管理措施\n應落實。\n二、檢討機制\n應定期。" }]);
+  assert.equal(titlesWithProse.embeddedHeadingParagraphs, 2);
 });
 
 test("numbered paragraph detection covers the supported Chinese and Arabic marker families", () => {
