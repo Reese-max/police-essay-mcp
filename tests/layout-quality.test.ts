@@ -171,6 +171,13 @@ test("layout quality notes name skipped levels and disabled auto hanging indent"
   assert.deepEqual(notesFor([{ id: "a", heading: "壹、概念", text: "一、原則\n（一）驗證。\n（二）授權。" }]), []);
   const off = notesFor([{ id: "a", text: `1. ${"甲".repeat(60)}` }], { autoHangingIndent: false });
   assert.match(off.join(""), /autoHangingIndent=true/);
+  const indents = notesFor([
+    { id: "a", text: "甲段說明。", paragraphFormat: { firstLineIndent: 4 } },
+    { id: "b", text: "乙段說明。", paragraphFormat: { firstLineIndent: 4 } },
+    { id: "c", text: "丙段頂格。", paragraphFormat: { firstLineIndent: 0 } },
+  ]);
+  assert.deepEqual(indents.length, 1);
+  assert.match(indents[0], /「丙段頂格。」首行縮排 0，與其他內文段落的 4 不同/);
 });
 
 test("compactPaper inlined headings and colon list items are not embedded headings", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, () => {

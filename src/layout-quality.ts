@@ -151,7 +151,7 @@ const LEVEL_NAMES = ["", "壹、", "一、", "（一）", "1.", "（1）", "甲�
 
 /** Actionable zh-TW notes naming the paragraphs behind the structural metrics (for check_layout). */
 export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): string[] {
-  const { quality, paragraphs, embeddedHeadings, hierarchyIssues } = analyzeLayout(template, answer, report);
+  const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent } = analyzeLayout(template, answer, report);
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   const notes: string[] = [];
   if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
@@ -164,6 +164,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
         ? `結構提醒：${at}與同層前一項的編號樣式不同；同層請用同一種編號。`
         : `結構提醒：${at}與同層前一項不連號；請依序編號。`);
   }
+  for (const paragraph of offIndentParagraphs) notes.push(`結構提醒：${start(paragraph.text)}首行縮排 ${paragraph.lines[0]?.format.firstLineIndent ?? 0}，與其他內文段落的 ${usualIndent} 不同；內文請統一（firstLineIndent 單位為顯示寬度，2 格＝4）。`);
   if (quality.misalignedContinuations) notes.push(answer.layoutOptions?.autoHangingIndent === false
     ? "結構提醒：編號段落的續行未對齊內文；建議以 update_answer_info 設定 layoutOptions.autoHangingIndent=true。"
     : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
@@ -224,9 +225,13 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     return numbering ? [{ numbering, order: index }] : [];
   });
 
-  const bodyIndents = new Set(bodyParagraphs
-    .filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)))
-    .map(paragraph => paragraph.lines[0]?.format.firstLineIndent ?? 0));
+  const proseParagraphs = bodyParagraphs.filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)));
+  const indentOf = (paragraph: Paragraph) => paragraph.lines[0]?.format.firstLineIndent ?? 0;
+  const bodyIndents = new Set(proseParagraphs.map(indentOf));
+  const counts = new Map<number, number>();
+  for (const paragraph of proseParagraphs) counts.set(indentOf(paragraph), (counts.get(indentOf(paragraph)) ?? 0) + 1);
+  const usualIndent = [...counts].sort((a, b) => b[1] - a[1] || b[0] - a[0])[0]?.[0] ?? 0;
+  const offIndentParagraphs = proseParagraphs.filter(paragraph => indentOf(paragraph) !== usualIndent);
 
   let shortTailLines = 0;
   for (const paragraph of bodyParagraphs) {
@@ -249,5 +254,5 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     shortTailLines,
     punctuationOnlyLines: layoutWarnings(report, template).filter(warning => warning.code === "PUNCTUATION_ONLY_LINE").length,
   };
-  return { quality, paragraphs, embeddedHeadings, hierarchyIssues };
+  return { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent };
 }

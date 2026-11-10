@@ -100,6 +100,10 @@ test("rejects conflicting text and paragraphs at the input boundary", () => {
   // gpt-6-luna sent text with an empty paragraphs array and gave up after repeated rejections.
   const withEmpty = normalizeSection(answerSectionInputSchema.parse({ id: "s", text: "甲\n乙", paragraphs: [] }), 0);
   assert.deepEqual(withEmpty.paragraphs?.map(paragraph => paragraph.text), ["甲", "乙"]);
+  // ...and the mirror image: an empty text alongside the real paragraphs.
+  const emptyText = normalizeSection(answerSectionInputSchema.parse({ id: "s", text: "", paragraphs: [{ text: "甲" }, { text: "乙" }] }), 0);
+  assert.deepEqual(emptyText.paragraphs?.map(paragraph => paragraph.text), ["甲", "乙"]);
+  assert.equal(emptyText.text, "甲\n乙");
 });
 
 test("rejects a wide character that cannot fit after indentation", () => {

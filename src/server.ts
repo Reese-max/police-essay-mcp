@@ -87,7 +87,7 @@ const replacementContentSchema = z.object({
   if (input.newText === undefined && (input.paragraphs?.length ?? 0) === 0) {
     context.addIssue({ code: "custom", path: ["newText"], message: "必須提供 newText，或提供至少一個 paragraphs 項目。" });
   }
-  if (input.newText !== undefined && input.paragraphs?.length) {
+  if (input.newText && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     const normalize = (value: string) => value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
     if (normalize(input.newText) !== normalize(paragraphText)) {

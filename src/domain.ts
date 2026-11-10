@@ -144,8 +144,8 @@ export const answerSectionInputSchema = answerSectionInputBaseSchema.superRefine
     });
   }
 
-  // An empty paragraphs array alongside text means "no paragraph formatting"; normalization already falls back to text.
-  if (input.text !== undefined && input.paragraphs?.length) {
+  // Assistants send the unused field empty: paragraphs [] with text, or text "" with paragraphs. Neither is a conflict.
+  if (input.text && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     if (normalizeNewlines(input.text) !== normalizeNewlines(paragraphText)) {
       context.addIssue({
@@ -318,7 +318,8 @@ export function normalizeSection(
   input: AnswerSectionInput,
   order: number,
 ): AnswerSection {
-  const sourceText = input.text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
+  const text = input.text === "" && input.paragraphs?.length ? undefined : input.text;
+  const sourceText = text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
   const sourceParagraphs = input.paragraphs?.length
     ? input.paragraphs
     : normalizeNewlines(sourceText).split("\n").map((text): AnswerParagraphInput => ({ text }));
