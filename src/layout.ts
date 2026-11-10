@@ -151,7 +151,8 @@ function mergeParagraphFormat(
 }
 
 function listNumberMarker(text: string): string | undefined {
-  const match = /^(?:[壹貳參肆伍陸柒捌玖拾]、|(?:二十|十[一二三四五六七八九]?|[一二三四五六七八九])、|[（(](?:[一二三四五六七八九十]+|[0-9０-９]+)[）)]|[0-9０-９]+[.．、]|[甲乙丙丁戊己庚辛壬癸]、)/u.exec(text);
+  // Leading spaces belong to the marker prefix: assistants often indent "　　（一）" with literal full-width spaces.
+  const match = /^[ 　]*(?:[壹貳參肆伍陸柒捌玖拾]、|(?:二十|十[一二三四五六七八九]?|[一二三四五六七八九])、|[（(](?:[一二三四五六七八九十]+|[0-9０-９]+)[）)]|[0-9０-９]+[.．、]|[甲乙丙丁戊己庚辛壬癸]、)/u.exec(text);
   return match?.[0];
 }
 
