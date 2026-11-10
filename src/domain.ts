@@ -144,7 +144,8 @@ export const answerSectionInputSchema = answerSectionInputBaseSchema.superRefine
     });
   }
 
-  if (input.text !== undefined && input.paragraphs !== undefined) {
+  // An empty paragraphs array alongside text means "no paragraph formatting"; normalization already falls back to text.
+  if (input.text !== undefined && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     if (normalizeNewlines(input.text) !== normalizeNewlines(paragraphText)) {
       context.addIssue({

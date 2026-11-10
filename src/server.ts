@@ -87,7 +87,7 @@ const replacementContentSchema = z.object({
   if (input.newText === undefined && (input.paragraphs?.length ?? 0) === 0) {
     context.addIssue({ code: "custom", path: ["newText"], message: "必須提供 newText，或提供至少一個 paragraphs 項目。" });
   }
-  if (input.newText !== undefined && input.paragraphs !== undefined) {
+  if (input.newText !== undefined && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     const normalize = (value: string) => value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
     if (normalize(input.newText) !== normalize(paragraphText)) {
@@ -766,7 +766,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     async ({ templateId, answerId }) => {
       z.string().optional().parse(templateId);
-      const answer = answerId ? await store.getAnswer(answerId) : undefined;
+      const answer = answerId ? await store.getAnswer(answerId).catch((error: unknown) => {
+        if (isStoreNotFound(error)) throw new Error(`${noAnswerFoundMessage(answerId)}新題目請省略 answerId。`);
+        throw error;
+      }) : undefined;
       const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
       if (!answerId) {
         return {
@@ -1545,8 +1548,14 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       _meta: ANSWER_SHEET_UI_META,
     },
     async ({ examId, answerIds, activeAnswerId, responseDetail }) => {
-      if (examId && answerIds) throw new Error("INVALID_INPUT：examId 與 answerIds 擇一。");
       const progress = examId ? await examProgress(store, examId) : undefined;
+      // Assistants often pass both; accept it when the answers belong to the exam instead of failing every time.
+      if (progress && answerIds) {
+        const members = new Set(progress.questions.flatMap(q => q.answerId ? [q.answerId] : []));
+        const foreign = answerIds.filter(id => !members.has(id));
+        if (foreign.length) throw new Error(`INVALID_INPUT：${foreign.join("、")} 不屬於考試 ${examId}；整份考試只傳 examId，或只傳 answerIds。`);
+        answerIds = undefined; // the exam's own list covers them; a subset would mislabel the other questions as missing
+      }
       answerIds ??= progress?.questions.flatMap(q => q.answerId ? [q.answerId] : []);
       if (!answerIds || (!examId && !answerIds.length)) throw new Error("INVALID_INPUT：請提供 examId 或 answerIds。");
       activeAnswerId ??= answerIds[0];

@@ -97,6 +97,9 @@ test("rejects conflicting text and paragraphs at the input boundary", () => {
     () => answerSectionInputSchema.parse({ text: "不同文字", paragraphs: [{ text: "段落文字" }] }),
     /text 與 paragraphs 內容不一致/,
   );
+  // gpt-6-luna sent text with an empty paragraphs array and gave up after repeated rejections.
+  const withEmpty = normalizeSection(answerSectionInputSchema.parse({ id: "s", text: "甲\n乙", paragraphs: [] }), 0);
+  assert.deepEqual(withEmpty.paragraphs?.map(paragraph => paragraph.text), ["甲", "乙"]);
 });
 
 test("rejects a wide character that cannot fit after indentation", () => {

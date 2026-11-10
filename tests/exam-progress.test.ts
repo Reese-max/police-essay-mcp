@@ -142,6 +142,11 @@ for (const cloud of [false, true]) {
       const overview = data(await call(c, "render_exam_overview", { examId: id, responseDetail: "full" }));
       assert.deepEqual(overview.examAnswers.map((q: any) => q.questionNo), [1, 2]); assert.equal(overview.examAnswers[1].title, "未建立");
       assert.equal(overview.progress.nextStep.action, "create_answer");
+      // Assistants pass both; members are accepted (whole exam shown), a foreign id is named.
+      const both = data(await call(c, "render_exam_overview", { examId: id, answerIds: [one], responseDetail: "full" }));
+      assert.deepEqual(both.examAnswers.map((q: any) => q.questionNo), [1, 2]);
+      const foreign = await call(c, "render_exam_overview", { examId: id, answerIds: ["ans_elsewhere"] });
+      assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.content), /ans_elsewhere 不屬於考試/);
       data(await call(c, "create_answer", draft(id, 2))); assert.equal((await progress()).nextStep.action, "fix_layout");
       data(await call(c, "replace_text", { answerId: one, sectionId: "body", newText: "完成論述。", expectedVersion: 1 }));
       assert.equal((await progress()).nextStep.action, "export_exam_bundle"); assert.match((await progress()).summary, /版面皆通過；尚未匯出/);
