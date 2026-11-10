@@ -227,3 +227,11 @@ test("overflow note gives a character budget from the measured characters per li
   const note = planLines(answer, layout).notes.find(text => text.startsWith("超出答案紙"))!;
   assert.match(note, new RegExp(`每行約 ${perLine} 字，約需刪 ${layout.overflowLines * perLine} 字`));
 });
+
+test("a headings-only answer is reported as having no body instead of OK", async () => {
+  const { summarizeLayout } = await import("../src/layout.js");
+  const status = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) =>
+    summarizeLayout(layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "t", sections }).sections));
+  assert.match(status([{ heading: "壹、論證評析", text: "" }, { heading: "貳、導入決策", paragraphs: [{ text: "" }] }]), /尚無內文.*write_answer/);
+  assert.match(status([{ heading: "壹、概念", text: "" }, { heading: "一、定義", text: "內容。" }]), /狀態：OK/);
+});
