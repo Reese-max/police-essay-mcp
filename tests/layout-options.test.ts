@@ -212,7 +212,8 @@ test("legacy reads, update toggles, duplicates, previews and revisions use store
   assert.deepEqual(data<AnswerSnapshot>(await client.callTool({ name: "load_exam_paper", arguments: { answerId: answer.id } })).layout, original.layout);
   // An invented answerId gets an actionable message, not a raw ENOENT path.
   const invented = await client.callTool({ name: "load_exam_paper", arguments: { answerId: "ans_invented-q1" } });
-  assert.equal(invented.isError, true); assert.match(text(invented), /找不到答案 ans_invented-q1.*新題目請省略 answerId/); assert.doesNotMatch(text(invented), /ENOENT/);
+  assert.equal(invented.isError, undefined, text(invented)); assert.match(text(invented), /找不到答案 ans_invented-q1，改為只載入稿紙/); assert.doesNotMatch(text(invented), /ENOENT/);
+  assert.equal((invented.structuredContent as { answer?: unknown }).answer, undefined);
   const oldCopy = data<AnswerSnapshot>(await client.callTool({ name: "duplicate_answer", arguments: { answerId: answer.id, responseDetail: "full" } }));
   assert.equal(oldCopy.answer.layoutOptions, undefined); assert.deepEqual(oldCopy.layout, original.layout);
   const toggled = data<AnswerSnapshot & { changes: string[] }>(await client.callTool({ name: "update_answer_info", arguments: {

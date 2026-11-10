@@ -491,9 +491,9 @@ test("file bundles follow every member, preserve unrelated artifacts and read le
   const handle = result.files[0].exportUri.split("/").at(-1)!;
   const manifest = JSON.parse(await fs.readFile(path.join(store.artifactDir, handle + ".json"), "utf8"));
   assert.deepEqual(manifest.relatedAnswerIds, [a.id, b.id]);
-  const unrelated = data<{ deletedExports: number }>(await client.callTool({ name: "delete_answer", arguments: { answerId: c.id, expectedVersion: 1 } }));
+  const unrelated = data<{ deletedExports: number }>(await client.callTool({ name: "delete_answer", arguments: { answerId: c.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } }));
   assert.equal(unrelated.deletedExports, 0); await store.readExport(handle);
-  const removed = data<{ deletedExports: number }>(await client.callTool({ name: "delete_answer", arguments: { answerId: b.id, expectedVersion: 1 } }));
+  const removed = data<{ deletedExports: number }>(await client.callTool({ name: "delete_answer", arguments: { answerId: b.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } }));
   assert.equal(removed.deletedExports, 1); await assert.rejects(store.readExport(handle), isStoreNotFound);
   assert.deepEqual(await artifactNames(store), []);
   const legacy = data<{ files: Bundle["files"] }>(await client.callTool({ name: "export_answer", arguments: { answerId: a.id, formats: ["txt"] } }));

@@ -29340,7 +29340,7 @@
     },
     {
       "path": "owner.tools[delete_answer]",
-      "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports."
+      "reason": "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports; requires the user's quoted deletion request (userRequest)."
     },
     {
       "path": "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",

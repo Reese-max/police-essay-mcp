@@ -28,7 +28,7 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "*.tools[*].outputSchema",
   reason: "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base." },
 { path: "owner.tools[delete_answer]",
-  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
+  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports; requires the user's quoted deletion request (userRequest)." },
 { path: "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",
   reason: "Owner-only essay.write deletion requires the current plan version and no existing linked answers; progress exposes that version and remaining artifacts expire via lifecycle." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
@@ -331,7 +331,7 @@ export async function checkMcpContract() {
     annotations: Record<string, boolean>; inputSchema: { required: string[] };
   };
   assert.deepEqual(deleteAnswer.annotations, { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false });
-  assert.deepEqual([...deleteAnswer.inputSchema.required].sort(), ["answerId", "expectedVersion"]);
+  assert.deepEqual([...deleteAnswer.inputSchema.required].sort(), ["answerId", "expectedVersion", "userRequest"]);
   assert.ok(!current.reader.tools.some(tool => tool.name === "delete_answer"));
   const deleteExam = current.owner.tools.find(tool => tool.name === "delete_exam")!;
   assert.deepEqual(deleteExam.annotations, deleteAnswer.annotations);

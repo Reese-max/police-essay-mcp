@@ -136,18 +136,24 @@ test("delete_answer tool reports counts, requires expectedVersion and is absent 
   const reader = await connect(s.store(), true);
   try {
     assert.ok(!(await reader.listTools()).tools.some(tool => tool.name === "delete_answer"));
-    const missingVersion = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id } });
+    const missingVersion = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, userRequest: "請永久刪除這題答案" } });
     assert.equal(missingVersion.isError, true);
-    const stale = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 9 } });
+    const stale = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 9, userRequest: "請永久刪除這題答案" } });
     assert.equal(stale.isError, true);
     assert.equal((await s.store().getAnswer(doc.id)).version, 1);
+    // Unrequested deletion (e.g. an assistant restarting a draft) is refused without the user's quoted request.
+    const unasked = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1 } });
+    assert.equal(unasked.isError, true);
+    const restart = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "重新撰寫以符合兩頁" } });
+    assert.equal(restart.isError, true); assert.match(JSON.stringify(restart.content), /DELETE_NOT_REQUESTED/);
+    assert.equal((await s.store().getAnswer(doc.id)).version, 1);
 
-    const result = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1 } });
+    const result = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } });
     assert.equal(result.isError, undefined);
     assert.deepEqual(result.structuredContent, {
       answerId: doc.id, title: "tool delete", version: 1, deletedRevisions: 1, deletedExports: 0,
     });
-    const again = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1 } });
+    const again = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } });
     assert.equal(again.isError, true);
     assert.match(JSON.stringify(again.content), /找不到答案/);
     assert.equal((await owner.callTool({ name: "read_answer", arguments: { answerId: doc.id } })).isError, true);

@@ -49,7 +49,7 @@ for (const cloud of [false, true]) {
       assert.equal(blocked.isError, true); assert.match(text(blocked), /delete_answer.*get_exam_progress/);
       assert.equal((await store.getAnswer(answer.id)).version, answer.version);
       assert.equal((await store.getExam(id)).version, linkedVersion);
-      data(await call(c, "delete_answer", { answerId: answer.id, expectedVersion: answer.version }));
+      data(await call(c, "delete_answer", { answerId: answer.id, expectedVersion: answer.version, userRequest: "請永久刪除這題答案" }));
       const stale = await call(c, "delete_exam", { examId: id, expectedVersion: linkedVersion });
       assert.equal(stale.isError, true); assert.match(text(stale), /版本衝突.*get_exam_progress/);
       const version = (await progress()).version;
@@ -112,7 +112,7 @@ for (const cloud of [false, true]) {
       const plan = await store.getExam(id); assert.ok(plan.questions.every(q => q.answerId));
       const saved = await store.getAnswer(first.answer.id); assert.equal(saved.exam, input.title); assert.equal(saved.question, "第一題");
       data(await call(c, "export_exam_bundle", { examId: id })); assert.ok((await store.getExam(id)).lastBundle);
-      data(await call(c, "delete_answer", { answerId: saved.id, expectedVersion: saved.version }));
+      data(await call(c, "delete_answer", { answerId: saved.id, expectedVersion: saved.version, userRequest: "請永久刪除這題答案" }));
       assert.equal((await store.getExam(id)).questions.find(q => q.questionNo === 1)?.answerId, undefined);
       assert.equal((await store.getExam(id)).lastBundle, undefined, "deleted artifacts must not mark a recreated version-1 answer exported");
       const progress = data(await call(c, "get_exam_progress", { examId: id })); assert.equal(progress.nextStep.questionNo, 1);

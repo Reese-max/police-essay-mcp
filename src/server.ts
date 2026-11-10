@@ -766,15 +766,18 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     async ({ templateId, answerId }) => {
       z.string().optional().parse(templateId);
+      // Assistants routinely invent an answerId for a not-yet-created answer; serve the paper instead of failing the turn.
+      let missing = false;
       const answer = answerId ? await store.getAnswer(answerId).catch((error: unknown) => {
-        if (isStoreNotFound(error)) throw new Error(`${noAnswerFoundMessage(answerId)}新題目請省略 answerId。`);
+        if (isStoreNotFound(error)) { missing = true; return undefined; }
         throw error;
       }) : undefined;
       const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
-      if (!answerId) {
+      if (!answerId || missing) {
         return {
           structuredContent: { template, writingGuide: writingGuide() },
-          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
+          content: textContent((missing ? `找不到答案 ${answerId}，改為只載入稿紙；新答案用 create_answer 建立，不必先帶 answerId。` : "")
+            + `已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
         };
       }
       if (!answer) throw new Error("Answer not found");
@@ -1458,6 +1461,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: {
         answerId: answerIdSchema,
         expectedVersion: z.number().int().positive(),
+        userRequest: z.string().min(1).max(500).describe("The user's own words in this conversation that ask to delete this answer, quoted verbatim. Never call delete_answer on your own initiative (e.g. to restart a draft); edit instead."),
       },
       outputSchema: z.object({
         answerId: answerIdSchema,
@@ -1472,7 +1476,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "答案已永久刪除。",
       },
     },
-    async ({ answerId, expectedVersion }) => {
+    async ({ answerId, expectedVersion, userRequest }) => {
+      // gpt-6-luna deleted an answer mid-compression without being asked; require the user's quoted request.
+      if (!/刪|删|移除|清除|銷毀|丟掉|不要了|delete|remove|erase|discard/iu.test(userRequest)) {
+        throw new Error("DELETE_NOT_REQUESTED：userRequest 必須是使用者要求刪除此答案的原話；使用者沒有要求刪除時不要呼叫 delete_answer，改用 write_answer／replace_text 修改。");
+      }
       let deleted;
       try {
         deleted = await store.deleteAnswer(answerId, { expectedVersion });
