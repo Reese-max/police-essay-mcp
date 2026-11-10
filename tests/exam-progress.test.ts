@@ -58,6 +58,9 @@ for (const cloud of [false, true]) {
       await assert.rejects(store.getExam(id), isStoreNotFound);
       const missing = await call(c, "delete_exam", { examId: id, expectedVersion: version });
       assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
+      // An invented examId on create says where the real one comes from.
+      const invented = await call(c, "create_answer", { examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫.*start_exam 回傳的值.*單題作答可省略 examId/);
       // A stale link to an already missing answer must not prevent plan cleanup.
       await store.saveExam({ ...exam(), questions: [{ questionNo: 1, answerId: answer.id }] });
       data(await call(c, "delete_exam", { examId: exam().id, expectedVersion: 1 }));

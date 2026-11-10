@@ -178,7 +178,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   if ((input as CreateRequest).templateId === undefined && request.idempotencyKey) {
     let savedId = request.examId ? undefined : `ans_idem-${sha256(request.idempotencyKey).slice(0, 40)}`;
     if (request.examId && keyHash) {
-      const plan = await store.getExam(request.examId);
+      const plan = await requestedExam(store, request.examId);
       const entry = plan.createRequests?.[keyHash];
       savedId = entry && plan.questions.find(q => q.questionNo === entry.questionNo)?.answerId;
     }
@@ -208,7 +208,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
       throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求；請換新的 key 或 read_answer 取回既有答案。");
   }
   if (request.examId) {
-    const plan = await store.getExam(request.examId);
+    const plan = await requestedExam(store, request.examId);
     if (keyHash && plan.createRequests?.[keyHash]) request.questionNo ??= plan.createRequests[keyHash].questionNo;
     request.questionNo ??= defaultQuestionNo;
     const ordered = [...plan.questions].sort((a, b) => a.questionNo - b.questionNo);
@@ -266,6 +266,15 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   return { current, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash };
 }
 
+/** A caller-supplied examId that does not exist: assistants invent one when they call start_exam and create in the same turn. */
+// No id in the message: foreign and unknown ids must stay indistinguishable.
+async function requestedExam(store: EssayStore, examId: string): Promise<ExamPlan> {
+  try { return await store.getExam(examId); }
+  catch (error) {
+    if (!isStoreNotFound(error)) throw error;
+    throw new Error(`找不到考試計畫；examId 必須用 start_exam 回傳的值（不可自行命名，等 start_exam 結果再建立），或用 get_exam_progress 查詢；單題作答可省略 examId。`);
+  }
+}
 async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const plan = await store.getExam(examId);
@@ -935,7 +944,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           let defaultQuestionNo: number | undefined;
           if (request?.examId) {
             const used = assigned.get(request.examId) ?? new Set<number>();
-            const plan = await store.getExam(request.examId);
+            const plan = await requestedExam(store, request.examId);
             defaultQuestionNo = request.questionNo ?? (request.idempotencyKey ? plan.createRequests?.[sha256(request.idempotencyKey)]?.questionNo : undefined)
               ?? [...plan.questions].sort((a,b) => a.questionNo - b.questionNo).find(q => !q.answerId && !used.has(q.questionNo))?.questionNo;
             const item = await prepareCreate(store, request, defaultQuestionNo);
