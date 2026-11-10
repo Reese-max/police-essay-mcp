@@ -547,6 +547,18 @@ function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperatio
 }
 
 /** The sections the previewed write tool would save. */
+/**
+ * preview_change's schema is loose, so some models (MiniMax) wrap arrays they cannot type as {"item": [...]}.
+ * No tool argument is legitimately an object whose only key is "item", so unwrapping is unambiguous.
+ */
+export function unwrapItemArrays(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(unwrapItemArrays);
+  if (!value || typeof value !== "object") return value;
+  const entries = Object.entries(value);
+  if (entries.length === 1 && entries[0][0] === "item" && Array.isArray(entries[0][1])) return unwrapItemArrays(entries[0][1]);
+  return Object.fromEntries(entries.map(([key, inner]) => [key, unwrapItemArrays(inner)]));
+}
+
 function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): { sections: AnswerSection[]; notes: string[] } {
   if (operation === "renumber_items") {
     const { sections, skipped } = renumberItems(answer.sections, previewArguments(operation, previewArgumentSchemas.renumber_items, args).sectionId);
@@ -1151,7 +1163,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ answerId, operation, expectedVersion, ...args }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
-      const { sections, notes } = previewedSections(before.answer, operation, args);
+      const { sections, notes } = previewedSections(before.answer, operation, unwrapItemArrays(args) as Record<string, unknown>);
       const preview = await makeChangePreview(store, operation, before, hypotheticalAnswer(before.answer, sections));
       preview.summary.push(...notes);
       return { structuredContent: preview, content: textContent(preview.summary.join("；")) };
