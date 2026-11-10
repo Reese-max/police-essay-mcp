@@ -60,7 +60,11 @@ for (const cloud of [false, true]) {
       assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
       // An invented examId on create says where the real one comes from.
       const invented = await call(c, "create_answer", { examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
-      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫.*start_exam 回傳的值.*單題作答可省略 examId/);
+      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫；單題作答請省略 examId 直接建立/);
+      const own = data(await call(c, "start_exam", { title: "期中考", questions: [{ questionNo: 1 }] })).examId;
+      const truncated = await call(c, "create_answer", { examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.match(text(truncated), new RegExp(`你目前的考試：${own}（期中考）`)); // a dropped digit can be corrected by copying
+      data(await call(c, "delete_exam", { examId: own, expectedVersion: 1 }));
       // A stale link to an already missing answer must not prevent plan cleanup.
       await store.saveExam({ ...exam(), questions: [{ questionNo: 1, answerId: answer.id }] });
       data(await call(c, "delete_exam", { examId: exam().id, expectedVersion: 1 }));

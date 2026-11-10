@@ -116,7 +116,7 @@ const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
 const createFields = {
-  examId: examIdSchema.optional(),
+  examId: examIdSchema.optional().describe("Only an examId returned by start_exam or get_exam_progress, copied exactly. Omit for a single question; never invent one."),
   layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
   templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
@@ -267,12 +267,16 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
 }
 
 /** A caller-supplied examId that does not exist: assistants invent one when they call start_exam and create in the same turn. */
-// No id in the message: foreign and unknown ids must stay indistinguishable.
+// The requested id never appears in the message: foreign and unknown ids must stay indistinguishable.
 async function requestedExam(store: EssayStore, examId: string): Promise<ExamPlan> {
   try { return await store.getExam(examId); }
   catch (error) {
     if (!isStoreNotFound(error)) throw error;
-    throw new Error(`找不到考試計畫；examId 必須用 start_exam 回傳的值（不可自行命名，等 start_exam 結果再建立），或用 get_exam_progress 查詢；單題作答可省略 examId。`);
+    // Listing the caller's own recent exams helps exact copying (a model dropped one hex digit) and is the
+    // same for foreign and unknown ids, so it reveals nothing about other owners.
+    const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
+    throw new Error(`找不到考試計畫；單題作答請省略 examId 直接建立。多題才帶 start_exam 回傳的 examId，逐字複製、不可自行命名`
+      + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
   }
 }
 async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
