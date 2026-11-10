@@ -52,7 +52,7 @@ export const EDIT_INSTRUCTION = [
   "只有使用者明確要求永久刪除才用 delete_answer，並帶目前 expectedVersion 與 userRequest（使用者要求刪除的原話）；不為重寫或壓縮而刪除重建。「這題不要了／取消／刪掉」等未明言永久的說法不算授權，先停止處理並保留答案；若意圖刪除，先口頭確認要刪的答案，說明會連同修訂、匯出檔案及包含它的合輯一併移除且不可復原，確認後才呼叫；只是不想作答則保留答案、不寫入。",
 ].join("\n");
 
-export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；須配置已校驗教育部標準楷書，字型缺少時明確失敗。只有使用者明確指定其他紙張才傳 templateId，紙張在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
+export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；字型由伺服器配置，缺少時工具會直接回錯；不必也無法自行確認，照常建立答案。只有使用者明確指定其他紙張才傳 templateId，紙張在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
 
 export const WORKFLOW_RESOURCE_LINES = [
   "# 申論答題紙工作流程",

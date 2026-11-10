@@ -98,6 +98,7 @@ for (const cloud of [false, true]) {
       const input = { title: "警察特考", questions: [{ questionNo: 2, question: "第二題" }, { questionNo: 1, question: "第一題" }], formats: ["pdf"], idempotencyKey: "exam-key-123" };
       const id = data(await call(c, "start_exam", input)).examId;
       assert.equal(data(await call(c, "start_exam", input)).examId, id);
+      assert.match(text(await call(c, "start_exam", input)), new RegExp(`examId=${id}`)); // text-only readers must see the real id
       assert.equal(data(await call(c, "start_exam", input)).replayed, true); assert.equal((await store.listExams()).length, 1);
       const bad = await call(c, "start_exam", { ...input, title: "不同" }); assert.equal(bad.isError, true); assert.match(text(bad), /IDEMPOTENCY_KEY_REUSED/);
       for (const questions of [[], [{ questionNo: 1 }, { questionNo: 1 }]]) assert.equal((await call(c, "start_exam", { title: "錯誤", questions })).isError, true);

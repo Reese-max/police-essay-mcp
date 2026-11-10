@@ -831,7 +831,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       try { await store.saveExam(plan); } catch (error) { if (!await replay()) throw error; replayed = true; }
     }
     const progress = await examProgress(store, id);
-    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(progress.summary) };
+    // Assistants that read only the text invented their own examId; state the real one there too.
+    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}`) };
   });
   registerTool("get_exam_progress", {
     title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
