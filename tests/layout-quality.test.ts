@@ -158,3 +158,17 @@ test("short tail warning appears only when the answer overflows", async () => {
   assert.equal(tails(10).length, 0);
   assert.equal(tails(50).length, 1);
 });
+
+test("layout quality notes name skipped levels and disabled auto hanging indent", async () => {
+  const { layoutQualityNotes } = await import("../src/layout-quality.js");
+  const notesFor = (sections: Parameters<typeof createAnswerDocument>[0]["sections"], layoutOptions = {}) => {
+    const answer = { ...createAnswerDocument({ templateId: standard.id, title: "t", sections }), layoutOptions };
+    return layoutQualityNotes(standard, answer, layoutSections(standard, answer.sections, layoutOptions));
+  };
+  const skipped = notesFor([{ id: "a", heading: "壹、概念", text: "（一）原則\n1. 驗證。\n2. 授權。" }]);
+  assert.equal(skipped.length, 1);
+  assert.match(skipped[0], /「（一）原則」跳過中間層級.*一、/);
+  assert.deepEqual(notesFor([{ id: "a", heading: "壹、概念", text: "一、原則\n（一）驗證。\n（二）授權。" }]), []);
+  const off = notesFor([{ id: "a", text: `1. ${"甲".repeat(60)}` }], { autoHangingIndent: false });
+  assert.match(off.join(""), /autoHangingIndent=true/);
+});

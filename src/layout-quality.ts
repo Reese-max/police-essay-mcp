@@ -112,23 +112,25 @@ function collectParagraphs(report: LayoutReport): Paragraph[] {
   return paragraphs;
 }
 
-function countHierarchyIssues(items: Array<{ numbering: Numbering; order: number }>): number {
-  let issues = 0;
+type HierarchyIssue = { order: number; kind: "skip" | "family" | "gap"; prefix: string; expectedLevel?: number };
+
+function hierarchyIssueList(items: Array<{ numbering: Numbering; order: number }>): HierarchyIssue[] {
+  const issues: HierarchyIssue[] = [];
   const stack: Array<{ level: number; key: number }> = [];
   const siblings = new Map<string, { family: string; value: number }>();
   let previousLevel: number | undefined;
 
   for (const item of items) {
-    const { level, family, value } = item.numbering;
-    if (previousLevel !== undefined && level > previousLevel + 1) issues += 1;
+    const { level, family, value, prefix } = item.numbering;
+    if (previousLevel !== undefined && level > previousLevel + 1) issues.push({ order: item.order, kind: "skip", prefix, expectedLevel: previousLevel + 1 });
     previousLevel = level;
     while (stack.length && stack.at(-1)!.level >= level) stack.pop();
     const parentKey = stack.at(-1)?.key ?? 0;
     const siblingKey = `${parentKey}:${level}`;
     const previous = siblings.get(siblingKey);
     if (previous) {
-      if (previous.family !== family) issues += 1;
-      if (value !== previous.value + 1) issues += 1;
+      if (previous.family !== family) issues.push({ order: item.order, kind: "family", prefix });
+      if (value !== previous.value + 1) issues.push({ order: item.order, kind: "gap", prefix });
     }
     siblings.set(siblingKey, { family, value });
     stack.push({ level, key: item.order + 1 });
@@ -137,11 +139,34 @@ function countHierarchyIssues(items: Array<{ numbering: Numbering; order: number
 }
 
 /** Scores observable layout output without changing the answer or its layout report. */
-export function scoreLayout(
-  template: AnswerTemplate,
-  answer: AnswerDocument,
-  report: LayoutReport,
-): LayoutQuality {
+export function scoreLayout(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): LayoutQuality {
+  return analyzeLayout(template, answer, report).quality;
+}
+
+const LEVEL_NAMES = ["", "壹、", "一、", "（一）", "1.", "（1）", "甲、"];
+
+/** Actionable zh-TW notes naming the paragraphs behind the structural metrics (for check_layout). */
+export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): string[] {
+  const { quality, paragraphs, embeddedHeadings, hierarchyIssues } = analyzeLayout(template, answer, report);
+  const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
+  const notes: string[] = [];
+  if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
+  for (const paragraph of embeddedHeadings) notes.push(`結構提醒：${start(paragraph.text)}像標題卻寫成段落文字；建議改為該節 heading 或另立一節。`);
+  for (const issue of hierarchyIssues) {
+    const at = start(paragraphs[issue.order].text);
+    notes.push(issue.kind === "skip"
+      ? `結構提醒：${at}跳過中間層級（應依 壹、→一、→（一）→1.→（1） 逐層往下）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
+      : issue.kind === "family"
+        ? `結構提醒：${at}與同層前一項的編號樣式不同；同層請用同一種編號。`
+        : `結構提醒：${at}與同層前一項不連號；請依序編號。`);
+  }
+  if (quality.misalignedContinuations) notes.push(answer.layoutOptions?.autoHangingIndent === false
+    ? "結構提醒：編號段落的續行未對齊內文；建議以 update_answer_info 設定 layoutOptions.autoHangingIndent=true。"
+    : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
+  return notes;
+}
+
+function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport) {
   const paragraphs = collectParagraphs(report);
   const measure = template.paperProfile
     ? (() => {
@@ -190,16 +215,18 @@ export function scoreLayout(
 
   const capacity = report.capacity;
   const fill = capacity > 0 ? Math.round((report.totalLines / capacity) * 100) / 100 : 0;
-  return {
+  const hierarchyIssues = hierarchyIssueList(hierarchyItems);
+  const quality: LayoutQuality = {
     fill,
     totalLines: report.totalLines,
     capacity,
     flattenedStructure: report.totalLines >= 20 && answer.sections.length <= 1 && numberedParagraphs.length >= 2,
     embeddedHeadingParagraphs: embeddedHeadings.length,
     misalignedContinuations,
-    hierarchyIssues: countHierarchyIssues(hierarchyItems),
+    hierarchyIssues: hierarchyIssues.length,
     indentInconsistency: Math.max(0, bodyIndents.size - 1),
     shortTailLines,
     punctuationOnlyLines: layoutWarnings(report, template).filter(warning => warning.code === "PUNCTUATION_ONLY_LINE").length,
   };
+  return { quality, paragraphs, embeddedHeadings, hierarchyIssues };
 }

@@ -1,3 +1,4 @@
+import { layoutQualityNotes } from "./layout-quality.js";
 import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRUCTIONS, WORKFLOW_RESOURCE_LINES } from "./agent-guidance.js";
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
 import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
@@ -1490,9 +1491,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ answerId }) => {
       const current = await loadSnapshot(store, answerId);
       const plan = planLines(current.answer, current.layout);
-      const warnings = layoutWarnings(current.layout, await store.getTemplate(current.answer.templateId));
-      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes: plan.notes, warnings };
-      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
+      const template = await store.getTemplate(current.answer.templateId);
+      const warnings = layoutWarnings(current.layout, template);
+      const notes = [...plan.notes, ...layoutQualityNotes(template, current.answer, current.layout)];
+      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes, warnings };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
     },
   );
 
