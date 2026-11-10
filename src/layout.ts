@@ -558,8 +558,8 @@ export function summarizeLayout(report: LayoutReport): string {
     .map((page) => `第${page.page}頁 ${page.linesUsed}/${page.capacity}行`)
     .join("；");
   // Headings alone are a skeleton, not an answer: "OK" here let an assistant stop before writing any body.
-  if (report.totalLines > 0 && !report.lines.some(line => !line.isHeading && !line.isSpacer && !line.isPadding && line.text.trim())) {
-    return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，狀態：尚無內文（只有標題）；請用 write_answer 寫入各節內文後再查。`;
+  if (!report.lines.some(line => !line.isHeading && !line.isSpacer && !line.isPadding && line.text.trim())) {
+    return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，狀態：尚無內文；請用 write_answer 寫入各節內文後再查。`;
   }
   if (report.fits) {
     return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，尚餘 ${report.remainingLines} 行，狀態：OK。`;

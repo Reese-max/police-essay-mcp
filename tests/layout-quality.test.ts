@@ -213,6 +213,12 @@ test("hierarchy checks sentence-ending list items and names headless sections th
   ]);
   assert.equal(headless.length, 1);
   assert.match(headless[0], /「（一）意義：丙說明。」所在的節沒有標題.*補上該節 heading/);
+  const leadIn = notesFor([
+    { id: "a", heading: "一、爭點分析", text: "（一）意義：甲說明。\n（二）要件：乙說明。" },
+    { id: "b", text: "針對本爭點，說明如下：\n（一）意義：丙說明。\n（二）要件：丁說明。" },
+  ]);
+  assert.equal(leadIn.length, 1);
+  assert.match(leadIn[0], /所在的節沒有標題/);
   assert.deepEqual(notesFor([
     { id: "a", heading: "一、甲", text: "（一）意義：甲說明。\n（二）比較：乙說明。" },
     { id: "b", heading: "二、乙", text: "（一）意義：丙說明。\n（二）比較：丁說明。" },
@@ -234,4 +240,5 @@ test("a headings-only answer is reported as having no body instead of OK", async
     summarizeLayout(layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "t", sections }).sections));
   assert.match(status([{ heading: "壹、論證評析", text: "" }, { heading: "貳、導入決策", paragraphs: [{ text: "" }] }]), /尚無內文.*write_answer/);
   assert.match(status([{ heading: "壹、概念", text: "" }, { heading: "一、定義", text: "內容。" }]), /狀態：OK/);
+  assert.match(status([]), /尚無內文/);
 });

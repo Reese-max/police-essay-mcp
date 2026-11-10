@@ -229,14 +229,16 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
 
   // Body items count too: list items ending in 。 are the common case, and skipping them hid restarts.
   const headed = new Set(paragraphs.filter(paragraph => paragraph.isHeading).map(paragraph => paragraph.sectionId));
-  const seenSections = new Set<string>();
+  const seenSections = new Set<string>(), numberedSections = new Set<string>();
   const hierarchyItems = paragraphs.flatMap((paragraph, index) => {
     const numbering = classifyNumbering(firstText(paragraph));
-    const firstInSection = !seenSections.has(paragraph.sectionId);
+    const laterSection = seenSections.size > (seenSections.has(paragraph.sectionId) ? 1 : 0);
     seenSections.add(paragraph.sectionId);
-    // A later section without a heading that starts its list over leaves the reader without the point it belongs to.
-    const restart = firstInSection && seenSections.size > 1 && !headed.has(paragraph.sectionId);
-    return numbering ? [{ numbering, order: index, restart }] : [];
+    if (!numbering) return [];
+    // A later section without a heading that starts its list over (after any lead-in prose) leaves the reader without the point it belongs to.
+    const restart = laterSection && !numberedSections.has(paragraph.sectionId) && !headed.has(paragraph.sectionId);
+    numberedSections.add(paragraph.sectionId);
+    return [{ numbering, order: index, restart }];
   });
 
   const proseParagraphs = bodyParagraphs.filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)));
