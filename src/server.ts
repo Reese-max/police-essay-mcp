@@ -1283,7 +1283,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
   }, async ({ answerId, expectedVersion, plan: inputPlan }) => {
-    const plan = inputPlan === null ? null : reviewPlanSchema.parse(inputPlan);
+    const plan = inputPlan === null ? null : reviewPlanSchema.parse(unwrapItemArrays(inputPlan)); // plan is untyped in tools/list, like preview_change
     const before = await loadSnapshot(store, answerId);
     assertExpectedVersion(before.answer, expectedVersion);
     for (const r of plan?.requirements ?? []) for (const id of r.sectionIds) findSection(before.answer, id);

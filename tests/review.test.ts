@@ -225,6 +225,12 @@ test("real MCP create → review save → update → stale review → export pre
   const clear = data<ReturnType<typeof report>>(await client.callTool({ name: "set_answer_review", arguments: { answerId, expectedVersion: 4, plan: null } }));
   assert.equal(clear.version, 5); assert.equal(clear.freshness, "not_checked");
   assert.equal((await store.getAnswer(answerId)).sections[0].text, sample().sections[0].text);
+  // MiniMax wraps every array of the untyped plan as {"item": [...]}; it is unwrapped before strict validation.
+  const wrap = (value: unknown): unknown => Array.isArray(value) ? { item: value.map(wrap) }
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, wrap(inner)])) : value;
+  const wrapped = await client.callTool({ name: "set_answer_review", arguments: { answerId, expectedVersion: 5, plan: wrap(plan()) } });
+  assert.equal(wrapped.isError, undefined, JSON.stringify(wrapped.content));
+  assert.deepEqual((await store.getAnswer(answerId)).review?.plan, plan());
 }));
 
 test("real MCP rejects malformed manifests and dangling section references without writing", async () => withClient(async (client, store) => {
