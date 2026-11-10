@@ -48,6 +48,10 @@ test("autoHangingIndent recognizes only paragraph-leading list numbers", () => {
     id: "body", text: "1." + "甲".repeat(30), paragraphFormat: { firstLineIndent: 2, hangingIndent: 3 },
   }, 0)], { autoHangingIndent: true });
   assert.ok(explicit.lines.every(line => line.format.hangingIndent === 3));
+  const echoedZero = layoutSections(general, [normalizeSection({
+    id: "body", paragraphs: [{ text: "1." + "甲".repeat(30), format: { firstLineIndent: 2, hangingIndent: 0 } }],
+  }, 0)], { autoHangingIndent: true });
+  assert.equal(echoedZero.lines[1].format.hangingIndent, 2 + displayWidth("1."));
 });
 
 test("absent autoHangingIndent preserves legacy line wrapping and positions", () => {

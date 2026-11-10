@@ -431,9 +431,10 @@ export function layoutSections(
 
     sectionParagraphs(section).forEach((paragraph, index) => {
       const format = mergeParagraphFormat(template, section, paragraph.format);
-      const explicitHangingIndent = template.paragraphDefaults?.hangingIndent !== undefined
-        || section.paragraphFormat?.hangingIndent !== undefined
-        || paragraph.format?.hangingIndent !== undefined;
+      // 0 counts as unset: assistants echo resolved formats (hangingIndent 0) back on rewrites, which must not disable auto.
+      const explicitHangingIndent = Boolean(template.paragraphDefaults?.hangingIndent
+        || section.paragraphFormat?.hangingIndent
+        || paragraph.format?.hangingIndent);
       addParagraph(
         lines,
         section.id,
