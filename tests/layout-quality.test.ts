@@ -141,3 +141,16 @@ test("review regressions: tens numerals, heavenly stems, quoted sentence ends an
   ] }]);
   assert.equal(blank.indentInconsistency, 0);
 });
+
+test("short tail warning appears only when the answer overflows", async () => {
+  const { layoutWarnings } = await import("../src/planning.js");
+  const perLine = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "t", sections: [{ text: "甲".repeat(200) }] }).sections)
+    .lines[0].text.length;
+  const tailParagraph = "甲".repeat(perLine + 1);
+  const tails = (filler: number) => {
+    const answer = createAnswerDocument({ templateId: standard.id, title: "t", sections: [{ text: [tailParagraph, ...Array(filler).fill("乙")].join("\n") }] });
+    return layoutWarnings(layoutSections(standard, answer.sections), standard).filter(warning => warning.code === "SHORT_TAIL_LINE");
+  };
+  assert.equal(tails(10).length, 0);
+  assert.equal(tails(50).length, 1);
+});

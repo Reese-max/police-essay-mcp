@@ -91,7 +91,7 @@ export function describeTargetChanges(before: AnswerDocument, after: AnswerDocum
 }
 
 export interface LayoutWarning {
-  code: "ORPHAN_HEADING" | "SPLIT_LATIN_WORD" | "PUNCTUATION_ONLY_LINE";
+  code: "ORPHAN_HEADING" | "SPLIT_LATIN_WORD" | "PUNCTUATION_ONLY_LINE" | "SHORT_TAIL_LINE";
   page: number;
   line: number;
   sectionId: string;
@@ -112,6 +112,14 @@ export function layoutWarnings(layout: LayoutReport, template?: AnswerTemplate):
     if (previous && continues(previous, line) && /^[，。！？、；：,.!?;:…」』）】〉》]+$/u.test(line.text)) {
       warnings.push({ code: "PUNCTUATION_ONLY_LINE", page: line.page, line: line.lineOnPage, sectionId: line.sectionId,
         message: "自然換行後只剩結尾標點；不阻擋匯出，建議以 update_answer_info 設定 layoutOptions.avoidPunctuationOnlyLines=true，或調整換行。" });
+    }
+    const tail = line.text.trim();
+    const tailCells = template?.paperProfile ? measure(tail) / (template.fontSizePt / 2) : displayWidth(tail);
+    // Only when overflowing: then trimming a short tail saves a whole line; on a fitting answer it is cosmetic noise.
+    if (layout.totalLines > layout.capacity && !line.isHeading && !line.isPadding && line.isLastLineOfParagraph && !line.isFirstLineOfParagraph
+      && tail && tailCells <= 4) {
+      warnings.push({ code: "SHORT_TAIL_LINE", page: line.page, line: line.lineOnPage, sectionId: line.sectionId,
+        message: `段落最後一行只剩 ${[...tail].length} 字；不阻擋匯出，壓縮或潤飾時精簡該段約 ${[...tail].length} 字即可省一行。` });
     }
     if (line.isHeading) headings.set(line.sectionId, line);
     else if (!bodies.has(line.sectionId)) {
