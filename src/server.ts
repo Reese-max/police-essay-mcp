@@ -116,7 +116,7 @@ const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
 const createFields = {
-  examId: examIdSchema.optional().describe("Only an examId returned by start_exam or get_exam_progress, copied exactly. Omit for a single question; never invent one."),
+  examId: examIdSchema.optional().describe("A value returned by start_exam or get_exam_progress, copied exactly; never invent one."),
   layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
   templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
@@ -275,7 +275,8 @@ async function requestedExam(store: EssayStore, examId: string): Promise<ExamPla
     // Listing the caller's own recent exams helps exact copying (a model dropped one hex digit) and is the
     // same for foreign and unknown ids, so it reveals nothing about other owners.
     const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
-    throw new Error(`找不到考試計畫；單題作答請省略 examId 直接建立。多題才帶 start_exam 回傳的 examId，逐字複製、不可自行命名`
+    // Pointing at start_exam works even where the client forces every field (strict tool schemas); "omit it" does not.
+    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值：先呼叫 start_exam 取得後逐字帶入，不可自行命名`
       + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
   }
 }
@@ -1492,7 +1493,9 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     async ({ answerId, expectedVersion, userRequest }) => {
       // gpt-6-luna deleted an answer mid-compression without being asked; require the user's quoted request.
-      if (!/刪|删|移除|清除|銷毀|丟掉|不要了|delete|remove|erase|discard/iu.test(userRequest)) {
+      // luna also wrote 「（沒有明確永久刪除要求）」, which names deletion while denying it was asked.
+      if (!/刪|删|移除|清除|銷毀|丟掉|不要了|delete|remove|erase|discard/iu.test(userRequest)
+        || /沒有|並未|未經|未曾|無明確|不是|並非|no explicit|not (?:asked|requested)|didn't ask|did not ask/iu.test(userRequest)) {
         throw new Error("DELETE_NOT_REQUESTED：userRequest 必須是使用者要求刪除此答案的原話；使用者沒有要求刪除時不要呼叫 delete_answer，改用 write_answer／replace_text 修改。");
       }
       let deleted;

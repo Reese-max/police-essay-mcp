@@ -146,6 +146,8 @@ test("delete_answer tool reports counts, requires expectedVersion and is absent 
     assert.equal(unasked.isError, true);
     const restart = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "重新撰寫以符合兩頁" } });
     assert.equal(restart.isError, true); assert.match(JSON.stringify(restart.content), /DELETE_NOT_REQUESTED/);
+    const denied = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "（沒有明確永久刪除要求）" } });
+    assert.equal(denied.isError, true); assert.match(JSON.stringify(denied.content), /DELETE_NOT_REQUESTED/);
     assert.equal((await s.store().getAnswer(doc.id)).version, 1);
 
     const result = await owner.callTool({ name: "delete_answer", arguments: { answerId: doc.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } });
