@@ -47,12 +47,16 @@ test("embedded heading paragraphs count only numbered body paragraphs without se
   const bad = score(standard, [{ text: "一、管理措施應落實並定期檢討" }]);
   assert.equal(good.embeddedHeadingParagraphs, 0);
   assert.ok(bad.embeddedHeadingParagraphs > 0);
+  const leadIn = score(standard, [{ text: "（三）流程：\n1. 擬具需求。\n2. 公告周知。" }]);
+  assert.equal(leadIn.embeddedHeadingParagraphs, 0);
+  const proseBelow = score(standard, [{ text: "（三）流程\n擬具需求並公告周知。" }]);
+  assert.equal(proseBelow.embeddedHeadingParagraphs, 1);
 });
 
 test("numbered paragraph detection covers the supported Chinese and Arabic marker families", () => {
-  const result = score(standard, [{
-    text: "壹、甲\n拾、乙\n一、丙\n二十、丁\n（一）戊\n(一)己\n1.庚\n1、辛\n１．壬\n（1）癸\n(1)子",
-  }]);
+  // One section each, so no marker counts as a lead-in for the next one.
+  const result = score(standard, ["壹、甲", "拾、乙", "一、丙", "二十、丁", "（一）戊", "(一)己", "1.庚", "1、辛", "１．壬", "（1）癸", "(1)子"]
+    .map((text, index) => ({ id: `s${index}`, text })));
   assert.equal(result.embeddedHeadingParagraphs, 11);
 });
 

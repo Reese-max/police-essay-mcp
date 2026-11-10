@@ -152,8 +152,15 @@ export function scoreLayout(
   const bodyParagraphs = paragraphs.filter(paragraph => !paragraph.isHeading);
   const numberedParagraphs = bodyParagraphs.filter(paragraph => classifyNumbering(paragraph.lines[0]?.text ?? ""));
 
-  const embeddedHeadings = bodyParagraphs.filter(paragraph =>
-    classifyNumbering(paragraph.lines[0]?.text ?? "") && !/[。！？][」』）)]*\s*$/u.test(paragraph.text));
+  // A title-like numbered paragraph leading deeper-numbered items in its section is a legitimate sub-heading:
+  // sections carry only one heading level.
+  const embeddedHeadings = bodyParagraphs.filter((paragraph, index) => {
+    const numbering = classifyNumbering(paragraph.lines[0]?.text ?? "");
+    if (!numbering || /[。！？][」』）)]*\s*$/u.test(paragraph.text)) return false;
+    const next = bodyParagraphs[index + 1];
+    const nextNumbering = next?.sectionId === paragraph.sectionId ? classifyNumbering(next.lines[0]?.text ?? "") : undefined;
+    return !(nextNumbering && nextNumbering.level > numbering.level);
+  });
 
   let misalignedContinuations = 0;
   for (const paragraph of numberedParagraphs) {
