@@ -34,6 +34,7 @@ export const REVIEW_INSTRUCTION = "使用者要求確認或審核答案內容時
 export const EDIT_INSTRUCTION = [
   "依任務選流程：新建多題先 start_exam，保留 examId 供建立、進度、總覽及合輯匯出使用；續做或前次中斷先 get_exam_progress（不知 examId 時省略），依 nextStep 接續，只回報 summary 一次，不重做已完成題目、不逐步旁白。既有答案沿用已知 answerId；未知才 list_answers 一次。",
   "完整草稿入紙保留全部節、標題、順序與原文。要求依內容比例配置行數目標時，容量未知先 load_exam_paper，已有適用模板不先 list_templates。總預算依使用者明訂行數，未指定則用該題整份答題紙容量，僅扣除引擎確認不屬各節的固定占行。依各節文字量與論點份量分配含標題及段距的正整數目標，依餘數補齊取整差額，合計等於可分配預算。目標是作答額度，不是短稿目前使用行數；不為達標擴寫、加空白或改動原稿。",
+  "自行撰寫答案時分層成節：每個大點（壹、或一、）各成一節，編號與標題放 heading，不寫成段落文字；其下小點（一）、1. 各自成段，不把多個編號項併在同一段；同層用同一編號家族並連號，逐層往下（壹、→一、→（一）→1.→（1）），不跳層。新答案編號段續行由引擎自動懸掛對齊內文，勿自行設定 hangingIndent；懸掛比頂格多佔行，配置與壓縮時預留。",
   "單題用 create_answer 一次帶明確 id 的 sections、匹配的 lineTargets 及已知 exam、questionNo，不臆造缺少的資訊；lineTargets.sectionId 必須等於 section id，目標在版本 1 儲存，不另加設目標的寫入。多題用 create_answers(examId)，每批 1–10 題，全部驗證才開始儲存，每題不同 idempotencyKey。重試使用相同 key 與完全相同請求，重送回傳目前版本，不同請求會拒絕；部分失敗依錯誤列出的已建立項目接續，不重建。",
   "多題合版／匯出流程：start_exam → create_answers(examId) → 每題 check_layout → 只修超頁題 → 對修過的題目再 check_layout → 一次 render_exam_overview(examId) → 一次 export_exam_bundle(examId)。兩頁／容量／匯出任務每題都要實際呼叫 check_layout，包含短題或批次及 overview 已顯示 fits 的題目；建立、寫入、模板及 overview 摘要不能取代逐題檢查。未變更且已檢查的版本不重查。",
   "壓縮既有答案前，先掌握完整原文與目前版本：已有完整 sections 可沿用，只有摘要則 read_answer；寫入前先 check_layout，確認實際超出行數及 compressionHints。記下原有節 id、標題、順序、段內編號小節、各節獨立論點及使用者指定重點，作為保留清單。不能沒讀原文就判斷內容重複。",
