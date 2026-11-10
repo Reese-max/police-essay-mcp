@@ -472,7 +472,7 @@ test("cloud Round A bundle deletion follows any member and keeps unrelated and l
     const manifest = [...s.firestore.documents.values()].find(item => item.value.handle === handle)!.value;
     assert.deepEqual(manifest.relatedAnswerIds, [a.id, b.id]);
     assert.equal((await store.deleteAnswer(c.id, { expectedVersion: 1 })).exports, 0); await store.readExport(handle);
-    const deleted = await client.callTool({ name: "delete_answer", arguments: { answerId: b.id, expectedVersion: 1 } });
+    const deleted = await client.callTool({ name: "delete_answer", arguments: { answerId: b.id, expectedVersion: 1, userRequest: "請永久刪除這題答案" } });
     assert.equal(deleted.isError, undefined); assert.equal((deleted.structuredContent as { deletedExports: number }).deletedExports, 1);
     await assert.rejects(store.readExport(handle), isStoreNotFound);
     assert.equal(s.storage.objects.size, 0); assert.ok(![...s.firestore.documents.keys()].some(key => key.includes("/artifacts/")));

@@ -53,5 +53,18 @@
       "police_information_essay_165",
       "police_information_essay_166"
     ]
+  },
+  {
+    "kind": "layout_quality",
+    "label": "排版品質",
+    "max": {
+      "flattenedStructure": false,
+      "embeddedHeadingParagraphs": 0,
+      "misalignedContinuations": 0,
+      "hierarchyIssues": 0,
+      "indentInconsistency": 0,
+      "punctuationOnlyLines": 0,
+      "shortTailLines": 2
+    }
   }
 ]

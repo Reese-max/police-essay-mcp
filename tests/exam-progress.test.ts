@@ -49,7 +49,7 @@ for (const cloud of [false, true]) {
       assert.equal(blocked.isError, true); assert.match(text(blocked), /delete_answer.*get_exam_progress/);
       assert.equal((await store.getAnswer(answer.id)).version, answer.version);
       assert.equal((await store.getExam(id)).version, linkedVersion);
-      data(await call(c, "delete_answer", { answerId: answer.id, expectedVersion: answer.version }));
+      data(await call(c, "delete_answer", { answerId: answer.id, expectedVersion: answer.version, userRequest: "請永久刪除這題答案" }));
       const stale = await call(c, "delete_exam", { examId: id, expectedVersion: linkedVersion });
       assert.equal(stale.isError, true); assert.match(text(stale), /版本衝突.*get_exam_progress/);
       const version = (await progress()).version;
@@ -58,6 +58,13 @@ for (const cloud of [false, true]) {
       await assert.rejects(store.getExam(id), isStoreNotFound);
       const missing = await call(c, "delete_exam", { examId: id, expectedVersion: version });
       assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
+      // An invented examId on create says where the real one comes from.
+      const invented = await call(c, "create_answer", { examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫；examId 必須是 start_exam 回傳的值/);
+      const own = data(await call(c, "start_exam", { title: "期中考", questions: [{ questionNo: 1 }] })).examId;
+      const truncated = await call(c, "create_answer", { examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.match(text(truncated), new RegExp(`你目前的考試：${own}（期中考）`)); // a dropped digit can be corrected by copying
+      data(await call(c, "delete_exam", { examId: own, expectedVersion: 1 }));
       // A stale link to an already missing answer must not prevent plan cleanup.
       await store.saveExam({ ...exam(), questions: [{ questionNo: 1, answerId: answer.id }] });
       data(await call(c, "delete_exam", { examId: exam().id, expectedVersion: 1 }));
@@ -98,6 +105,7 @@ for (const cloud of [false, true]) {
       const input = { title: "警察特考", questions: [{ questionNo: 2, question: "第二題" }, { questionNo: 1, question: "第一題" }], formats: ["pdf"], idempotencyKey: "exam-key-123" };
       const id = data(await call(c, "start_exam", input)).examId;
       assert.equal(data(await call(c, "start_exam", input)).examId, id);
+      assert.match(text(await call(c, "start_exam", input)), new RegExp(`examId=${id}`)); // text-only readers must see the real id
       assert.equal(data(await call(c, "start_exam", input)).replayed, true); assert.equal((await store.listExams()).length, 1);
       const bad = await call(c, "start_exam", { ...input, title: "不同" }); assert.equal(bad.isError, true); assert.match(text(bad), /IDEMPOTENCY_KEY_REUSED/);
       for (const questions of [[], [{ questionNo: 1 }, { questionNo: 1 }]]) assert.equal((await call(c, "start_exam", { title: "錯誤", questions })).isError, true);
@@ -112,7 +120,7 @@ for (const cloud of [false, true]) {
       const plan = await store.getExam(id); assert.ok(plan.questions.every(q => q.answerId));
       const saved = await store.getAnswer(first.answer.id); assert.equal(saved.exam, input.title); assert.equal(saved.question, "第一題");
       data(await call(c, "export_exam_bundle", { examId: id })); assert.ok((await store.getExam(id)).lastBundle);
-      data(await call(c, "delete_answer", { answerId: saved.id, expectedVersion: saved.version }));
+      data(await call(c, "delete_answer", { answerId: saved.id, expectedVersion: saved.version, userRequest: "請永久刪除這題答案" }));
       assert.equal((await store.getExam(id)).questions.find(q => q.questionNo === 1)?.answerId, undefined);
       assert.equal((await store.getExam(id)).lastBundle, undefined, "deleted artifacts must not mark a recreated version-1 answer exported");
       const progress = data(await call(c, "get_exam_progress", { examId: id })); assert.equal(progress.nextStep.questionNo, 1);
@@ -142,6 +150,11 @@ for (const cloud of [false, true]) {
       const overview = data(await call(c, "render_exam_overview", { examId: id, responseDetail: "full" }));
       assert.deepEqual(overview.examAnswers.map((q: any) => q.questionNo), [1, 2]); assert.equal(overview.examAnswers[1].title, "未建立");
       assert.equal(overview.progress.nextStep.action, "create_answer");
+      // Assistants pass both; members are accepted (whole exam shown), a foreign id is named.
+      const both = data(await call(c, "render_exam_overview", { examId: id, answerIds: [one], responseDetail: "full" }));
+      assert.deepEqual(both.examAnswers.map((q: any) => q.questionNo), [1, 2]);
+      const foreign = await call(c, "render_exam_overview", { examId: id, answerIds: ["ans_elsewhere"] });
+      assert.equal(foreign.isError, true); assert.match(JSON.stringify(foreign.content), /ans_elsewhere 不屬於考試/);
       data(await call(c, "create_answer", draft(id, 2))); assert.equal((await progress()).nextStep.action, "fix_layout");
       data(await call(c, "replace_text", { answerId: one, sectionId: "body", newText: "完成論述。", expectedVersion: 1 }));
       assert.equal((await progress()).nextStep.action, "export_exam_bundle"); assert.match((await progress()).summary, /版面皆通過；尚未匯出/);

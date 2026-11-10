@@ -55,6 +55,7 @@ export const alignmentSchema = z.enum(["left", "right", "justify", "distributed"
 
 export const paragraphFormatSchema = z.object({
   firstLineIndent: z.number().int().min(0).default(0),
+  hangingIndent: z.number().int().min(0).default(0),
   leftIndent: z.number().int().min(0).default(0),
   rightIndent: z.number().int().min(0).default(0),
   alignment: alignmentSchema.default("left"),
@@ -76,6 +77,7 @@ export const headingStyleSchema = z.object({
   numbering: z.enum(["chinese", "arabic"]).default("chinese"),
   separator: z.string().min(1).max(5).default("、"),
   firstLineIndent: z.number().int().min(0).default(0),
+  hangingIndent: z.number().int().min(0).default(0),
   leftIndent: z.number().int().min(0).default(0),
   rightIndent: z.number().int().min(0).default(0),
   alignment: alignmentSchema.default("left"),
@@ -142,7 +144,8 @@ export const answerSectionInputSchema = answerSectionInputBaseSchema.superRefine
     });
   }
 
-  if (input.text !== undefined && input.paragraphs !== undefined) {
+  // Assistants send the unused field empty: paragraphs [] with text, or text "" with paragraphs. Neither is a conflict.
+  if (input.text && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     if (normalizeNewlines(input.text) !== normalizeNewlines(paragraphText)) {
       context.addIssue({
@@ -174,6 +177,7 @@ export const layoutOptionsSchema = z.strictObject({
   wholeLatinWords: z.boolean().optional(),
   keepHeadingWithNext: z.boolean().optional(),
   avoidPunctuationOnlyLines: z.boolean().optional(),
+  autoHangingIndent: z.boolean().optional().describe("Automatically indent continuation lines of paragraphs that start with a recognized list number unless hangingIndent is explicitly set."),
   compactPaper: z.boolean().optional().describe('165/166 only: remove unformatted blank paragraphs and join short headings with their first body paragraph; false preserves standalone headings and blanks.'),
 });
 export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;
@@ -314,7 +318,8 @@ export function normalizeSection(
   input: AnswerSectionInput,
   order: number,
 ): AnswerSection {
-  const sourceText = input.text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
+  const text = input.text === "" && input.paragraphs?.length ? undefined : input.text;
+  const sourceText = text ?? input.paragraphs?.map((paragraph) => paragraph.text).join("\n") ?? "";
   const sourceParagraphs = input.paragraphs?.length
     ? input.paragraphs
     : normalizeNewlines(sourceText).split("\n").map((text): AnswerParagraphInput => ({ text }));
@@ -588,5 +593,4 @@ export function assertExpectedVersion(
     );
   }
 }
-
 

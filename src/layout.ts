@@ -37,6 +37,7 @@ const graphemeSegmenter = GraphemeSegmenterClass
 
 const DEFAULT_PARAGRAPH_FORMAT: ParagraphFormat = {
   firstLineIndent: 0,
+  hangingIndent: 0,
   leftIndent: 0,
   rightIndent: 0,
   alignment: "left",
@@ -54,6 +55,7 @@ const DEFAULT_HEADING_STYLE: HeadingStyle = {
   numbering: "chinese",
   separator: "、",
   firstLineIndent: 0,
+  hangingIndent: 0,
   leftIndent: 0,
   rightIndent: 0,
   alignment: "left",
@@ -148,6 +150,28 @@ function mergeParagraphFormat(
   });
 }
 
+function listNumberMarker(text: string): string | undefined {
+  // Leading spaces belong to the marker prefix: assistants often indent "　　（一）" with literal full-width spaces.
+  const match = /^[ 　]*(?:[壹貳參肆伍陸柒捌玖拾]、|(?:二十|十[一二三四五六七八九]?|[一二三四五六七八九])、|[（(](?:[一二三四五六七八九十]+|[0-9０-９]+)[）)]|[0-9０-９]+[.．、]|[甲乙丙丁戊己庚辛壬癸]、)/u.exec(text);
+  return match?.[0];
+}
+
+function withAutomaticHangingIndent(
+  text: string,
+  format: ParagraphFormat,
+  template: AnswerTemplate,
+  options: LayoutOptions,
+  explicitlySet: boolean,
+): ParagraphFormat {
+  if (!options.autoHangingIndent || explicitlySet) return format;
+  const marker = listNumberMarker(text);
+  if (!marker) return format;
+  const markerWidth = template.paperProfile
+    ? Math.round(originalPaperMeasure(template)(marker) / (template.fontSizePt / 2))
+    : displayWidth(marker, format.tabSize);
+  return { ...format, hangingIndent: format.firstLineIndent + markerWidth };
+}
+
 function mergeHeadingStyle(template: AnswerTemplate, section: AnswerSection): HeadingStyle {
   return headingStyleSchema.parse({
     ...DEFAULT_HEADING_STYLE,
@@ -194,14 +218,15 @@ function wrapParagraph(
   let lineIndex = 0;
   let offset = 0;
 
-  while (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0) >= columns) {
-    throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、leftIndent 或 rightIndent。");
+  if (format.leftIndent + format.rightIndent + format.firstLineIndent >= columns
+    || format.leftIndent + format.rightIndent + format.hangingIndent >= columns) {
+    throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、hangingIndent、leftIndent 或 rightIndent。");
   }
 
   for (const character of splitGraphemes(paragraph)) {
     offset += character.length;
     while (true) {
-      const lineIndent = format.leftIndent + (lineIndex === 0 ? format.firstLineIndent : 0);
+      const lineIndent = format.leftIndent + (lineIndex === 0 ? format.firstLineIndent : format.hangingIndent);
       const available = columns - lineIndent - format.rightIndent;
       const width = characterDisplayWidth(character, format.tabSize, lineIndent + currentWidth);
       if (current.length === 0 && width > available) {
@@ -216,7 +241,7 @@ function wrapParagraph(
       }
       const trailing = options.wholeLatinWords && /^[A-Za-z0-9]$/.test(character)
         ? current.match(/[A-Za-z0-9]+$/)?.[0] ?? "" : "";
-      const nextAvailable = columns - format.leftIndent - format.rightIndent;
+      const nextAvailable = columns - format.leftIndent - format.rightIndent - format.hangingIndent;
       const run = trailing ? trailing + character + (paragraph.slice(offset).match(/^[A-Za-z0-9]*/)?.[0] ?? "") : "";
       const carry = trailing && /\S/u.test(current.slice(0, -trailing.length))
         && displayWidth(run) <= nextAvailable ? trailing : "";
@@ -236,9 +261,9 @@ function wrapParagraph(
       if (!last) continue;
       const word = options.wholeLatinWords ? previous.match(/[A-Za-z0-9]+$/)?.[0] : undefined;
       const carry = word && /\S/u.test(previous.slice(0, -word.length))
-        && displayWidth(word + lines[index]) <= columns - format.leftIndent - format.rightIndent ? word : last;
+        && displayWidth(word + lines[index]) <= columns - format.leftIndent - format.rightIndent - format.hangingIndent ? word : last;
       if (!/\S/u.test(previous.slice(0, -carry.length))
-        || displayWidth(carry + lines[index]) > columns - format.leftIndent - format.rightIndent) continue;
+        || displayWidth(carry + lines[index]) > columns - format.leftIndent - format.rightIndent - format.hangingIndent) continue;
       lines[index - 1] = previous.slice(0, -carry.length);
       lines[index] = carry + lines[index];
     }
@@ -247,7 +272,7 @@ function wrapParagraph(
 }
 
 export function lineIndentColumns(line: LayoutLine): number {
-  return line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : 0);
+  return line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : line.format.hangingIndent);
 }
 
 function makeLine(
@@ -264,7 +289,7 @@ function makeLine(
   } = {},
 ): void {
   const globalLine = lines.length + 1;
-  const indent = format.leftIndent + (flags.isFirstLineOfParagraph ? format.firstLineIndent : 0);
+  const indent = format.leftIndent + (flags.isFirstLineOfParagraph ? format.firstLineIndent : format.hangingIndent);
   lines.push({
     globalLine,
     page: 0,
@@ -406,12 +431,17 @@ export function layoutSections(
     }
 
     sectionParagraphs(section).forEach((paragraph, index) => {
+      const format = mergeParagraphFormat(template, section, paragraph.format);
+      // 0 counts as unset: assistants echo resolved formats (hangingIndent 0) back on rewrites, which must not disable auto.
+      const explicitHangingIndent = Boolean(template.paragraphDefaults?.hangingIndent
+        || section.paragraphFormat?.hangingIndent
+        || paragraph.format?.hangingIndent);
       addParagraph(
         lines,
         section.id,
         section.sourceParagraphIndexes?.[index] ?? index + 1,
         paragraph.text,
-        mergeParagraphFormat(template, section, paragraph.format),
+        withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
         {},
         template,
         options,

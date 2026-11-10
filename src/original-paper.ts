@@ -25,6 +25,7 @@ export function originalPaperFontPath(): string {
   return fontPath;
 }
 export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
+type OriginalPaperFormat = Omit<ParagraphFormat, "hangingIndent"> & { hangingIndent?: number };
 let cachedFont: { path: string; mtimeMs: number; size: number; face: ReturnType<typeof fontkit.openSync> } | undefined;
 export function validateOriginalPaperFontFamily(familyName: string): void {
   if (familyName !== "TW-MOE-Std-Kai") throw new Error("165 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
@@ -54,13 +55,18 @@ export function originalPaperMeasure(template: AnswerTemplate): (value: string) 
     return glyphWidth + boundaries * template.fontSizePt / 4;
   };
 }
-export function originalPaperAvailableWidth(format: ParagraphFormat, template: AnswerTemplate, lineIndex = 1): number {
+export function originalPaperAvailableWidth(format: OriginalPaperFormat, template: AnswerTemplate, lineIndex = 1): number {
   // Leave 2pt reserve for Word shaping/rounding; do not rewrite or drop characters.
-  return 496 - 130.32 - 2 - (format.leftIndent + format.rightIndent + (lineIndex === 0 ? format.firstLineIndent : 0)) * template.fontSizePt / 2;
+  return 496 - 130.32 - 2 - (format.leftIndent + format.rightIndent
+    + (lineIndex === 0 ? format.firstLineIndent : format.hangingIndent ?? 0)) * template.fontSizePt / 2;
 }
-export function wrapOriginalPaper(text: string, format: ParagraphFormat, template: AnswerTemplate, options: LayoutOptions = {}): string[] {
+export function wrapOriginalPaper(text: string, format: OriginalPaperFormat, template: AnswerTemplate, options: LayoutOptions = {}): string[] {
   validateOriginalPaper(template);
   if (format.bold || format.italic || format.alignment !== "left") throw new Error("165 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
+  if (format.leftIndent + format.rightIndent + format.firstLineIndent >= template.columns
+    || format.leftIndent + format.rightIndent + (format.hangingIndent ?? 0) >= template.columns) {
+    throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、hangingIndent、leftIndent 或 rightIndent。");
+  }
   const face = font();
   const measure = originalPaperMeasure(template);
   const lines: string[] = [];
@@ -134,7 +140,8 @@ export function originalPaperPreview(template: AnswerTemplate, report: import('.
     const defined = new Map<number, string>();
     const groups = report.lines.filter(l => l.page === index+1 && l.text && !l.isSpacer).map(line => {
       const row = originalPaper.rows[line.lineOnPage-1];
-      let pen = 130.32 + (line.format.leftIndent + (line.isFirstLineOfParagraph ? line.format.firstLineIndent : 0)) * template.fontSizePt / 2;
+      let pen = 130.32 + (line.format.leftIndent + (line.isFirstLineOfParagraph
+        ? line.format.firstLineIndent : line.format.hangingIndent)) * template.fontSizePt / 2;
       const run = face.layout(line.text);
       const uses = run.glyphs.map((glyph: {id: number; path: {commands: PathCommand[]}}, i: number) => {
         const position = run.positions[i];

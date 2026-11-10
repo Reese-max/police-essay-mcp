@@ -34,6 +34,8 @@ export const REVIEW_INSTRUCTION = "使用者要求確認或審核答案內容時
 export const EDIT_INSTRUCTION = [
   "依任務選流程：新建多題先 start_exam，保留 examId 供建立、進度、總覽及合輯匯出使用；續做或前次中斷先 get_exam_progress（不知 examId 時省略），依 nextStep 接續，只回報 summary 一次，不重做已完成題目、不逐步旁白。既有答案沿用已知 answerId；未知才 list_answers 一次。",
   "完整草稿入紙保留全部節、標題、順序與原文。要求依內容比例配置行數目標時，容量未知先 load_exam_paper，已有適用模板不先 list_templates。總預算依使用者明訂行數，未指定則用該題整份答題紙容量，僅扣除引擎確認不屬各節的固定占行。依各節文字量與論點份量分配含標題及段距的正整數目標，依餘數補齊取整差額，合計等於可分配預算。目標是作答額度，不是短稿目前使用行數；不為達標擴寫、加空白或改動原稿。",
+  "自行撰寫答案時先估篇幅：165 原稿紙兩頁 44 行實測約 650–700 字（含標題、縮排與懸掛），初稿控制在此範圍；建立後若超頁就精簡到 fits 再回報，原稿保留限制只適用使用者提供的草稿，不因自己寫的論點而停在超頁。",
+  "自行撰寫答案時分層成節：每個大點（壹、或一、）各成一節，編號與標題放 heading，不寫成段落文字；其下小點（一）、1. 各自成段，不把多個編號項併在同一段；同層用同一編號家族並連號，逐層往下（壹、→一、→（一）→1.→（1）），不跳層。新答案編號段續行由引擎自動懸掛對齊內文，勿自行設定 hangingIndent，layoutOptions 保留預設勿關閉；懸掛比頂格多佔行，配置與壓縮時預留。check_layout notes 列出「結構提醒」時，依提示就地修正（replace_text／write_answer／update_answer_info）並再查，不改動實質內容。",
   "單題用 create_answer 一次帶明確 id 的 sections、匹配的 lineTargets 及已知 exam、questionNo，不臆造缺少的資訊；lineTargets.sectionId 必須等於 section id，目標在版本 1 儲存，不另加設目標的寫入。多題用 create_answers(examId)，每批 1–10 題，全部驗證才開始儲存，每題不同 idempotencyKey。重試使用相同 key 與完全相同請求，重送回傳目前版本，不同請求會拒絕；部分失敗依錯誤列出的已建立項目接續，不重建。",
   "多題合版／匯出流程：start_exam → create_answers(examId) → 每題 check_layout → 只修超頁題 → 對修過的題目再 check_layout → 一次 render_exam_overview(examId) → 一次 export_exam_bundle(examId)。兩頁／容量／匯出任務每題都要實際呼叫 check_layout，包含短題或批次及 overview 已顯示 fits 的題目；建立、寫入、模板及 overview 摘要不能取代逐題檢查。未變更且已檢查的版本不重查。",
   "壓縮既有答案前，先掌握完整原文與目前版本：已有完整 sections 可沿用，只有摘要則 read_answer；寫入前先 check_layout，確認實際超出行數及 compressionHints。記下原有節 id、標題、順序、段內編號小節、各節獨立論點及使用者指定重點，作為保留清單。不能沒讀原文就判斷內容重複。",
@@ -47,10 +49,10 @@ export const EDIT_INSTRUCTION = [
   "匯出成功只代表檔案產出；get_exam_progress 的 done 保留為匯出流程終點，delivery.status=awaiting_review 表示內容、來源與逐頁視覺驗收待完成，不可稱成品已驗收或因此重複匯出。",
   "TXT 的 textMode 預設 paper；paragraphs 去除視覺換行、保留編號並以 _段落.txt 命名；pages 仍計算稿紙頁數。合輯隨任一成員答案刪除；handle 建立失敗會回收先前 handle，回收失敗會列出遺留 handle。",
   "既有答案各節目標用 set_line_targets；改目標不增加文字、不消除超頁，初始目標優先在建立時帶入。update_answer_info 修改考試／題號等資訊；duplicate_answer 複製試寫，不為編輯原答案而複製。list_revisions 查歷史，restore_revision 另存新版本還原。",
-  "只有使用者明確要求永久刪除才用 delete_answer，並帶目前 expectedVersion。「這題不要了／取消／刪掉」等未明言永久的說法不算授權，先停止處理並保留答案；若意圖刪除，先口頭確認要刪的答案，說明會連同修訂、匯出檔案及包含它的合輯一併移除且不可復原，確認後才呼叫；只是不想作答則保留答案、不寫入。",
+  "只有使用者明確要求永久刪除才用 delete_answer，並帶目前 expectedVersion 與 userRequest（使用者要求刪除的原話）；不為重寫或壓縮而刪除重建。「這題不要了／取消／刪掉」等未明言永久的說法不算授權，先停止處理並保留答案；若意圖刪除，先口頭確認要刪的答案，說明會連同修訂、匯出檔案及包含它的合輯一併移除且不可復原，確認後才呼叫；只是不想作答則保留答案、不寫入。",
 ].join("\n");
 
-export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；須配置已校驗教育部標準楷書，字型缺少時明確失敗。只有使用者明確指定其他紙張才傳 templateId，紙張在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
+export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；字型由伺服器配置，缺少時工具會直接回錯；不必也無法自行確認，照常建立答案。只有使用者明確指定其他紙張才傳 templateId，紙張在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
 
 export const WORKFLOW_RESOURCE_LINES = [
   "# 申論答題紙工作流程",

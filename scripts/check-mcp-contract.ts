@@ -22,13 +22,13 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "owner.tools[export_exam_bundle]",
   reason: "New essay.export tool combines ordered, version-pinned answers into PDF and Word, with page ranges and layout warnings." },
 { path: "owner.tools[create_answer,write_answer,replace_text,format_section,insert_text,delete_text,render_answer_sheet].inputSchema.responseDetail;owner.tools[create_answer].inputSchema.exam,questionNo,lineTargets,idempotencyKey,layoutOptions",
-  reason: "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison." },
+  reason: "Declared optional input additions: compact write/render responses default to summary with full opt-in; create records exam, question number, line targets and per-answer layout options in version 1, with retry-safe idempotencyKey. Strip exactly these optional properties before base comparison. Paragraph and heading format objects also gain optional hangingIndent (continuation-line indent beside firstLineIndent); strip only that key." },
 { path: "oauth.tools[*]._meta.securitySchemes",
   reason: "Base has no OAuth support; preserve Round B OAuth scope declarations. All other fields must equal base." },
 { path: "*.tools[*].outputSchema",
   reason: "Write tools share a minimal loose answer/layout schema without changing structuredContent; output schemas must stay structural subsets of the base." },
 { path: "owner.tools[delete_answer]",
-  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports." },
+  reason: "New owner-only destructive tool (essay.write) removing an answer with its revisions and exports; requires the user's quoted deletion request (userRequest)." },
 { path: "owner.tools[delete_exam];*.tools[get_exam_progress].structuredContent.version",
   reason: "Owner-only essay.write deletion requires the current plan version and no existing linked answers; progress exposes that version and remaining artifacts expire via lifecycle." },
 { path: "*.tools[edit_text,list_revisions,preview_change,restore_revision]",
@@ -187,10 +187,24 @@ export function withBaseTemplateDefault<T extends { tools: ContractTool[] }>(vie
       templateId: { ...properties.templateId, default: "police_information_essay" } } } };
   }) };
 }
+/** Optional hangingIndent added beside firstLineIndent in every paragraph/heading format object; strip only that key. */
+function withoutHangingIndent(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(withoutHangingIndent);
+  if (!schema || typeof schema !== "object") return schema;
+  const node = Object.fromEntries(Object.entries(schema).map(([key, value]) => [key, withoutHangingIndent(value)])) as JsonSchema;
+  const properties = node.properties as JsonSchema | undefined;
+  if (properties && Object.hasOwn(properties, "hangingIndent") && Object.hasOwn(properties, "firstLineIndent")) {
+    assert.ok(!((node.required ?? []) as string[]).includes("hangingIndent"), "hangingIndent must be optional");
+    const { hangingIndent: _added, ...rest } = properties;
+    return { ...node, properties: rest };
+  }
+  return node;
+}
 /** Remove only declared optional additions; every remaining base input stays strictly compared. */
 export function withoutAddedInputs<T extends { tools: ContractTool[] }>(view: T): T {
   const writeTools = ["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "render_answer_sheet"];
-  return { ...view, tools: view.tools.map(tool => {
+  return { ...view, tools: view.tools.map(original => {
+    const tool = { ...original, inputSchema: withoutHangingIndent(original.inputSchema) as JsonSchema };
     if (!writeTools.includes(tool.name)) return tool;
     const input = tool.inputSchema as JsonSchema;
     const properties = { ...input.properties as JsonSchema };
@@ -317,7 +331,7 @@ export async function checkMcpContract() {
     annotations: Record<string, boolean>; inputSchema: { required: string[] };
   };
   assert.deepEqual(deleteAnswer.annotations, { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false });
-  assert.deepEqual([...deleteAnswer.inputSchema.required].sort(), ["answerId", "expectedVersion"]);
+  assert.deepEqual([...deleteAnswer.inputSchema.required].sort(), ["answerId", "expectedVersion", "userRequest"]);
   assert.ok(!current.reader.tools.some(tool => tool.name === "delete_answer"));
   const deleteExam = current.owner.tools.find(tool => tool.name === "delete_exam")!;
   assert.deepEqual(deleteExam.annotations, deleteAnswer.annotations);

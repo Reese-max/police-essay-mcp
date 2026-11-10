@@ -150,6 +150,10 @@ test("preview_change explains arguments that do not fit the previewed tool and s
     assert.equal(result.isError, true);
     assert.match(text(result), /write_answer 的參數不正確：sections/);
 
+    // MiniMax wraps untyped arrays as {"item": [...]}; the loose preview schema unwraps them.
+    result = await preview({ operation: "write_answer", sections: { item: [{ id: "body", paragraphs: { item: [{ text: "改寫。" }] } }] } });
+    assert.equal(result.isError, undefined, text(result));
+
     result = await preview({ operation: "format_section", sectionId: "body", paragraphFormat: { leftIndent: -1 } });
     assert.equal(result.isError, true);
     assert.match(text(result), /format_section 的參數不正確：paragraphFormat/);

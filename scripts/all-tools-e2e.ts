@@ -113,12 +113,12 @@ try{
         await verifyExports(probe,['pdf'],['合成中文字斜體測試。'],{base,headers:{},readResource:a=>client.readResource(a),save:async(f,b)=>{await fs.writeFile(path.join(root,`italic-probe.${f}`),b);}});
         log.exportUris.push(...probe.files.map((f:any)=>f.exportUri));
     }finally{if(priorItalic===undefined)delete process.env.ESSAY_MCP_PDF_ITALIC_FONT;else process.env.ESSAY_MCP_PDF_ITALIC_FONT=priorItalic;}
-    await change('delete_answer',copy.answer.id,{});
+    await change('delete_answer',copy.answer.id,{userRequest:'請永久刪除這題答案'});
 }catch(e){failure=e;log.failure=String(e);}
 finally{
     // This store is freshly created by this process and never receives external inputs.
     try{
-        for(const a of await store.listAnswers()){assert.ok(a.title.startsWith(marker));await call('delete_answer',{answerId:a.id,expectedVersion:a.version});}
+        for(const a of await store.listAnswers()){assert.ok(a.title.startsWith(marker));await call('delete_answer',{answerId:a.id,expectedVersion:a.version,userRequest:'請永久刪除這題答案'});}
         for(const p of await store.listExams()){assert.equal(p.title,marker);await reject('delete_exam',{examId:p.id,expectedVersion:p.version+100},'version_conflict');await call('delete_exam',{examId:p.id,expectedVersion:p.version});}
         assert.equal((await store.listAnswers()).length,0);assert.equal((await store.listExams()).length,0);log.cleanup='passed';
         log.exportCleanup=[];

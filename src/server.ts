@@ -1,3 +1,4 @@
+import { layoutQualityNotes } from "./layout-quality.js";
 import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRUCTIONS, WORKFLOW_RESOURCE_LINES } from "./agent-guidance.js";
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
 import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
@@ -86,7 +87,7 @@ const replacementContentSchema = z.object({
   if (input.newText === undefined && (input.paragraphs?.length ?? 0) === 0) {
     context.addIssue({ code: "custom", path: ["newText"], message: "必須提供 newText，或提供至少一個 paragraphs 項目。" });
   }
-  if (input.newText !== undefined && input.paragraphs !== undefined) {
+  if (input.newText && input.paragraphs?.length) {
     const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
     const normalize = (value: string) => value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
     if (normalize(input.newText) !== normalize(paragraphText)) {
@@ -115,7 +116,7 @@ const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
 const createFields = {
-  examId: examIdSchema.optional(),
+  examId: examIdSchema.optional().describe("A value returned by start_exam or get_exam_progress, copied exactly; never invent one."),
   layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
   templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
@@ -177,7 +178,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   if ((input as CreateRequest).templateId === undefined && request.idempotencyKey) {
     let savedId = request.examId ? undefined : `ans_idem-${sha256(request.idempotencyKey).slice(0, 40)}`;
     if (request.examId && keyHash) {
-      const plan = await store.getExam(request.examId);
+      const plan = await requestedExam(store, request.examId);
       const entry = plan.createRequests?.[keyHash];
       savedId = entry && plan.questions.find(q => q.questionNo === entry.questionNo)?.answerId;
     }
@@ -207,7 +208,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
       throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求；請換新的 key 或 read_answer 取回既有答案。");
   }
   if (request.examId) {
-    const plan = await store.getExam(request.examId);
+    const plan = await requestedExam(store, request.examId);
     if (keyHash && plan.createRequests?.[keyHash]) request.questionNo ??= plan.createRequests[keyHash].questionNo;
     request.questionNo ??= defaultQuestionNo;
     const ordered = [...plan.questions].sort((a, b) => a.questionNo - b.questionNo);
@@ -235,7 +236,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   let answer: AnswerDocument;
   try {
     answer = { ...createAnswerDocument({ templateId, title, question, sections }), exam, questionNo,
-      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true,
+      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true,
         ...(template.paperProfile ? { compactPaper: true } : {}), ...layoutOptions },
       ...(lineTargets ? { lineTargets: Object.fromEntries(lineTargets.map(({ sectionId, lines }) => [sectionId, lines])) } : {}) };
     const targetIds = new Set<string>();
@@ -265,6 +266,20 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   return { current, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash };
 }
 
+/** A caller-supplied examId that does not exist: assistants invent one when they call start_exam and create in the same turn. */
+// The requested id never appears in the message: foreign and unknown ids must stay indistinguishable.
+async function requestedExam(store: EssayStore, examId: string): Promise<ExamPlan> {
+  try { return await store.getExam(examId); }
+  catch (error) {
+    if (!isStoreNotFound(error)) throw error;
+    // Listing the caller's own recent exams helps exact copying (a model dropped one hex digit) and is the
+    // same for foreign and unknown ids, so it reveals nothing about other owners.
+    const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
+    // Pointing at start_exam works even where the client forces every field (strict tool schemas); "omit it" does not.
+    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值：先呼叫 start_exam 取得後逐字帶入，不可自行命名`
+      + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
+  }
+}
 async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const plan = await store.getExam(examId);
@@ -546,6 +561,18 @@ function previewArguments<Schema extends z.ZodObject>(operation: PreviewOperatio
 }
 
 /** The sections the previewed write tool would save. */
+/**
+ * preview_change's schema is loose, so some models (MiniMax) wrap arrays they cannot type as {"item": [...]}.
+ * No tool argument is legitimately an object whose only key is "item", so unwrapping is unambiguous.
+ */
+export function unwrapItemArrays(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(unwrapItemArrays);
+  if (!value || typeof value !== "object") return value;
+  const entries = Object.entries(value);
+  if (entries.length === 1 && entries[0][0] === "item" && Array.isArray(entries[0][1])) return unwrapItemArrays(entries[0][1]);
+  return Object.fromEntries(entries.map(([key, inner]) => [key, unwrapItemArrays(inner)]));
+}
+
 function previewedSections(answer: AnswerDocument, operation: PreviewOperation, args: Record<string, unknown>): { sections: AnswerSection[]; notes: string[] } {
   if (operation === "renumber_items") {
     const { sections, skipped } = renumberItems(answer.sections, previewArguments(operation, previewArgumentSchemas.renumber_items, args).sectionId);
@@ -753,12 +780,18 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
     async ({ templateId, answerId }) => {
       z.string().optional().parse(templateId);
-      const answer = answerId ? await store.getAnswer(answerId) : undefined;
+      // Assistants routinely invent an answerId for a not-yet-created answer; serve the paper instead of failing the turn.
+      let missing = false;
+      const answer = answerId ? await store.getAnswer(answerId).catch((error: unknown) => {
+        if (isStoreNotFound(error)) { missing = true; return undefined; }
+        throw error;
+      }) : undefined;
       const template = await store.getTemplate(templateId ?? answer?.templateId ?? DEFAULT_TEMPLATE_ID);
-      if (!answerId) {
+      if (!answerId || missing) {
         return {
           structuredContent: { template, writingGuide: writingGuide() },
-          content: textContent(`已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
+          content: textContent((missing ? `找不到答案 ${answerId}，改為只載入稿紙；新答案用 create_answer 建立，不必先帶 answerId。` : "")
+            + `已載入「${template.name}」：${template.pages}頁、每頁${template.linesPerPage}行、總容量${template.pages * template.linesPerPage}行。` + WRITING_GUIDE_HINT),
         };
       }
       if (!answer) throw new Error("Answer not found");
@@ -812,7 +845,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       try { await store.saveExam(plan); } catch (error) { if (!await replay()) throw error; replayed = true; }
     }
     const progress = await examProgress(store, id);
-    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(progress.summary) };
+    // Assistants that read only the text invented their own examId; state the real one there too.
+    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}`) };
   });
   registerTool("get_exam_progress", {
     title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
@@ -915,7 +949,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           let defaultQuestionNo: number | undefined;
           if (request?.examId) {
             const used = assigned.get(request.examId) ?? new Set<number>();
-            const plan = await store.getExam(request.examId);
+            const plan = await requestedExam(store, request.examId);
             defaultQuestionNo = request.questionNo ?? (request.idempotencyKey ? plan.createRequests?.[sha256(request.idempotencyKey)]?.questionNo : undefined)
               ?? [...plan.questions].sort((a,b) => a.questionNo - b.questionNo).find(q => !q.answerId && !used.has(q.questionNo))?.questionNo;
             const item = await prepareCreate(store, request, defaultQuestionNo);
@@ -1150,7 +1184,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ answerId, operation, expectedVersion, ...args }) => {
       const before = await loadSnapshot(store, answerId);
       assertExpectedVersion(before.answer, expectedVersion);
-      const { sections, notes } = previewedSections(before.answer, operation, args);
+      const { sections, notes } = previewedSections(before.answer, operation, unwrapItemArrays(args) as Record<string, unknown>);
       const preview = await makeChangePreview(store, operation, before, hypotheticalAnswer(before.answer, sections));
       preview.summary.push(...notes);
       return { structuredContent: preview, content: textContent(preview.summary.join("；")) };
@@ -1267,7 +1301,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     outputSchema: z.object({ answerId: answerIdSchema, version: z.number().int().positive(), summary: z.string() }).loose(),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
   }, async ({ answerId, expectedVersion, plan: inputPlan }) => {
-    const plan = inputPlan === null ? null : reviewPlanSchema.parse(inputPlan);
+    const plan = inputPlan === null ? null : reviewPlanSchema.parse(unwrapItemArrays(inputPlan)); // plan is untyped in tools/list, like preview_change
     const before = await loadSnapshot(store, answerId);
     assertExpectedVersion(before.answer, expectedVersion);
     for (const r of plan?.requirements ?? []) for (const id of r.sectionIds) findSection(before.answer, id);
@@ -1442,6 +1476,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       inputSchema: {
         answerId: answerIdSchema,
         expectedVersion: z.number().int().positive(),
+        userRequest: z.string().min(1).max(500).describe("The user's own words in this conversation that ask to delete this answer, quoted verbatim. Never call delete_answer on your own initiative (e.g. to restart a draft); edit instead."),
       },
       outputSchema: z.object({
         answerId: answerIdSchema,
@@ -1456,7 +1491,13 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         "openai/toolInvocation/invoked": "答案已永久刪除。",
       },
     },
-    async ({ answerId, expectedVersion }) => {
+    async ({ answerId, expectedVersion, userRequest }) => {
+      // gpt-6-luna deleted an answer mid-compression without being asked; require the user's quoted request.
+      // luna also wrote 「（沒有明確永久刪除要求）」, which names deletion while denying it was asked.
+      if (!/刪|删|移除|清除|銷毀|丟掉|不要了|delete|remove|erase|discard/iu.test(userRequest)
+        || /沒有|並未|未經|未曾|無明確|不是|並非|no explicit|not (?:asked|requested)|didn't ask|did not ask/iu.test(userRequest)) {
+        throw new Error("DELETE_NOT_REQUESTED：userRequest 必須是使用者要求刪除此答案的原話；使用者沒有要求刪除時不要呼叫 delete_answer，改用 write_answer／replace_text 修改。");
+      }
       let deleted;
       try {
         deleted = await store.deleteAnswer(answerId, { expectedVersion });
@@ -1490,9 +1531,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ answerId }) => {
       const current = await loadSnapshot(store, answerId);
       const plan = planLines(current.answer, current.layout);
-      const warnings = layoutWarnings(current.layout, await store.getTemplate(current.answer.templateId));
-      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes: plan.notes, warnings };
-      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${plan.notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
+      const template = await store.getTemplate(current.answer.templateId);
+      const warnings = layoutWarnings(current.layout, template);
+      const notes = [...plan.notes, ...layoutQualityNotes(template, current.answer, current.layout)];
+      const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes, warnings };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
     },
   );
 
@@ -1530,8 +1573,14 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       _meta: ANSWER_SHEET_UI_META,
     },
     async ({ examId, answerIds, activeAnswerId, responseDetail }) => {
-      if (examId && answerIds) throw new Error("INVALID_INPUT：examId 與 answerIds 擇一。");
       const progress = examId ? await examProgress(store, examId) : undefined;
+      // Assistants often pass both; accept it when the answers belong to the exam instead of failing every time.
+      if (progress && answerIds) {
+        const members = new Set(progress.questions.flatMap(q => q.answerId ? [q.answerId] : []));
+        const foreign = answerIds.filter(id => !members.has(id));
+        if (foreign.length) throw new Error(`INVALID_INPUT：${foreign.join("、")} 不屬於考試 ${examId}；整份考試只傳 examId，或只傳 answerIds。`);
+        answerIds = undefined; // the exam's own list covers them; a subset would mislabel the other questions as missing
+      }
       answerIds ??= progress?.questions.flatMap(q => q.answerId ? [q.answerId] : []);
       if (!answerIds || (!examId && !answerIds.length)) throw new Error("INVALID_INPUT：請提供 examId 或 answerIds。");
       activeAnswerId ??= answerIds[0];

@@ -164,7 +164,7 @@ export class Scope {
                 assert.equal(answer.id, a.id);
                 assert.ok(answer.title === a.title || answer.title === a.title + '-renamed', 'cleanup ownership mismatch');
                 assert.ok(Number.isInteger(answer.version) && answer.version > 0);
-                success(await rpc('delete_answer', { answerId: a.id, expectedVersion: answer.version }), 'cleanup delete');
+                success(await rpc('delete_answer', { answerId: a.id, expectedVersion: answer.version, userRequest: "請永久刪除這題答案" }), 'cleanup delete');
                 assert.ok(absent(await rpc('read_answer', { answerId: a.id }), 'answer', a.id), 'answer still exists after cleanup');
             }
             catch (e) {
