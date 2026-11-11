@@ -91,3 +91,20 @@ test("review rv6: decimals, stacked 中標 and a closing-less last section", () 
   assert.doesNotMatch(notes([{ id: "s", heading: "(一)查處情形：", paragraphs: [{ text: "1.本案查扣共5公斤；1.5公斤為安非他命。" }] }]).notes, /多個編號項/);
   assert.match(notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙重起。" }] }]).notes, /編號又從頭起算/);
 });
+
+test("a far-over answer gets per-section line targets; a small overflow does not", async () => {
+  const { summarizeLayout } = await import("../src/layout.js");
+  const long = (id: string, n: number) => ({ id, heading: "(一)標題：", text: "甲".repeat(n) });
+  const far = createAnswerDocument({ templateId: standard.id, title: "far", sections: [long("a", 700), long("b", 700)] });
+  const report = layoutSections(standard, far.sections, neat);
+  const text = summarizeLayout(report);
+  assert.ok(report.overflowLines >= 5);
+  const targets = [...text.matchAll(/(\S+) (\d+)→(\d+) 行/gu)].map((m) => Number(m[3]));
+  assert.equal(targets.length, 2, text);
+  assert.ok(targets.reduce((a, b) => a + b, 0) <= report.capacity, text);
+  let small = report;
+  for (let n = 400; n < 2000 && !(small.overflowLines > 0 && small.overflowLines < 5); n += 5)
+    small = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "near", sections: [long("a", n)] }).sections, neat);
+  assert.ok(small.overflowLines > 0 && small.overflowLines < 5);
+  assert.doesNotMatch(summarizeLayout(small), /超出較多/);
+});
