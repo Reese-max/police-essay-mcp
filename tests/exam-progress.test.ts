@@ -60,7 +60,7 @@ for (const cloud of [false, true]) {
       assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
       // An invented examId on create says where the real one comes from.
       const invented = await call(c, "create_answer", { examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
-      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫；examId 必須是 start_exam 回傳的值/);
+      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫；examId 必須是 start_exam 回傳的值/); assert.match(text(invented), /單題直接重送 create_answer，examId 傳 null 或省略/);
       const own = data(await call(c, "start_exam", { title: "期中考", questions: [{ questionNo: 1 }] })).examId;
       const truncated = await call(c, "create_answer", { examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
       assert.match(text(truncated), new RegExp(`你目前的考試：${own}（期中考）`)); // a dropped digit can be corrected by copying

@@ -110,7 +110,7 @@ const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
 const createFields = {
-  examId: examIdSchema.optional().describe("A value returned by start_exam or get_exam_progress, copied exactly; never invent one."),
+  examId: examIdSchema.nullable().optional().describe("For a standalone single question use null or omit this field. Only link an existing exam with the exact ID returned by start_exam/get_exam_progress; never invent one."),
   layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
   templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
@@ -164,7 +164,7 @@ async function createReplay(store: EssayStore, answer: AnswerDocument): Promise<
 async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionNo?: number): Promise<PreparedCreate> {
   const parsed = createRequestSchema.safeParse(input);
   if (!parsed.success) throw new CreateError("INVALID_INPUT", parsed.error.issues.map(issue => `${issue.path.join(".") || "輸入"}：${issue.message}`).join("；"));
-  const request = parsed.data;
+  const request = { ...parsed.data, examId: parsed.data.examId ?? undefined };
   const keyHash = request.examId && request.idempotencyKey ? sha256(request.idempotencyKey) : undefined;
   let savedCreate: AnswerDocument | undefined;
   // An omitted template on a retry follows the saved answer, even if the default changed.
@@ -270,7 +270,7 @@ async function requestedExam(store: EssayStore, examId: string): Promise<ExamPla
     // same for foreign and unknown ids, so it reveals nothing about other owners.
     const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
     // Pointing at start_exam works even where the client forces every field (strict tool schemas); "omit it" does not.
-    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值：先呼叫 start_exam 取得後逐字帶入，不可自行命名`
+    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值。單題直接重送 create_answer，examId 傳 null 或省略，不用 start_exam。只有多題建立計畫才先呼叫 start_exam 取得後逐字帶入，不可自行命名`
       + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
   }
 }
