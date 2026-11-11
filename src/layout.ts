@@ -429,8 +429,11 @@ export function layoutSections(
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
+  const ordered = [...sections].sort((a, b) => a.order - b.order);
+  // Neat format: only the opening and closing sections are lead/closing prose; headless text between them is body.
+  const edgeIds = new Set([ordered[0]?.id, ordered.at(-1)?.id]);
 
-  for (const storedSection of [...sections].sort((a, b) => a.order - b.order)) {
+  for (const storedSection of ordered) {
     const section = compactPaperSection(template, storedSection, options);
     if (section.omitEmptySection) {
       sectionLineCounts.set(section.id, 0);
@@ -469,7 +472,7 @@ export function layoutSections(
         paragraph.text,
         neat && !hasExplicitIndent(paragraph.format)
           ? withNeatIndent(paragraph.text, format, template, listNumberMarker(paragraph.text) ? "numbered"
-            : section.heading || numberedSeen ? "body" : "lead")
+            : section.heading || numberedSeen || !edgeIds.has(section.id) ? "body" : "lead")
           : withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
         {},
         template,

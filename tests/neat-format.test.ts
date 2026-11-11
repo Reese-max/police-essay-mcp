@@ -57,3 +57,15 @@ test("book-format notes: label headings, 壹、 and more than three levels", () 
   assert.equal(book.quality.bookFormatIssues, 0); assert.doesNotMatch(book.notes, /格式提醒/);
   assert.equal(notes([{ id: "a", heading: "壹、前言", text: "內容。" }], {}).quality.bookFormatIssues, 0, "older answers are not held to the books");
 });
+
+test("review rv5: independent book notes, headless middle text is body, full-width brackets", () => {
+  const both = notes([{ id: "s", heading: "壹、法規依據：", paragraphs: [{ text: "一、點" }, { text: "(一)項" }, { text: "1.目" }, { text: "(1)細目" }] }]);
+  assert.match(both.notes, /不用「壹、」/); assert.match(both.notes, /用了 5 層/);
+  const answer = createAnswerDocument({ templateId: standard.id, title: "mid", sections: [{ id: "intro", text: "前言。" },
+    { id: "s1", heading: "(一)甲：", text: "乙。" }, { id: "mid", text: "丙".repeat(40) }, { id: "end", text: "綜上所述。" }] });
+  const mid = layoutSections(standard, answer.sections, neat).lines.filter(line => line.sectionId === "mid");
+  assert.ok(mid.length > 1 && mid.every(line => start(line) === 4), "headless text between body sections stays on the text line");
+  assert.match(notes([{ id: "s", heading: "（一）甲：", text: "乙。" }]).notes, /半形/);
+  const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }] }, { id: "end", text: "綜上所述。" }]);
+  assert.equal(book.notes, "", "the book skeleton draws no structural or format note");
+});

@@ -274,7 +274,9 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     if (labels.length) bookNotes.push(`格式提醒：${labels.map(section => `「${section.heading!.trim()}」`).join("、")}是功能標籤；前言、結語不下標題，請移除該節 heading（null），內文保留，引擎會首行空兩格。`);
     const levels = new Set(hierarchyItems.map(item => item.numbering.level));
     if (levels.has(1)) bookNotes.push("格式提醒：答案內標號從 (一) 起算（題號已在題號欄），不用「壹、」；請改為 (一)→1.→(1)，只改編號不改內容。");
-    else if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
+    if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
+    // Full-width brackets are wider than the two cells left of the text line, so their text cannot align there.
+    if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」「(1)」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
   }
   const quality: LayoutQuality = {
     fill,
