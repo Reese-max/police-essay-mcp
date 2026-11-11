@@ -1,4 +1,4 @@
-import { replaceSectionContent, type AnswerParagraph, type AnswerSection } from "./domain.js";
+import { NoChangesError, replaceSectionContent, type AnswerParagraph, type AnswerSection } from "./domain.js";
 
 const FORMAL_DIGITS = ["", "壹", "貳", "參", "肆", "伍", "陸", "柒", "捌", "玖"];
 const CHINESE_DIGITS = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
@@ -95,7 +95,7 @@ export function renumberItems(sections: AnswerSection[], sectionId?: string): { 
     });
   });
   if (renumbered === 0) {
-    throw new Error("編號已經是連續的，沒有需要重新編號的項目。" + (skipped.length ? `未計入（開頭的數字像是內文）：${skipped.join("、")}。` : ""));
+    throw new NoChangesError("編號已經是連續的，沒有需要重新編號的項目。" + (skipped.length ? `未計入（開頭的數字像是內文）：${skipped.join("、")}。` : ""));
   }
   return { sections: updated, renumbered, skipped };
 }

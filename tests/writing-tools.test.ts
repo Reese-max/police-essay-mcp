@@ -34,6 +34,65 @@ async function withClient(run: (client: Client, store: FileStore) => Promise<voi
 const text = (result: Awaited<ReturnType<Client["callTool"]>>) => (result.content as Array<{ text: string }>)[0].text;
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 
+test("tool recovery: no-op writes preserve revisions and stale versions still fail", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([{ id: "body", heading: "一、內容", text: "1.內容。" }]);
+    answer.lineTargets = { body: 3 };
+    await store.saveAnswer(answer);
+    for (const [name, args] of [
+      ["update_answer_info", { title: answer.title }],
+      ["set_line_targets", { targets: [{ sectionId: "body", lines: 3 }] }],
+      ["edit_text", { edits: [{ find: "內容。", replace: "內容。" }] }],
+      ["renumber_items", {}],
+    ] as const) {
+      const result = await client.callTool({ name, arguments: { answerId: answer.id, expectedVersion: 1, ...args } });
+      assert.equal(result.isError, undefined, text(result));
+      assert.match(text(result), /沒有需要儲存的變更/);
+      assert.deepEqual(await store.getAnswer(answer.id), plain(answer));
+      assert.equal((await store.listRevisions(answer.id, { limit: 10 })).length, 1);
+      const stale = await client.callTool({ name, arguments: { answerId: answer.id, expectedVersion: 2, ...args } });
+      assert.equal(stale.isError, true);
+      assert.match(text(stale), /Version conflict/);
+    }
+  });
+});
+
+test("tool recovery: create, batch and replace prefer paragraphs; conflicts return continuation IDs", async () => {
+  await withClient(async (client, store) => {
+    const args = { templateId: "police_information_essay", title: "容錯", idempotencyKey: "recovery-single",
+      sections: [{ id: "body", text: "過時文字", paragraphs: [{ text: "正確內容。", format: { bold: true } }] }] };
+    const created = await client.callTool({ name: "create_answer", arguments: args });
+    assert.equal(created.isError, undefined, text(created));
+    const answer = (created.structuredContent as { answer: AnswerDocument }).answer;
+    assert.equal((await store.getAnswer(answer.id)).sections[0].text, "正確內容。");
+    const unchanged = await client.callTool({ name: "update_answer_info", arguments: { answerId: answer.id, title: args.title, responseDetail: "full" } });
+    assert.equal(unchanged.isError, undefined, text(unchanged));
+    assert.ok(!JSON.stringify(unchanged).includes("createRequestHash"));
+    const conflict = await client.callTool({ name: "create_answer", arguments: { ...args, title: "異動" } });
+    assert.equal(conflict.isError, true);
+    assert.ok(text(conflict).includes(answer.id));
+    const replaced = await client.callTool({ name: "replace_text", arguments: { answerId: answer.id, sectionId: "body", expectedVersion: 1,
+      newText: "過時替換", paragraphs: [{ text: "新內容。", format: { bold: true } }] } });
+    assert.equal(replaced.isError, undefined, text(replaced));
+    const section = (await store.getAnswer(answer.id)).sections[0];
+    assert.equal(section.text, "新內容。");
+    assert.equal(section.paragraphs![0].format?.bold, true);
+    const started = await client.callTool({ name: "start_exam", arguments: { title: "容錯", questions: [{ questionNo: 1 }], idempotencyKey: "recovery-exam" } });
+    assert.equal(started.isError, undefined, text(started));
+    const { examId } = started.structuredContent as { examId: string };
+    const batchArgs = { ...args, examId, idempotencyKey: "recovery-batch" };
+    const batch = await client.callTool({ name: "create_answers", arguments: { examId, answers: [batchArgs] } });
+    assert.equal(batch.isError, undefined, text(batch));
+    const saved = (await store.getExam(examId)).questions[0].answerId!;
+    assert.equal((await store.getAnswer(saved)).sections[0].text, "正確內容。");
+    const reused = await client.callTool({ name: "create_answers", arguments: { examId, answers: [{ ...batchArgs, title: "異動" }] } });
+    assert.equal(reused.isError, true);
+    assert.ok(text(reused).includes(saved), text(reused));
+    assert.ok(text(reused).includes(examId), text(reused));
+    assert.equal((await store.listAnswers()).length, 2);
+  });
+});
+
 test("renumberItems counts each level and restarts it under a higher-level item", () => {
   const answer = answerWith([
     { id: "a", heading: "貳、前言", text: "引言。" },
@@ -139,7 +198,7 @@ test("line targets drive check_layout's per-section report and survive later edi
     assert.equal(result.isError, undefined, text(result));
     assert.deepEqual((await store.getAnswer(answer.id)).lineTargets, { body: 2 });
     result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 4, targets: [{ sectionId: "body", lines: 2 }] } });
-    assert.equal(result.isError, true);
+    assert.equal(result.isError, undefined);
     assert.match(text(result), /沒有需要儲存的變更/);
     result = await client.callTool({ name: "set_line_targets", arguments: { answerId: answer.id, expectedVersion: 4, targets: [{ sectionId: "nope", lines: 2 }] } });
     assert.equal(result.isError, true);

@@ -10,7 +10,7 @@ import { isRetryableExportError, publicExportMessage } from "./export-errors.js"
 import { z } from "zod";
 import {
   answerDocumentSchema, examQuestionSchema, examFormatsSchema, type ExamPlan,
-  MAX_ANSWER_BYTES,
+  MAX_ANSWER_BYTES, NoChangesError,
   layoutOptionsSchema,
   answerParagraphSchema,
   answerSectionInputSchema,
@@ -87,13 +87,7 @@ const replacementContentSchema = z.object({
   if (input.newText === undefined && (input.paragraphs?.length ?? 0) === 0) {
     context.addIssue({ code: "custom", path: ["newText"], message: "必須提供 newText，或提供至少一個 paragraphs 項目。" });
   }
-  if (input.newText && input.paragraphs?.length) {
-    const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
-    const normalize = (value: string) => value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
-    if (normalize(input.newText) !== normalize(paragraphText)) {
-      context.addIssue({ code: "custom", path: ["paragraphs"], message: "newText 與 paragraphs 內容不一致。" });
-    }
-  }
+
 });
 
 const formattingPayloadSchema = z.object({
@@ -205,7 +199,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   const requestHash = keyHash ? sha256(canonicalJson({ ...(input as CreateRequest), templateId: request.templateId, sections: (input as CreateRequest).sections ?? [] })) : undefined;
   if (keyHash) for (const exam of await store.listExams()) {
     if (exam.createRequests?.[keyHash] && exam.createRequests[keyHash].requestHash !== requestHash)
-      throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求；請換新的 key 或 read_answer 取回既有答案。");
+      throw new CreateError("IDEMPOTENCY_KEY_REUSED", createContinuation(exam, keyHash));
   }
   if (request.examId) {
     const plan = await requestedExam(store, request.examId);
@@ -280,13 +274,20 @@ async function requestedExam(store: EssayStore, examId: string): Promise<ExamPla
       + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
   }
 }
+function createContinuation(plan: ExamPlan, keyHash: string): string {
+  const questionNo = plan.createRequests?.[keyHash]?.questionNo;
+  const answerId = plan.questions.find(q => q.questionNo === questionNo)?.answerId;
+  return `此 idempotencyKey 已用於不同的建立請求；examId=${plan.id}，questionNo=${questionNo}。`
+    + (answerId ? `既有 answerId=${answerId}；用 read_answer 讀取後接續編輯。` : `用 get_exam_progress(examId=${plan.id}) 接續尚未完成的建立。`)
+    + "要建立另一份答案請換新的 idempotencyKey。";
+}
 async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
   for (let attempt = 0; ; attempt++) {
     const plan = await store.getExam(examId);
     const question = plan.questions.find(q => q.questionNo === questionNo);
     if (!question) throw new CreateError("INVALID_INPUT", "questionNo 不在考試計畫中。");
     if (keyHash && plan.createRequests?.[keyHash] && plan.createRequests[keyHash].requestHash !== requestHash)
-      throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求。");
+      throw new CreateError("IDEMPOTENCY_KEY_REUSED", createContinuation(plan, keyHash));
     if (question.answerId === answer.id && (!keyHash || plan.createRequests?.[keyHash])) return;
     const updated = { ...plan, ...(keyHash ? { createRequests: { ...plan.createRequests, [keyHash]: { requestHash: requestHash!, questionNo: question.questionNo } } } : {}), updatedAt: new Date().toISOString(), questions: plan.questions.map(q => q === question ? { ...q, answerId: answer.id } : q) };
     try { await store.saveExam(updated, { expectedVersion: plan.version }); return; }
@@ -310,7 +311,7 @@ async function commitCreate(store: EssayStore, prepared: PreparedCreate): Promis
       const plan = await store.getExam(prepared.examId);
       const entry = plan.createRequests?.[prepared.keyHash];
       if (entry) {
-        if (entry.requestHash !== prepared.requestHash) throw new CreateError("IDEMPOTENCY_KEY_REUSED", "此 idempotencyKey 已用於不同的建立請求。");
+        if (entry.requestHash !== prepared.requestHash) throw new CreateError("IDEMPOTENCY_KEY_REUSED", createContinuation(plan, prepared.keyHash));
         break;
       }
       try {
@@ -655,6 +656,10 @@ function noAnswerFoundMessage(answerId: string): string {
  * downloadBaseUrl: public https origin of this server; export results then carry a direct download link
  * (served by the HTTP handler at /downloads/<handle>/<file name>).
  */
+function publicToolResult(result: unknown) {
+  return JSON.parse(JSON.stringify(result, (key, value) => ["createRequestHash", "createRequests"].includes(key) ? undefined : value));
+}
+
 export function createEssayMcpServer(store: EssayStore = new FileStore(),
   options: { readOnly?: boolean; scopes?: string[]; downloadBaseUrl?: string } = {}): McpServer {
   const server = new McpServer(
@@ -676,8 +681,18 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       try {
         const result = await (callback as (...args: unknown[]) => unknown)(...args);
         // Storage-only idempotency state must never leave a tool, including full previews and widget metadata.
-        return JSON.parse(JSON.stringify(result, (key, value) => ["createRequestHash", "createRequests"].includes(key) ? undefined : value));
+        return publicToolResult(result);
       } catch (error) {
+        if (error instanceof NoChangesError && ["update_answer_info", "set_line_targets", "edit_text", "renumber_items"].includes(name)) {
+          const input = args[0] as { answerId: string; expectedVersion?: number; responseDetail?: "summary" | "full" };
+          const current = await loadSnapshot(store, input.answerId);
+          assertExpectedVersion(current.answer, input.expectedVersion);
+          const plan = planLines(current.answer, current.layout);
+          return publicToolResult({ content: textContent(`沒有需要儲存的變更（版本 ${current.answer.version}，未寫入）。${error.message}`),
+            structuredContent: name === "set_line_targets"
+              ? { answerId: input.answerId, version: current.answer.version, sections: plan.sections, notes: plan.notes }
+              : writeResponse({ ...current, changes: [] }, input.responseDetail ?? "summary") });
+        }
         if (name !== "export_answer" && name !== "export_exam_bundle") throw error;
         const errors = error instanceof ExportFailure ? error.errors : [exportIssue("EXPORT_FAILED", error)];
         return { isError: true, structuredContent: { errors }, content: textContent(publicExportMessage(errorMessage(error))) };
@@ -846,7 +861,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     const replay = async () => {
       try {
         const plan = await store.getExam(id);
-        if (plan.createRequestHash !== hash) throw new Error("IDEMPOTENCY_KEY_REUSED：此 key 已用於不同的考試計畫。");
+        if (plan.createRequestHash !== hash) throw new Error(`IDEMPOTENCY_KEY_REUSED：此 key 已用於不同的考試計畫；既有 examId=${plan.id}，用 get_exam_progress 接續，另建計畫請換新的 key。`);
         return plan;
       } catch (error) { if (isStoreNotFound(error)) return; throw error; }
     };
@@ -1353,7 +1368,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       }
       const updated = hypotheticalAnswer({ ...before.answer, lineTargets }, before.answer.sections);
       const changes = describeTargetChanges(before.answer, updated);
-      if (changes.length === 0) throw new Error("目標行數與目前設定相同，沒有需要儲存的變更。");
+      if (changes.length === 0) throw new NoChangesError("目標行數與目前設定相同，沒有需要儲存的變更。");
       await store.saveAnswer(updated, { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
       const plan = planLines(current.answer, current.layout);
@@ -1927,7 +1942,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         layoutOptions: layoutOptions === undefined ? before.answer.layoutOptions : { ...before.answer.layoutOptions, ...layoutOptions },
         questionNo: pick(questionNo, before.answer.questionNo), question: pick(question, before.answer.question) }, before.answer.sections);
       const changes = describeInfoChanges(before.answer, updated);
-      if (changes.length === 0) throw new Error("答案資訊與目前相同，沒有需要儲存的變更。");
+      if (changes.length === 0) throw new NoChangesError("答案資訊與目前相同，沒有需要儲存的變更。");
       await store.saveAnswer(updated, { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
       return {

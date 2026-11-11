@@ -92,11 +92,10 @@ test("numbering starts at one for the first numbered heading", () => {
   assert.equal(report.lines.find((line) => line.isHeading && line.sectionId === "numbered")?.text, "壹、正式段落");
 });
 
-test("rejects conflicting text and paragraphs at the input boundary", () => {
-  assert.throws(
-    () => answerSectionInputSchema.parse({ text: "不同文字", paragraphs: [{ text: "段落文字" }] }),
-    /text 與 paragraphs 內容不一致/,
-  );
+test("paragraphs take precedence over duplicate text at the input boundary", () => {
+  const mixed = normalizeSection(answerSectionInputSchema.parse({ text: "不同文字", paragraphs: [{ text: "段落文字", format: { bold: true } }] }), 0);
+  assert.equal(mixed.text, "段落文字");
+  assert.equal(mixed.paragraphs![0].format?.bold, true);
   // gpt-6-luna sent text with an empty paragraphs array and gave up after repeated rejections.
   const withEmpty = normalizeSection(answerSectionInputSchema.parse({ id: "s", text: "甲\n乙", paragraphs: [] }), 0);
   assert.deepEqual(withEmpty.paragraphs?.map(paragraph => paragraph.text), ["甲", "乙"]);
