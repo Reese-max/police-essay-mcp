@@ -1,0 +1,18 @@
+{
+  "repo": "Reese-max/police-essay-mcp",
+  "issue": 48,
+  "base_sha": "bcd4b067bfee90bfd8bc8f705501f5a123e10710",
+  "red_proof": "Before changing production code or CI, node --import tsx --test tests/pdf-export-review.test.ts ran with ESSAY_MCP_PAPER_FONT pointing to the existing SHA-256-validated MOE 5.1 font: exit 1, 0 passed, 2 failed, 0 skipped. Failures were 'all matrix jobs need pdftotext before npm test' and '166 PDF extends to 500.47pt, beyond the 496pt writing boundary'. After the fixes, both regressions passed without changing their assertions.",
+  "test_command": "ESSAY_MCP_PAPER_FONT='C:/Users/Administrator/work/private-fonts/edukai-5.1_20251208.ttf' npm test && npm run check && npm run build && npm run test:render",
+  "test_exit": 0,
+  "tests_passed": 149,
+  "tests_failed": 0,
+  "summary": "Fixed original_166 PDF glyph advances while retaining per-column rendering for the grid template. Moved Poppler and CJK font installation before npm test in every CI matrix entry and documented pdftotext. The declared command passed under Git Bash: 149 passed, 0 failed, 2 skipped; typecheck, build, and two-page PDF rendering passed. Separately, scripts/verify-paper166.py passed on an actual 27-line, two-page PDF containing 39 i characters, mixed Chinese/ASCII, indentation, and page continuation; the rightmost text bound was 486.74pt, inside 496pt.",
+  "not_done": [
+    "Hosted GitHub Actions Node 20/22/24 jobs were not executed; the prerequisite ordering has a regression test and local validation used Node 26.7.0.",
+    "DOCX rendering was skipped because LibreOffice/DOCX_RENDERER is unavailable.",
+    "Two existing suite checks were skipped: real Firestore emulator (FIRESTORE_EMULATOR_HOST unset) and contract provenance (pinned-base checkout absent).",
+    "The validated original-paper font is supplied from an existing local path and is not committed. The evidence command requires that font path to remain available.",
+    "No push, merge, external messages, or changes to other branches were performed."
+  ]
+}

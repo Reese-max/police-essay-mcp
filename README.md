@@ -65,6 +65,8 @@ npm start
 
 ## 驗證
 
+PDF 文字完整性測試需要 `pdftotext`，請先安裝並加入 `PATH`；Ubuntu 可執行 `sudo apt-get install -y poppler-utils fonts-noto-cjk`。
+
 Python 原稿紙檢查腳本 `scripts/verify-paper165.py` 與相容入口 `scripts/verify-paper166.py` 需要 Python 3 與 PyMuPDF，先執行 `pip install pymupdf`。
 
 ```powershell
