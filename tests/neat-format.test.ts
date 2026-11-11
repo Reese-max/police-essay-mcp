@@ -107,7 +107,7 @@ test("a far-over answer gets a cut plan that reaches capacity; a small overflow 
   assert.ok(!far.cuts.has("core"), far.text);
   const removed = [...far.cuts.values()].reduce((n, [from, to]) => n + from - to, 0);
   assert.equal(removed, far.report.overflowLines + 1, "cuts cover the overflow plus a spare line");
-  assert.match(far.text, /各用一次 replace_text/);
+  assert.match(far.text, /各用一次 replace_text/); assert.match(far.text, /已在容量內就停止/);
   assert.doesNotMatch(summarizeLayout(far.report), /超出較多/, "edit replies do not re-plan mid-way");
   // rv8: a protected section with a higher compressible score still waits behind unprotected ones.
   const order = plan([long("core", 300, { required: true, priority: 3, compressible: 3 }), long("extra", 700, { required: false, priority: 1, compressible: 2 })]);

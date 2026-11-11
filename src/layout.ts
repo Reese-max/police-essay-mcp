@@ -620,7 +620,7 @@ function largeOverflowPlan(report: LayoutReport): string {
     need -= cut;
   }
   if (need > 0) return "超出較多：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。";
-  return `超出較多：不要逐句小改；對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點），全部改完再 check_layout：${cuts.join("、")}。`;
+  return `超出較多：不要逐句小改；依序對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點；段落有格式時用 paragraphs 帶回原 format）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
 }
 
 // Runtime validation remains at the domain boundary; these imports also make
