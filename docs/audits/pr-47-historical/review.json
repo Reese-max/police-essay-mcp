@@ -1,0 +1,14 @@
+{
+  "pr": 47,
+  "head": "2fee53c01b38c3a576a83fcb59d58904a614e807",
+  "findings": [
+    {
+      "severity": "med",
+      "file": "src/server.ts",
+      "line": 1010,
+      "issue": "restore_revision now persists historical lineTargets, but its changes array and text response still use only describeChanges, which ignores line targets. Restoring between revisions with identical sections returns only '版面沒有改變。' and omits the target removals/restorations explicitly required by issue #36. The new regression test checks stored targets but never checks this response."
+    }
+  ],
+  "fixed": true,
+  "summary": "Fixed one medium-severity acceptance gap: restore_revision now reports restored line-target differences in both structured and text change lists using the existing target-diff helper. Regression assertions cover target removal, restoration, and changed values; they failed before the fix and passed afterward. Local typecheck, full tests (139 passed, 0 failed, 9 optional skips), and build passed."
+}
