@@ -585,7 +585,7 @@ export function renderTextLine(line: LayoutLine, template: AnswerTemplate): stri
   return `${" ".repeat(indent)}${content}`;
 }
 
-/** `plan` adds the cut plan for a far-over answer; only fresh checks pass it, so edits do not re-plan mid-way. */
+/** Only fresh checks request a cut plan, so edits do not re-plan mid-way. */
 export function summarizeLayout(report: LayoutReport, plan = false): string {
   const pages = report.pageUsage
     .slice(0, report.pagesConfigured)
@@ -598,29 +598,39 @@ export function summarizeLayout(report: LayoutReport, plan = false): string {
   if (report.fits) {
     return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，尚餘 ${report.remainingLines} 行，狀態：OK。`;
   }
-  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${plan ? largeOverflowPlan(report) : ""}`;
+  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${plan ? overflowPlan(report) : ""}`;
 }
 
 // Evals: on a far-over draft, models shaved one sentence per replace_text and ran out of turns.
 // Cuts go to unprotected sections first, then compressionHints' order, and add one spare line
 // because a shorter section can push a following heading to the next page (keepHeadingWithNext).
 const LARGE_OVERFLOW_LINES = 5;
-function largeOverflowPlan(report: LayoutReport): string {
-  if (report.overflowLines < LARGE_OVERFLOW_LINES) return "";
-  let need = report.overflowLines + 1;
+function overflowPlan(report: LayoutReport): string {
+  const small = report.overflowLines < LARGE_OVERFLOW_LINES;
+  const label = small ? "小幅超出" : "超出較多";
+  let need = report.overflowLines + (small ? 0 : 1);
   const cuts: string[] = [];
-  const ordered = [...report.compressionHints].sort((a, b) => Number(a.protected) - Number(b.protected) || a.rank - b.rank);
+  const tails = new Map<string, LayoutLine>();
+  if (small) for (const line of report.lines) {
+    if (!line.isHeading && !line.isSpacer && !line.isPadding && line.isLastLineOfParagraph
+      && !line.isFirstLineOfParagraph && line.text.trim() && displayWidth(line.text.trim()) <= 4
+      && !tails.has(line.sectionId)) tails.set(line.sectionId, line);
+  }
+  const ordered = [...report.compressionHints].sort((a, b) => Number(a.protected) - Number(b.protected)
+    || Number(tails.has(b.sectionId)) - Number(tails.has(a.sectionId)) || a.rank - b.rank);
   for (const hint of ordered) {
     if (need <= 0) break;
     const floor = hint.heading ? 2 : 1; // shortcut: assumes a one-line heading; long headings or many paragraphs need more
     const share = hint.protected ? 0.3 : 0.5; // protected sections only tighten wording
     const cut = Math.min(need, Math.floor(hint.currentLines * share), Math.max(0, hint.currentLines - floor));
     if (cut <= 0) continue;
-    cuts.push(`${hint.sectionId} ${hint.currentLines}→${hint.currentLines - cut} 行`);
+    const tail = tails.get(hint.sectionId);
+    cuts.push(`${hint.sectionId} ${hint.currentLines}→${hint.currentLines - cut} 行${tail ? `（第${tail.paragraphIndex}段尾行「${tail.text}」，優先濃縮該段措辭以收回尾行）` : ""}`);
     need -= cut;
   }
-  if (need > 0) return "超出較多：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。";
-  return `超出較多：不要逐句小改；依序對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點；段落有格式時用 paragraphs 帶回原 format）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
+  if (need > 0) return `${label}：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。`;
+  if (small) return `${label}：依下列目標一次精簡需要變更的段落（字句用 edit_text；整段用 replace_text，其餘段落原文及 format 帶回；保留標題與各論點）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
+  return `${label}：不要逐句小改；依序對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點；段落有格式時用 paragraphs 帶回原 format）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
 }
 
 // Runtime validation remains at the domain boundary; these imports also make
