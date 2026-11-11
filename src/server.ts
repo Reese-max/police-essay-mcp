@@ -171,6 +171,13 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   const parsed = createRequestSchema.safeParse(input);
   if (!parsed.success) throw new CreateError("INVALID_INPUT", parsed.error.issues.map(issue => `${issue.path.join(".") || "輸入"}：${issue.message}`).join("；"));
   const request = parsed.data;
+  // An unknown examId (invented, mistyped, or another owner's) used to be a hard error that models retried
+  // in loops; saving as a single answer keeps the work. Foreign and unknown ids still behave identically.
+  let fallbackNote: string | undefined;
+  if (request.examId && !(await findExam(store, request.examId))) {
+    delete request.examId;
+    fallbackNote = `examId 不存在（不可自行命名或抄錯），已改存成單題答案、未歸入任何考試；答案已保存，不必重建。${await ownExamsHint(store)}`;
+  }
   const keyHash = request.examId && request.idempotencyKey ? sha256(request.idempotencyKey) : undefined;
   let savedCreate: AnswerDocument | undefined;
   // An omitted template on a retry follows the saved answer, even if the default changed.
@@ -263,7 +270,17 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
     try { return { current: await loadSnapshot(store, current.answer.id), replayed: true, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash }; }
     catch (error) { if (!isStoreNotFound(error)) throw error; }
   }
-  return { current, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash };
+  return { current, examId: request.examId, examQuestionNo: request.questionNo, keyHash, requestHash, ...(fallbackNote ? { message: fallbackNote } : {}) };
+}
+
+async function findExam(store: EssayStore, examId: string): Promise<ExamPlan | undefined> {
+  try { return await store.getExam(examId); }
+  catch (error) { if (isStoreNotFound(error)) return undefined; throw error; }
+}
+/** The caller's own recent exams: the same for foreign and unknown ids, so it reveals nothing about other owners. */
+async function ownExamsHint(store: EssayStore): Promise<string> {
+  const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
+  return own.length ? `你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "";
 }
 
 /** A caller-supplied examId that does not exist: assistants invent one when they call start_exam and create in the same turn. */
@@ -272,12 +289,9 @@ async function requestedExam(store: EssayStore, examId: string): Promise<ExamPla
   try { return await store.getExam(examId); }
   catch (error) {
     if (!isStoreNotFound(error)) throw error;
-    // Listing the caller's own recent exams helps exact copying (a model dropped one hex digit) and is the
-    // same for foreign and unknown ids, so it reveals nothing about other owners.
-    const own = (await store.listExams().catch(() => [])).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 3);
     // Pointing at start_exam works even where the client forces every field (strict tool schemas); "omit it" does not.
-    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值：先呼叫 start_exam 取得後逐字帶入，不可自行命名`
-      + (own.length ? `；你目前的考試：${own.map(plan => `${plan.id}（${plan.title}）`).join("、")}。` : "。"));
+    const hint = await ownExamsHint(store);
+    throw new Error(`找不到考試計畫；examId 必須是 start_exam 回傳的值：先呼叫 start_exam 取得後逐字帶入，不可自行命名${hint ? `；${hint}` : "。"}`);
   }
 }
 async function linkExamAnswer(store: EssayStore, examId: string, answer: AnswerDocument, keyHash?: string, requestHash?: string, questionNo = answer.questionNo): Promise<void> {
@@ -915,7 +929,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const { current, replayed, linkPending, message } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
       return {
-        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) },
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) },
         content: textContent((replayed ? (request.examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
           + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
           + (message ? `\n${message}` : "")
@@ -948,8 +962,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           }
           let defaultQuestionNo: number | undefined;
           if (request?.examId) {
+            const plan = await findExam(store, request.examId);
+            // Unknown exam: prepareCreate saves it as a single answer and says so.
+            if (!plan) { prepared.push(await prepareCreate(store, request)); continue; }
             const used = assigned.get(request.examId) ?? new Set<number>();
-            const plan = await requestedExam(store, request.examId);
             defaultQuestionNo = request.questionNo ?? (request.idempotencyKey ? plan.createRequests?.[sha256(request.idempotencyKey)]?.questionNo : undefined)
               ?? [...plan.questions].sort((a,b) => a.questionNo - b.questionNo).find(q => !q.answerId && !used.has(q.questionNo))?.questionNo;
             const item = await prepareCreate(store, request, defaultQuestionNo);
@@ -968,7 +984,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           results.push({ index: index + 1, answerId: answer.id, title: answer.title,
             ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
             version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
-            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) });
+            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) });
         } catch (error) {
           throw new Error(`已完成：${results.map(item => `第 ${item.index} 項 ${item.answerId}${item.replayed ? "（重送）" : ""}`).join("、") || "無"}。\n`
             + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);
