@@ -236,7 +236,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   let answer: AnswerDocument;
   try {
     answer = { ...createAnswerDocument({ templateId, title, question, sections }), exam, questionNo,
-      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true,
+      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true, neatFormat: true,
         ...(template.paperProfile ? { compactPaper: true } : {}), ...layoutOptions },
       ...(lineTargets ? { lineTargets: Object.fromEntries(lineTargets.map(({ sectionId, lines }) => [sectionId, lines])) } : {}) };
     const targetIds = new Set<string>();

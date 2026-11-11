@@ -172,6 +172,27 @@ function withAutomaticHangingIndent(
   return { ...format, hangingIndent: format.firstLineIndent + markerWidth };
 }
 
+/** Text column of the neat format (50招 p.9/p.16): two full-width cells in; numbers sit to its left. */
+const NEAT_TEXT_COLUMN = 4;
+type NeatRole = "numbered" | "body" | "lead" | "plain";
+/** Explicit indents (other than echoed zeros) keep the author's layout. */
+function hasExplicitIndent(...formats: Array<{ firstLineIndent?: number; hangingIndent?: number; leftIndent?: number } | undefined>): boolean {
+  return formats.some(format => Boolean(format?.firstLineIndent || format?.hangingIndent || format?.leftIndent));
+}
+function withNeatIndent(text: string, format: ParagraphFormat, template: AnswerTemplate, role: NeatRole): ParagraphFormat {
+  const marker = listNumberMarker(text);
+  if (marker) {
+    const width = template.paperProfile
+      ? Math.round(originalPaperMeasure(template)(marker) / (template.fontSizePt / 2))
+      : displayWidth(marker, format.tabSize);
+    const first = Math.max(0, NEAT_TEXT_COLUMN - width);
+    return { ...format, firstLineIndent: first, hangingIndent: first + width };
+  }
+  if (role === "body") return { ...format, firstLineIndent: NEAT_TEXT_COLUMN, hangingIndent: NEAT_TEXT_COLUMN };
+  if (role === "lead") return { ...format, firstLineIndent: NEAT_TEXT_COLUMN, hangingIndent: 0 };
+  return format;
+}
+
 function mergeHeadingStyle(template: AnswerTemplate, section: AnswerSection): HeadingStyle {
   return headingStyleSchema.parse({
     ...DEFAULT_HEADING_STYLE,
@@ -385,7 +406,8 @@ function compactPaperSection(template: AnswerTemplate, section: AnswerSection, o
   if (!paragraphs.length) return section.heading?.trim() ? section : { ...section, omitEmptySection: true };
   let heading = section.heading;
   if (heading?.trim() === '') heading = undefined;
-  if (heading && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
+  // The neat format keeps every heading on its own line, as both exam books require.
+  if (heading && !options.neatFormat && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
     const prefix = heading + (/[：:]$/u.test(heading) ? '' : '：');
     const spaces = paragraphs[0].text.match(/^\s*/u)![0];
     const firstBody = spaces + (splitGraphemes(paragraphs[0].text.slice(spaces.length))[0] ?? '');
@@ -416,14 +438,18 @@ export function layoutSections(
     }
     const sectionStart = lines.length;
     const headingStyle = mergeHeadingStyle(template, section);
+    const neat = options.neatFormat && !hasExplicitIndent(template.paragraphDefaults, section.paragraphFormat);
+    let numberedSeen = false;
     if (section.heading) {
       if (headingStyle.numbered) headingOrdinal += 1;
+      const headingText = formatHeading(section.heading, headingStyle, headingOrdinal);
+      const headingFormat = paragraphFormatSchema.parse(headingStyle);
       addParagraph(
         lines,
         section.id,
         0,
-        formatHeading(section.heading, headingStyle, headingOrdinal),
-        paragraphFormatSchema.parse(headingStyle),
+        headingText,
+        neat && !hasExplicitIndent(section.headingStyle) ? withNeatIndent(headingText, headingFormat, template, "plain") : headingFormat,
         { isHeading: true },
         template,
         options,
@@ -441,11 +467,15 @@ export function layoutSections(
         section.id,
         section.sourceParagraphIndexes?.[index] ?? index + 1,
         paragraph.text,
-        withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
+        neat && !hasExplicitIndent(paragraph.format)
+          ? withNeatIndent(paragraph.text, format, template, listNumberMarker(paragraph.text) ? "numbered"
+            : section.heading || numberedSeen ? "body" : "lead")
+          : withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
         {},
         template,
         options,
       );
+      if (listNumberMarker(paragraph.text)) numberedSeen = true;
     });
     sectionLineCounts.set(section.id, lines.length - sectionStart);
   }

@@ -8,7 +8,9 @@ test('structured paper create compacts heading and blanks, while general, explic
  const sections=[{id:'intro',heading:'壹、前言',text:'\n依職務需求配置權限。\n'}];
  try{
   for(const templateId of ['police_information_essay_165','police_information_essay_166']){
-   const made=await call('create_answer',{templateId,title:'synthetic structured',sections,responseDetail:'full'});assert.equal(made.layout.totalLines,1);assert.equal(made.answer.layoutOptions?.compactPaper,true);
+   const neat=await call('create_answer',{templateId,title:'synthetic neat',sections,responseDetail:'full'});assert.equal(neat.answer.layoutOptions?.neatFormat,true);
+   assert.deepEqual(neat.layout.lines.map((l:any)=>l.text),['壹、前言','依職務需求配置權限。'],'neat default: heading on its own line, blanks still dropped');
+   const made=await call('create_answer',{templateId,title:'synthetic structured',sections,responseDetail:'full',layoutOptions:{neatFormat:false}});assert.equal(made.layout.totalLines,1);assert.equal(made.answer.layoutOptions?.compactPaper,true);
    const full=await call('read_answer',{answerId:made.answer.id});assert.equal(full.layout.lines[0].text,'壹、前言：依職務需求配置權限。');assert.equal(full.answer.sections[0].heading,'壹、前言');assert.equal(full.answer.sections[0].text,sections[0].text,'persist source unmodified');
    assert.equal(full.layout.lines[0].paragraphIndex,2,'keep original body position after filtering blank paragraph');
    const off=await call('create_answer',{templateId,title:'explicit standalone',sections,layoutOptions:{compactPaper:false}});assert.equal(off.layout.totalLines,4);
@@ -16,7 +18,7 @@ test('structured paper create compacts heading and blanks, while general, explic
   const general=await call('create_answer',{templateId:'police_information_essay',title:'general unchanged',sections});assert.equal(general.layout.totalLines,4);
   const old=createAnswerDocument({templateId:'police_information_essay_165',title:'legacy',sections});await store.saveAnswer(old);assert.equal((await call('read_answer',{answerId:old.id})).layout.totalLines,4);
   const plan=await call('start_exam',{title:'batch synthetic',questions:[{questionNo:1}]});await call('create_answers',{examId:plan.examId,answers:[{questionNo:1,title:'batch heading',sections}]});
-  const progress=await call('get_exam_progress',{examId:plan.examId});assert.equal((await call('read_answer',{answerId:progress.questions[0].answerId})).layout.totalLines,1);
+  const progress=await call('get_exam_progress',{examId:plan.examId});assert.equal((await call('read_answer',{answerId:progress.questions[0].answerId})).layout.totalLines,2);
   const flagEdit=await call('create_answer',{title:'toggle',sections});await call('update_answer_info',{answerId:flagEdit.answer.id,expectedVersion:1,layoutOptions:{compactPaper:false}});assert.equal((await call('read_answer',{answerId:flagEdit.answer.id})).layout.totalLines,4);
  }finally{await c.close();await s.close();await fs.rm(root,{recursive:true,force:true});}
 });

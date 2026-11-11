@@ -14,6 +14,8 @@ export interface LayoutQuality {
   indentInconsistency: number;
   shortTailLines: number;
   punctuationOnlyLines: number;
+  /** Departures from the two exam books' format; counted only for answers with layoutOptions.neatFormat. */
+  bookFormatIssues: number;
 }
 
 interface Numbering {
@@ -147,11 +149,11 @@ export function scoreLayout(template: AnswerTemplate, answer: AnswerDocument, re
   return analyzeLayout(template, answer, report).quality;
 }
 
-const LEVEL_NAMES = ["", "壹、", "一、", "（一）", "1.", "（1）", "甲、"];
+const LEVEL_NAMES = ["", "壹、", "一、", "(一)", "1.", "(1)", "甲、"];
 
 /** Actionable zh-TW notes naming the paragraphs behind the structural metrics (for check_layout). */
 export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): string[] {
-  const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent } = analyzeLayout(template, answer, report);
+  const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes } = analyzeLayout(template, answer, report);
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   const notes: string[] = [];
   if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
@@ -159,7 +161,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   for (const issue of hierarchyIssues) {
     const at = start(paragraphs[issue.order].text);
     notes.push(issue.kind === "skip"
-      ? `結構提醒：${at}跳過中間層級（應依 壹、→一、→（一）→1.→（1） 逐層往下）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
+      ? `結構提醒：${at}跳過中間層級（應依 (一)→1.→(1) 逐層往下；用到「一、」時其下接 (一)）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
       : issue.kind === "family"
         ? `結構提醒：${at}與同層前一項的編號樣式不同；同層請用同一種編號。`
         : issue.kind === "headless"
@@ -170,6 +172,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   if (quality.misalignedContinuations) notes.push(answer.layoutOptions?.autoHangingIndent === false
     ? "結構提醒：編號段落的續行未對齊內文；建議以 update_answer_info 設定 layoutOptions.autoHangingIndent=true。"
     : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
+  notes.push(...bookNotes);
   return notes;
 }
 
@@ -258,6 +261,21 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
   const capacity = report.capacity;
   const fill = capacity > 0 ? Math.round((report.totalLines / capacity) * 100) / 100 : 0;
   const hierarchyIssues = hierarchyIssueList(hierarchyItems);
+
+  // The exam books (50招 p.9/p.16, 高分寫作 p.87): lead and closing prose carry no heading, numbering runs
+  // (一)→1.→(1) with at most three levels, and 壹、 is not used. Only new-format answers are held to it.
+  const bookNotes: string[] = [];
+  if (answer.layoutOptions?.neatFormat) {
+    const labels = answer.sections.filter(section => {
+      const heading = section.heading?.trim() ?? "";
+      const rest = heading.slice(classifyNumbering(heading)?.prefix.length ?? 0).trim();
+      return /^(前言|緒論|導論|引言|結論|結語|小結|本文)[：:]?$/u.test(rest);
+    });
+    if (labels.length) bookNotes.push(`格式提醒：${labels.map(section => `「${section.heading!.trim()}」`).join("、")}是功能標籤；前言、結語不下標題，請移除該節 heading（null），內文保留，引擎會首行空兩格。`);
+    const levels = new Set(hierarchyItems.map(item => item.numbering.level));
+    if (levels.has(1)) bookNotes.push("格式提醒：答案內標號從 (一) 起算（題號已在題號欄），不用「壹、」；請改為 (一)→1.→(1)，只改編號不改內容。");
+    else if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
+  }
   const quality: LayoutQuality = {
     fill,
     totalLines: report.totalLines,
@@ -269,6 +287,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     indentInconsistency: Math.max(0, bodyIndents.size - 1),
     shortTailLines,
     punctuationOnlyLines: layoutWarnings(report, template).filter(warning => warning.code === "PUNCTUATION_ONLY_LINE").length,
+    bookFormatIssues: bookNotes.length,
   };
-  return { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent };
+  return { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes };
 }

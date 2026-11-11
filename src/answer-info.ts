@@ -53,7 +53,7 @@ export function describeInfoChanges(before: AnswerDocument, after: AnswerDocumen
     lines.push(`題號：${number(before.questionNo)}→${number(after.questionNo)}`);
   }
   if (before.question !== after.question) lines.push(after.question === undefined ? "題目：已清除" : before.question === undefined ? "題目：已設定" : "題目：已修改");
-  for (const [key, label] of [["wholeLatinWords", "整字換行"], ["keepHeadingWithNext", "標題不落頁尾"], ["compactPaper", "稿紙緊湊排版"], ["autoHangingIndent", "自動懸掛縮排"]] as const) {
+  for (const [key, label] of [["wholeLatinWords", "整字換行"], ["keepHeadingWithNext", "標題不落頁尾"], ["compactPaper", "稿紙緊湊排版"], ["autoHangingIndent", "自動懸掛縮排"], ["neatFormat", "考試整齊縮格"]] as const) {
     const left = before.layoutOptions?.[key] ?? false, right = after.layoutOptions?.[key] ?? false;
     if (left !== right) lines.push(`${label}：${left ? "開" : "關"} → ${right ? "開" : "關"}`);
   }

@@ -20,8 +20,8 @@ test('MCP check_layout and canvas agree on zero-row source sections without modi
  try{for(const templateId of ['police_information_essay_165','police_information_essay_166']){
   const made=(await call('create_answer',{templateId,title:'synthetic',sections:[{id:'a',heading:'前言',text:'正文'},{id:'gap',text:''},{id:'b',heading:'結論',text:'末句'}]})).structuredContent;const id=made.answer.id;
   const before=await store.getAnswer(id);assert.equal(before.sections[1].text,'');
-  const check=(await call('check_layout',{answerId:id})).structuredContent;assert.equal(check.layout.totalLines,2);
-  const read=(await call('read_answer',{answerId:id})).structuredContent;assert.equal(read.layout.totalLines,2);assert.ok(read.layout.lines.every((l:any)=>l.text.trim()));
-  const canvas=await call('render_answer_sheet',{answerId:id,responseDetail:'full'});assert.equal(canvas.structuredContent.layout.totalLines,2);assert.ok(canvas.structuredContent.layout.lines.every((l:any)=>l.text.trim()));assert.deepEqual(await store.getAnswer(id),before);
+  const check=(await call('check_layout',{answerId:id})).structuredContent;assert.equal(check.layout.totalLines,4,'neat format: headings keep their own line, the empty section none');
+  const read=(await call('read_answer',{answerId:id})).structuredContent;assert.equal(read.layout.totalLines,4);assert.equal(read.layout.lines.filter((l:any)=>l.sectionId==='gap').length,0);assert.ok(read.layout.lines.every((l:any)=>l.text.trim()));
+  const canvas=await call('render_answer_sheet',{answerId:id,responseDetail:'full'});assert.equal(canvas.structuredContent.layout.totalLines,4);assert.ok(canvas.structuredContent.layout.lines.every((l:any)=>l.text.trim()));assert.deepEqual(await store.getAnswer(id),before);
  }}finally{await c.close();await s.close();await fs.rm(root,{recursive:true,force:true});}
 });
