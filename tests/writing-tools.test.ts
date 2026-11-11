@@ -88,7 +88,7 @@ test("tool recovery: no-op writes preserve revisions and stale versions still fa
 
 test("tool recovery: create, batch and replace prefer paragraphs; conflicts return continuation IDs", async () => {
   await withClient(async (client, store) => {
-    const args = { examId: null, templateId: "police_information_essay", title: "容錯", idempotencyKey: "recovery-single",
+    const args = { templateId: "police_information_essay", title: "容錯", idempotencyKey: "recovery-single",
       sections: [{ id: "body", text: "過時文字", paragraphs: [{ text: "正確內容。", format: { bold: true } }] }] };
     const created = await client.callTool({ name: "create_answer", arguments: args });
     assert.equal(created.isError, undefined, text(created));
@@ -98,8 +98,7 @@ test("tool recovery: create, batch and replace prefer paragraphs; conflicts retu
     assert.equal(unchanged.isError, undefined, text(unchanged));
     assert.ok(!JSON.stringify(unchanged).includes("createRequestHash"));
     assert.equal((await store.listExams()).length, 0);
-    const { examId: _noExam, ...withoutExam } = args;
-    const replay = await client.callTool({ name: "create_answer", arguments: withoutExam });
+    const replay = await client.callTool({ name: "create_answer", arguments: args });
     assert.equal(replay.isError, undefined, text(replay));
     assert.equal((replay.structuredContent as { answer: AnswerDocument }).answer.id, answer.id);
     const conflict = await client.callTool({ name: "create_answer", arguments: { ...args, title: "異動" } });

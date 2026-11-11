@@ -110,7 +110,7 @@ const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
 const createFields = {
-  examId: examIdSchema.nullable().optional().describe("A value returned by start_exam or get_exam_progress, copied exactly; never invent one."),
+  examId: examIdSchema.optional().describe("A value returned by start_exam or get_exam_progress, copied exactly; never invent one."),
   layoutOptions: layoutOptionsSchema.optional().describe("Whole-word Latin wrapping and keeping headings with their first body line; new answers default to on."),
   templateId: z.string().default(DEFAULT_TEMPLATE_ID), title: z.string().min(1).max(300),
   question: z.string().max(10_000).optional(), exam: z.string().min(1).max(100).optional(),
