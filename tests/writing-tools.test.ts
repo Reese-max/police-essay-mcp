@@ -54,6 +54,7 @@ test("overflow edits return a fresh plan until fits, while first drafts still re
           assert.match(current.compressionPlan ?? "", new RegExp(`總計 ${current.layout.totalLines}/44 行`));
           assert.match(current.compressionPlan ?? "", /body \d+→\d+ 行/);
           assert.match(current.compressionPlan ?? "", /replace_text/);
+          assert.ok((text(edited) + "\n" + JSON.stringify(edited.structuredContent)).slice(0, 12_000).includes('"compressionPlan"'), "計畫必須在評估回應截斷前可見");
         }
       }
       assert.equal(current.layout.fits, true);
