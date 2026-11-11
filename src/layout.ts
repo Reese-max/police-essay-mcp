@@ -600,23 +600,25 @@ export function summarizeLayout(report: LayoutReport): string {
   return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${largeOverflowPlan(report)}`;
 }
 
-// Evals: on a far-over draft, models shaved one sentence per replace_text and ran out of turns; a per-section budget lets each section be rewritten once.
+// Evals: on a far-over draft, models shaved one sentence per replace_text and ran out of turns.
+// Cuts follow compressionHints' order (fewest, most compressible sections first) and go in one
+// write_answer, so targets cannot drift between edits.
 const LARGE_OVERFLOW_LINES = 5;
 function largeOverflowPlan(report: LayoutReport): string {
-  const hints = report.compressionHints.filter((hint) => hint.currentLines > 0);
-  if (report.overflowLines < LARGE_OVERFLOW_LINES || hints.length === 0) return "";
-  const counted = hints.reduce((sum, hint) => sum + hint.currentLines, 0);
-  const fixed = report.totalLines - counted; // lines outside any section, such as the question block
-  const budget = Math.max(hints.length, report.capacity - fixed);
-  const targets = hints.map((hint) => ({ hint, lines: Math.max(1, Math.floor(hint.currentLines * budget / counted)) }));
-  let used = targets.reduce((sum, item) => sum + item.lines, 0);
-  while (used > budget) { // floor rounding can still leave headings' minimum lines over budget
-    const largest = targets.reduce((a, b) => (b.lines > a.lines ? b : a));
-    if (largest.lines <= 1) break;
-    largest.lines -= 1; used -= 1;
+  if (report.overflowLines < LARGE_OVERFLOW_LINES) return "";
+  let need = report.overflowLines;
+  const cuts: string[] = [];
+  for (const hint of report.compressionHints) {
+    if (need <= 0) break;
+    const floor = hint.heading ? 2 : 1; // a heading line plus at least one body line
+    const share = hint.protected ? 0.3 : 0.5; // protected sections only tighten wording
+    const cut = Math.min(need, Math.floor(hint.currentLines * share), Math.max(0, hint.currentLines - floor));
+    if (cut <= 0) continue;
+    cuts.push(`${hint.sectionId} ${hint.currentLines}→${hint.currentLines - cut} 行`);
+    need -= cut;
   }
-  const shrinking = targets.filter((item) => item.lines < item.hint.currentLines);
-  return `超出較多：不要逐句小改；依下列各節目標行數，每節用一次 replace_text 整節濃縮重寫（或一次 write_answer 改全部），保留標題與各論點：${shrinking.map((item) => `${item.hint.sectionId} ${item.hint.currentLines}→${item.lines} 行`).join("、")}。`;
+  if (need > 0) return "超出較多：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。";
+  return `超出較多：不要逐句小改；用一次 write_answer 同時把下列各節整節濃縮到目標行數（其餘節原文照貼，保留標題與各論點）：${cuts.join("、")}。`;
 }
 
 // Runtime validation remains at the domain boundary; these imports also make

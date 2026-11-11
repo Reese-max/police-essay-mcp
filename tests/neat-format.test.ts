@@ -92,17 +92,25 @@ test("review rv6: decimals, stacked 中標 and a closing-less last section", () 
   assert.match(notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙重起。" }] }]).notes, /編號又從頭起算/);
 });
 
-test("a far-over answer gets per-section line targets; a small overflow does not", async () => {
+test("a far-over answer gets a cut plan that reaches capacity; a small overflow does not", async () => {
   const { summarizeLayout } = await import("../src/layout.js");
-  const long = (id: string, n: number) => ({ id, heading: "(一)標題：", text: "甲".repeat(n) });
-  const far = createAnswerDocument({ templateId: standard.id, title: "far", sections: [long("a", 700), long("b", 700)] });
-  const report = layoutSections(standard, far.sections, neat);
-  const text = summarizeLayout(report);
-  assert.ok(report.overflowLines >= 5);
-  const targets = [...text.matchAll(/(\S+) (\d+)→(\d+) 行/gu)].map((m) => Number(m[3]));
-  assert.equal(targets.length, 2, text);
-  assert.ok(targets.reduce((a, b) => a + b, 0) <= report.capacity, text);
-  let small = report;
+  const plan = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) => {
+    const report = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "far", sections }).sections, neat);
+    const text = summarizeLayout(report);
+    const cuts = new Map([...text.matchAll(/(\w+) (\d+)→(\d+) 行/gu)].map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
+    return { report, text, cuts };
+  };
+  const long = (id: string, n: number, extra = {}) => ({ id, heading: "(一)標題：", text: "甲".repeat(n), ...extra });
+  // A core section the hints protect stays untouched while a compressible one can absorb the overflow.
+  const far = plan([long("core", 300, { required: true, priority: 5, compressible: 0 }), long("extra", 950, { required: false, priority: 1, compressible: 3 })]);
+  assert.ok(far.report.overflowLines >= 5, far.text);
+  assert.ok(!far.cuts.has("core"), far.text);
+  const removed = [...far.cuts.values()].reduce((n, [from, to]) => n + from - to, 0);
+  assert.equal(removed, far.report.overflowLines, "cuts add up to exactly the overflow, so meeting them fits");
+  assert.match(far.text, /一次 write_answer/);
+  // Far beyond what tightening can recover: say so instead of listing impossible targets.
+  assert.match(plan([long("a", 3000)]).text, /先向使用者說明取捨/);
+  let small = far.report;
   for (let n = 400; n < 2000 && !(small.overflowLines > 0 && small.overflowLines < 5); n += 5)
     small = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "near", sections: [long("a", n)] }).sections, neat);
   assert.ok(small.overflowLines > 0 && small.overflowLines < 5);
