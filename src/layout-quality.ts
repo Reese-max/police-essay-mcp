@@ -214,6 +214,8 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
       const other = bodyParagraphs[index + offset];
       return other?.sectionId === paragraph.sectionId ? classifyNumbering(firstText(other)) : undefined;
     };
+    // Neat format (50招 p.9): 「1.○○：」 alone on its line is a 中標 over the body below it.
+    if (answer.layoutOptions?.neatFormat && /[：:]\s*$/u.test(paragraph.text) && bodyParagraphs[index + 1]?.sectionId === paragraph.sectionId) return false;
     const nextNumbering = near(1);
     // Consecutive same-family siblings ("一、CPU暫存器", "二、路由表") are a short list, not headings.
     const sibling = (other: Numbering | undefined, step: number) => other?.family === numbering.family && other.value === numbering.value + step;

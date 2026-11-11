@@ -80,3 +80,9 @@ test("book notes: body points need a 大標, items each own a paragraph", () => 
   assert.match(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)乙。(2)丙。" }] }]).notes, /一段內有多個編號項/);
   assert.doesNotMatch(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)依第2條規定。" }] }]).notes, /多個編號項/);
 });
+
+test("a colon-ended 中標 over body text is not an embedded heading in neat answers", () => {
+  const sections = [{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.組織策略：" }, { text: "納入數位轉型願景。" }, { text: "2.作業流程：" }, { text: "先小規模試辦。" }] }];
+  assert.equal(notes(sections).quality.embeddedHeadingParagraphs, 0);
+  assert.equal(notes(sections, {}).quality.embeddedHeadingParagraphs, 2, "older answers keep the earlier rule");
+});
