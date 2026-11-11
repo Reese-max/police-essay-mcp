@@ -34,6 +34,34 @@ async function withClient(run: (client: Client, store: FileStore) => Promise<voi
 const text = (result: Awaited<ReturnType<Client["callTool"]>>) => (result.content as Array<{ text: string }>)[0].text;
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
 
+test("overflow edits return a fresh plan until fits, while first drafts still require check_layout", async () => {
+  await withClient(async (client, store) => {
+    for (const responseDetail of ["summary", "full"]) {
+      const created = await client.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay",
+        title: "動態減行", sections: [{ id: "body", text: "甲".repeat(21 * 50) }], responseDetail } });
+      assert.equal(created.isError, undefined, text(created));
+      type Result = { answer: AnswerDocument; layout: { fits: boolean; totalLines: number }; compressionPlan?: string };
+      let current = created.structuredContent as Result;
+      assert.equal(current.layout.fits, false);
+      assert.equal(current.compressionPlan, undefined);
+      for (const lines of [46, 49, 20]) {
+        const edited = await client.callTool({ name: "replace_text", arguments: { answerId: current.answer.id,
+          sectionId: "body", newText: "甲".repeat(21 * lines), expectedVersion: current.answer.version, responseDetail } });
+        assert.equal(edited.isError, undefined, text(edited));
+        current = edited.structuredContent as Result;
+        if (current.layout.fits) assert.equal(current.compressionPlan, undefined);
+        else {
+          assert.match(current.compressionPlan ?? "", new RegExp(`總計 ${current.layout.totalLines}/44 行`));
+          assert.match(current.compressionPlan ?? "", /body \d+→\d+ 行/);
+          assert.match(current.compressionPlan ?? "", /replace_text/);
+        }
+      }
+      assert.equal(current.layout.fits, true);
+      assert.equal((await store.getAnswer(current.answer.id)).version, 4);
+    }
+  });
+});
+
 test("tool recovery: no-op writes preserve revisions and stale versions still fail", async () => {
   await withClient(async (client, store) => {
     const answer = answerWith([{ id: "body", heading: "一、內容", text: "1.內容。" }]);

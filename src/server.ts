@@ -441,6 +441,8 @@ async function loadSnapshot(store: EssayStore, answerId: string): Promise<Answer
 }
 
 function writeResponse(current: AnswerSnapshot, detail: "summary" | "full") {
+  // First drafts still go through check_layout; saved edits get current targets instead of a stale plan.
+  if (current.answer.version > 1 && !current.layout.fits) current = { ...current, compressionPlan: summarizeLayout(current.layout, true) };
   if (detail === "full") return current;
   const { id, templateId, title, version, exam, questionNo } = current.answer;
   const { capacity, totalLines, pagesUsed, overflowLines, remainingLines, fits, status, pageUsage } = current.layout;
