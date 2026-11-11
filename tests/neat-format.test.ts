@@ -96,7 +96,7 @@ test("a far-over answer gets a cut plan that reaches capacity; a small overflow 
   const { summarizeLayout } = await import("../src/layout.js");
   const plan = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) => {
     const report = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "far", sections }).sections, neat);
-    const text = summarizeLayout(report);
+    const text = summarizeLayout(report, true);
     const cuts = new Map([...text.matchAll(/(\w+) (\d+)→(\d+) 行/gu)].map((m) => [m[1], [Number(m[2]), Number(m[3])]]));
     return { report, text, cuts };
   };
@@ -106,13 +106,17 @@ test("a far-over answer gets a cut plan that reaches capacity; a small overflow 
   assert.ok(far.report.overflowLines >= 5, far.text);
   assert.ok(!far.cuts.has("core"), far.text);
   const removed = [...far.cuts.values()].reduce((n, [from, to]) => n + from - to, 0);
-  assert.equal(removed, far.report.overflowLines, "cuts add up to exactly the overflow, so meeting them fits");
-  assert.match(far.text, /一次 write_answer/);
+  assert.equal(removed, far.report.overflowLines + 1, "cuts cover the overflow plus a spare line");
+  assert.match(far.text, /各用一次 replace_text/);
+  assert.doesNotMatch(summarizeLayout(far.report), /超出較多/, "edit replies do not re-plan mid-way");
+  // rv8: a protected section with a higher compressible score still waits behind unprotected ones.
+  const order = plan([long("core", 300, { required: true, priority: 3, compressible: 3 }), long("extra", 700, { required: false, priority: 1, compressible: 2 })]);
+  assert.ok(order.report.overflowLines >= 5 && order.cuts.has("extra") && !order.cuts.has("core"), order.text);
   // Far beyond what tightening can recover: say so instead of listing impossible targets.
   assert.match(plan([long("a", 3000)]).text, /先向使用者說明取捨/);
   let small = far.report;
   for (let n = 400; n < 2000 && !(small.overflowLines > 0 && small.overflowLines < 5); n += 5)
     small = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "near", sections: [long("a", n)] }).sections, neat);
   assert.ok(small.overflowLines > 0 && small.overflowLines < 5);
-  assert.doesNotMatch(summarizeLayout(small), /超出較多/);
+  assert.doesNotMatch(summarizeLayout(small, true), /超出較多/);
 });

@@ -1547,7 +1547,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const warnings = layoutWarnings(current.layout, template);
       const notes = [...plan.notes, ...layoutQualityNotes(template, current.answer, current.layout)];
       const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes, warnings };
-      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout, true)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
     },
   );
 

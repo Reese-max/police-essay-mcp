@@ -585,7 +585,8 @@ export function renderTextLine(line: LayoutLine, template: AnswerTemplate): stri
   return `${" ".repeat(indent)}${content}`;
 }
 
-export function summarizeLayout(report: LayoutReport): string {
+/** `plan` adds the cut plan for a far-over answer; only fresh checks pass it, so edits do not re-plan mid-way. */
+export function summarizeLayout(report: LayoutReport, plan = false): string {
   const pages = report.pageUsage
     .slice(0, report.pagesConfigured)
     .map((page) => `第${page.page}頁 ${page.linesUsed}/${page.capacity}行`)
@@ -597,20 +598,21 @@ export function summarizeLayout(report: LayoutReport): string {
   if (report.fits) {
     return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，尚餘 ${report.remainingLines} 行，狀態：OK。`;
   }
-  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${largeOverflowPlan(report)}`;
+  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${plan ? largeOverflowPlan(report) : ""}`;
 }
 
 // Evals: on a far-over draft, models shaved one sentence per replace_text and ran out of turns.
-// Cuts follow compressionHints' order (fewest, most compressible sections first) and go in one
-// write_answer, so targets cannot drift between edits.
+// Cuts go to unprotected sections first, then compressionHints' order, and add one spare line
+// because a shorter section can push a following heading to the next page (keepHeadingWithNext).
 const LARGE_OVERFLOW_LINES = 5;
 function largeOverflowPlan(report: LayoutReport): string {
   if (report.overflowLines < LARGE_OVERFLOW_LINES) return "";
-  let need = report.overflowLines;
+  let need = report.overflowLines + 1;
   const cuts: string[] = [];
-  for (const hint of report.compressionHints) {
+  const ordered = [...report.compressionHints].sort((a, b) => Number(a.protected) - Number(b.protected) || a.rank - b.rank);
+  for (const hint of ordered) {
     if (need <= 0) break;
-    const floor = hint.heading ? 2 : 1; // a heading line plus at least one body line
+    const floor = hint.heading ? 2 : 1; // shortcut: assumes a one-line heading; long headings or many paragraphs need more
     const share = hint.protected ? 0.3 : 0.5; // protected sections only tighten wording
     const cut = Math.min(need, Math.floor(hint.currentLines * share), Math.max(0, hint.currentLines - floor));
     if (cut <= 0) continue;
@@ -618,7 +620,7 @@ function largeOverflowPlan(report: LayoutReport): string {
     need -= cut;
   }
   if (need > 0) return "超出較多：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。";
-  return `超出較多：不要逐句小改；用一次 write_answer 同時把下列各節整節濃縮到目標行數（其餘節原文照貼，保留標題與各論點）：${cuts.join("、")}。`;
+  return `超出較多：不要逐句小改；對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點），全部改完再 check_layout：${cuts.join("、")}。`;
 }
 
 // Runtime validation remains at the domain boundary; these imports also make
