@@ -69,3 +69,14 @@ test("review rv5: independent book notes, headless middle text is body, full-wid
   const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }] }, { id: "end", text: "綜上所述。" }]);
   assert.equal(book.notes, "", "the book skeleton draws no structural or format note");
 });
+
+test("book notes: body points need a 大標, items each own a paragraph", () => {
+  const terms = notes([{ id: "intro", text: "前言。" }, { id: "t1", text: "Locard 交換原理指出接觸會留下痕跡。" }, { id: "t2", text: "滲透測試是授權模擬攻擊。" }, { id: "end", text: "綜上所述。" }]);
+  assert.match(terms.notes, /「Locard 交換原理指出接」、「滲透測試是授權模擬攻擊。」在本文中卻沒有大標/);
+  const inline = notes([{ id: "intro", text: "前言。" }, { id: "a", text: "(一)甲：內容。" }, { id: "end", text: "綜上所述。" }]);
+  assert.doesNotMatch(inline.notes, /沒有大標/, "a 大標 written inline at the paragraph start counts (最充實 format)");
+  const restart = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙。" }] }, { id: "end", text: "綜上所述。" }]);
+  assert.match(restart.notes, /「1.丙。」在本文中卻沒有大標/); assert.doesNotMatch(restart.notes, /編號又從頭起算/, "one note per problem");
+  assert.match(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)乙。(2)丙。" }] }]).notes, /一段內有多個編號項/);
+  assert.doesNotMatch(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)依第2條規定。" }] }]).notes, /多個編號項/);
+});

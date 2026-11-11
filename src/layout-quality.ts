@@ -159,6 +159,8 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
   for (const paragraph of embeddedHeadings) notes.push(`結構提醒：${start(paragraph.text)}像標題卻寫成段落文字；建議改為該節 heading 或另立一節。`);
   for (const issue of hierarchyIssues) {
+    // The neat format's "no 大標" note already names these sections.
+    if (issue.kind === "headless" && answer.layoutOptions?.neatFormat) continue;
     const at = start(paragraphs[issue.order].text);
     notes.push(issue.kind === "skip"
       ? `結構提醒：${at}跳過中間層級（應依 (一)→1.→(1) 逐層往下；用到「一、」時其下接 (一)）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
@@ -168,7 +170,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
           ? `結構提醒：${at}所在的節沒有標題，編號又從頭起算，看不出屬於哪一點；請補上該節 heading（如「二、○○」或名詞名稱），不必增加內文。`
           : `結構提醒：${at}與同層前一項不連號；請依序編號。`);
   }
-  for (const paragraph of offIndentParagraphs) notes.push(`結構提醒：${start(paragraph.text)}首行縮排 ${paragraph.lines[0]?.format.firstLineIndent ?? 0}，與其他內文段落的 ${usualIndent} 不同；內文請統一（firstLineIndent 單位為顯示寬度，2 格＝4）。`);
+  for (const paragraph of offIndentParagraphs) notes.push(`結構提醒：${start(paragraph.text)}首行起點 ${(paragraph.lines[0]?.format.leftIndent ?? 0) + (paragraph.lines[0]?.format.firstLineIndent ?? 0)}，與其他內文段落的 ${usualIndent} 不同；內文請統一（firstLineIndent 單位為顯示寬度，2 格＝4）。`);
   if (quality.misalignedContinuations) notes.push(answer.layoutOptions?.autoHangingIndent === false
     ? "結構提醒：編號段落的續行未對齊內文；建議以 update_answer_info 設定 layoutOptions.autoHangingIndent=true。"
     : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
@@ -245,7 +247,8 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
   });
 
   const proseParagraphs = bodyParagraphs.filter(paragraph => paragraph.text.trim() && !classifyNumbering(firstText(paragraph)));
-  const indentOf = (paragraph: Paragraph) => paragraph.lines[0]?.format.firstLineIndent ?? 0;
+  // Where the first line starts: a leftIndent moves it as much as a firstLineIndent does.
+  const indentOf = (paragraph: Paragraph) => (paragraph.lines[0]?.format.leftIndent ?? 0) + (paragraph.lines[0]?.format.firstLineIndent ?? 0);
   const bodyIndents = new Set(proseParagraphs.map(indentOf));
   const counts = new Map<number, number>();
   for (const paragraph of proseParagraphs) counts.set(indentOf(paragraph), (counts.get(indentOf(paragraph)) ?? 0) + 1);
@@ -265,6 +268,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
   // The exam books (50招 p.9/p.16, 高分寫作 p.87): lead and closing prose carry no heading, numbering runs
   // (一)→1.→(1) with at most three levels, and 壹、 is not used. Only new-format answers are held to it.
   const bookNotes: string[] = [];
+  const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   if (answer.layoutOptions?.neatFormat) {
     const labels = answer.sections.filter(section => {
       const heading = section.heading?.trim() ?? "";
@@ -275,6 +279,17 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     const levels = new Set(hierarchyItems.map(item => item.numbering.level));
     if (levels.has(1)) bookNotes.push("格式提醒：答案內標號從 (一) 起算（題號已在題號欄），不用「壹、」；請改為 (一)→1.→(1)，只改編號不改內容。");
     if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
+    // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
+    const ordered = [...answer.sections].sort((a, b) => a.order - b.order);
+    const bodyText = (section: typeof ordered[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
+    // A section opening with its own (一)/一、 item carries the 大標 inline (50招 p.204 「最充實」 format).
+    const headless = ordered.slice(1, -1).filter(section => !section.heading?.trim() && bodyText(section)
+      && !((classifyNumbering(bodyText(section))?.level ?? 9) <= 3));
+    if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題（heading），若只是上一點的延續就併入上一節。不改內文。`);
+    // Several numbered items run together in one paragraph ("(1)…。(2)…") should each start their own paragraph.
+    const packed = paragraphs.filter(paragraph => !paragraph.isHeading && classifyNumbering(firstText(paragraph))
+      && /[。；;]\s*(?:[（(](?:[0-9０-９]+|[一二三四五六七八九十]+)[）)]|[0-9０-９]+[.．、])/u.test(paragraph.text));
+    if (packed.length) bookNotes.push(`格式提醒：${packed.map(paragraph => start(paragraph.text)).join("、")}一段內有多個編號項；請每項各成一段（paragraphs），不改內容。`);
     // Full-width brackets are wider than the two cells left of the text line, so their text cannot align there.
     if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」「(1)」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
   }
