@@ -153,14 +153,14 @@ const LEVEL_NAMES = ["", "壹、", "一、", "(一)", "1.", "(1)", "甲、"];
 
 /** Actionable zh-TW notes naming the paragraphs behind the structural metrics (for check_layout). */
 export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): string[] {
-  const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes } = analyzeLayout(template, answer, report);
+  const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes, bookHeadless } = analyzeLayout(template, answer, report);
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   const notes: string[] = [];
   if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
   for (const paragraph of embeddedHeadings) notes.push(`結構提醒：${start(paragraph.text)}像標題卻寫成段落文字；建議改為該節 heading 或另立一節。`);
   for (const issue of hierarchyIssues) {
     // The neat format's "no 大標" note already names these sections.
-    if (issue.kind === "headless" && answer.layoutOptions?.neatFormat) continue;
+    if (issue.kind === "headless" && bookHeadless.has(paragraphs[issue.order].sectionId)) continue;
     const at = start(paragraphs[issue.order].text);
     notes.push(issue.kind === "skip"
       ? `結構提醒：${at}跳過中間層級（應依 (一)→1.→(1) 逐層往下；用到「一、」時其下接 (一)）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
@@ -215,7 +215,9 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
       return other?.sectionId === paragraph.sectionId ? classifyNumbering(firstText(other)) : undefined;
     };
     // Neat format (50招 p.9): 「1.○○：」 alone on its line is a 中標 over the body below it.
-    if (answer.layoutOptions?.neatFormat && /[：:]\s*$/u.test(paragraph.text) && bodyParagraphs[index + 1]?.sectionId === paragraph.sectionId) return false;
+    const following = bodyParagraphs[index + 1];
+    if (answer.layoutOptions?.neatFormat && /[：:]\s*$/u.test(paragraph.text) && following?.sectionId === paragraph.sectionId
+      && !classifyNumbering(firstText(following))) return false;
     const nextNumbering = near(1);
     // Consecutive same-family siblings ("一、CPU暫存器", "二、路由表") are a short list, not headings.
     const sibling = (other: Numbering | undefined, step: number) => other?.family === numbering.family && other.value === numbering.value + step;
@@ -270,6 +272,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
   // The exam books (50招 p.9/p.16, 高分寫作 p.87): lead and closing prose carry no heading, numbering runs
   // (一)→1.→(1) with at most three levels, and 壹、 is not used. Only new-format answers are held to it.
   const bookNotes: string[] = [];
+  const bookHeadless = new Set<string>();
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   if (answer.layoutOptions?.neatFormat) {
     const labels = answer.sections.filter(section => {
@@ -287,10 +290,11 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     // A section opening with its own (一)/一、 item carries the 大標 inline (50招 p.204 「最充實」 format).
     const headless = ordered.slice(1, -1).filter(section => !section.heading?.trim() && bodyText(section)
       && !((classifyNumbering(bodyText(section))?.level ?? 9) <= 3));
+    for (const section of headless) bookHeadless.add(section.id);
     if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題：用 replace_text 對該節帶 heading 即可（內文照舊，不必新增或搬移節）；若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
     // Several numbered items run together in one paragraph ("(1)…。(2)…") should each start their own paragraph.
     const packed = paragraphs.filter(paragraph => !paragraph.isHeading && classifyNumbering(firstText(paragraph))
-      && /[。；;]\s*(?:[（(](?:[0-9０-９]+|[一二三四五六七八九十]+)[）)]|[0-9０-９]+[.．、])/u.test(paragraph.text));
+      && /[。；;]\s*(?:[（(](?:[0-9０-９]+|[一二三四五六七八九十]+)[）)]|[0-9０-９]+[.．、](?![0-9０-９]))/u.test(paragraph.text));
     if (packed.length) bookNotes.push(`格式提醒：${packed.map(paragraph => start(paragraph.text)).join("、")}一段內有多個編號項；請每項各成一段（paragraphs），不改內容。`);
     // Full-width brackets are wider than the two cells left of the text line, so their text cannot align there.
     if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」「(1)」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
@@ -308,5 +312,5 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     punctuationOnlyLines: layoutWarnings(report, template).filter(warning => warning.code === "PUNCTUATION_ONLY_LINE").length,
     bookFormatIssues: bookNotes.length,
   };
-  return { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes };
+  return { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes, bookHeadless };
 }

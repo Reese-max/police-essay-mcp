@@ -86,3 +86,8 @@ test("a colon-ended 中標 over body text is not an embedded heading in neat ans
   assert.equal(notes(sections).quality.embeddedHeadingParagraphs, 0);
   assert.equal(notes(sections, {}).quality.embeddedHeadingParagraphs, 2, "older answers keep the earlier rule");
 });
+
+test("review rv6: decimals, stacked 中標 and a closing-less last section", () => {
+  assert.doesNotMatch(notes([{ id: "s", heading: "(一)查處情形：", paragraphs: [{ text: "1.本案查扣共5公斤；1.5公斤為安非他命。" }] }]).notes, /多個編號項/);
+  assert.match(notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙重起。" }] }]).notes, /編號又從頭起算/);
+});
