@@ -65,6 +65,9 @@ for (const cloud of [false, true]) {
       const own = data(await call(c, "start_exam", { title: "期中考", questions: [{ questionNo: 1 }] })).examId;
       const truncated = await call(c, "create_answer", { templateId: "police_information_essay", examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
       assert.match(text(truncated), new RegExp(`你目前的考試：${own}（期中考）`)); // a dropped digit can be corrected by copying
+      const retry = { templateId: "police_information_essay", examId: "exam_invented03", idempotencyKey: "retry-key-01", title: "重送", sections: [{ id: "a", text: "內容。" }] };
+      const first = data(await call(c, "create_answer", retry)), again = await call(c, "create_answer", retry);
+      assert.equal(data(again).answer.id, first.answer.id); assert.match(text(again), /^重送：此 idempotencyKey 已建立/);
       const batch = await call(c, "create_answers", { examId: "exam_invented02", answers: [{ templateId: "police_information_essay", title: "批次", sections: [{ id: "a", text: "內容。" }] }] });
       assert.notEqual(batch.isError, true); assert.match(text(batch), /已改存成單題答案/);
       assert.equal((await store.getExam(own)).questions[0].answerId, undefined); // never attached to some other exam
