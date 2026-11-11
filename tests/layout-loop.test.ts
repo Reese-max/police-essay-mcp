@@ -17,8 +17,7 @@ test("small overflow gives section targets in one pass and stops at fits", () =>
     const plan = summarizeLayout(report, true);
     assert.match(plan, /小幅超出/);
     assert.match(plan, new RegExp(`intro ${44 + extra}→44 行`));
-    assert.match(plan, /replace_text/);
-    assert.doesNotMatch(plan, /edit_text/);
+    assert.match(plan, /edit_text/);
     assert.match(plan, /尾行/);
     assert.match(plan, /已在容量內就停止/);
     assert.doesNotMatch(summarizeLayout(report), /小幅超出/);

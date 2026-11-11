@@ -157,11 +157,11 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "replace_text": {
     "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
-    "after": "Replace one section's text or paragraphs at expectedVersion; nonempty paragraphs take precedence over newText; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched. During compression condense the whole selected section to the check_layout line target in one call; retain headings, numbered subheadings and distinct substantive points; do not replace multiple sections with one summary."
+    "after": "Replace one section's text or paragraphs at expectedVersion; nonempty paragraphs take precedence over newText; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched. During compression retain headings, numbered subheadings and distinct substantive points; do not replace multiple sections with one summary."
   },
   "write_answer": {
     "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",
-    "after": "Replace all sections at expectedVersion only for a whole-answer rewrite or explicitly requested content clearing; include every section that must remain. Prefer replace_text for section compression and edit_text for targeted wording edits. Keep section IDs, headings, numbering, order, each question's block and distinct substantive points; merge only verbatim-identical or same-point restatements."
+    "after": "Replace all sections at expectedVersion only for a whole-answer rewrite or explicitly requested content clearing; include every section that must remain. Prefer edit_text or replace_text for targeted edits and compression. Keep section IDs, headings, numbering, order, each question's block and distinct substantive points; merge only verbatim-identical or same-point restatements."
   }
 };
 export function withBaseDescriptions<T extends { tools: ContractTool[] }>(view: T, baseline: ContractTool[]): T {
