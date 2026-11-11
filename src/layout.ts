@@ -629,7 +629,7 @@ function overflowPlan(report: LayoutReport): string {
     need -= cut;
   }
   if (need > 0) return `${label}：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。`;
-  if (small) return `${label}：依下列目標一次精簡需要變更的段落（字句用 edit_text；整段用 replace_text，其餘段落原文及 format 帶回；保留標題與各論點）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
+  if (small) return `${label}：依下列整節行數目標各用一次 replace_text（優先精簡指定段落，其餘段落原文及 format 帶回；保留標題與各論點，不逐句小改）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
   return `${label}：不要逐句小改；依序對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點；段落有格式時用 paragraphs 帶回原 format）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
 }
 
