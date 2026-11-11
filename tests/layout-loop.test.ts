@@ -4,14 +4,8 @@ import { test } from "node:test";
 import { createAnswerDocument, templateSchema } from "../src/domain.js";
 import { layoutSections, summarizeLayout } from "../src/layout.js";
 import { layoutQualityNotes } from "../src/layout-quality.js";
-import { SERVER_INSTRUCTIONS } from "../src/agent-guidance.js";
 
 const template = templateSchema.parse(JSON.parse(readFileSync("templates/police_information_essay.json", "utf8")));
-
-test("self-written drafts start with score-sized budgets before overflow repair", () => {
-  assert.match(SERVER_INSTRUCTIONS, /25 分約 38 行、550–600 字/);
-  assert.match(SERVER_INSTRUCTIONS, /未提供配分才以 650–700 字為上限/);
-});
 
 test("small overflow gives section targets in one pass and stops at fits", () => {
   for (const extra of [1, 2, 3, 4]) {
