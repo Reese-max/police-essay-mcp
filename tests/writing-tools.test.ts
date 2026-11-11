@@ -70,7 +70,8 @@ test("move_section reorders sections, previews exactly, and suggests renumbering
     const order = async () => [...(await store.getAnswer(answer.id)).sections].sort((a, b) => a.order - b.order).map((section) => section.id);
     for (const [args, message] of [
       [{ sectionId: "end" }, /擇一/],
-      [{ sectionId: "end", beforeSectionId: "intro", afterSectionId: "body" }, /擇一/],
+      [{ sectionId: "end", beforeSectionId: "intro", afterSectionId: "body" }, /指向不同位置/],
+      [{ sectionId: "end", beforeSectionId: "x", afterSectionId: "y" }, /擇一/],
       [{ sectionId: "end", afterSectionId: "end" }, /自己/],
       [{ sectionId: "end", afterSectionId: "body" }, /已經在這個位置/],
       [{ sectionId: "end", afterSectionId: "missing" }, /找不到 sectionId missing/],
@@ -90,7 +91,12 @@ test("move_section reorders sections, previews exactly, and suggests renumbering
     assert.match(text(moved), /區塊順序改變/);
     assert.match(text(moved), /編號已不連續/);
 
-    const renumbered = await client.callTool({ name: "renumber_items", arguments: { answerId: answer.id, expectedVersion: 2 } });
+    // Strict-schema clients fill both anchors: a placeholder or an agreeing pair still moves.
+    const back = await client.callTool({ name: "move_section", arguments: { answerId: answer.id, expectedVersion: 2, sectionId: "end", beforeSectionId: "x", afterSectionId: "body" } });
+    assert.equal(back.isError, undefined, text(back)); assert.deepEqual(await order(), ["intro", "body", "end"]);
+    const again = await client.callTool({ name: "move_section", arguments: { answerId: answer.id, expectedVersion: 3, sectionId: "end", beforeSectionId: "body", afterSectionId: "intro" } });
+    assert.equal(again.isError, undefined, text(again)); assert.deepEqual(await order(), ["intro", "end", "body"]);
+    const renumbered = await client.callTool({ name: "renumber_items", arguments: { answerId: answer.id, expectedVersion: 4 } });
     assert.equal(renumbered.isError, undefined, text(renumbered));
     assert.equal((renumbered.structuredContent as { renumbered: number }).renumbered, 2);
     const headings = [...(await store.getAnswer(answer.id)).sections].sort((a, b) => a.order - b.order).map((section) => section.heading);

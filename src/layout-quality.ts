@@ -287,7 +287,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     // A section opening with its own (一)/一、 item carries the 大標 inline (50招 p.204 「最充實」 format).
     const headless = ordered.slice(1, -1).filter(section => !section.heading?.trim() && bodyText(section)
       && !((classifyNumbering(bodyText(section))?.level ?? 9) <= 3));
-    if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題（heading），若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
+    if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題：用 replace_text 對該節帶 heading 即可（內文照舊，不必新增或搬移節）；若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
     // Several numbered items run together in one paragraph ("(1)…。(2)…") should each start their own paragraph.
     const packed = paragraphs.filter(paragraph => !paragraph.isHeading && classifyNumbering(firstText(paragraph))
       && /[。；;]\s*(?:[（(](?:[0-9０-９]+|[一二三四五六七八九十]+)[）)]|[0-9０-９]+[.．、])/u.test(paragraph.text));

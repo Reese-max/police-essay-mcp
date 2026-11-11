@@ -523,6 +523,14 @@ function deletedSections(answer: AnswerDocument, sectionId: string): AnswerSecti
 function movedSections(answer: AnswerDocument, sectionId: string,
   { beforeSectionId, afterSectionId }: { beforeSectionId?: string; afterSectionId?: string }): AnswerSection[] {
   const moving = findSection(answer, sectionId);
+  if (beforeSectionId !== undefined && afterSectionId !== undefined) {
+    // Strict-schema clients must send both; keep the one that names a real other section,
+    // or both when they agree (after X directly precedes before Y).
+    const rest = answer.sections.filter((item) => item.id !== sectionId).map((item) => item.id);
+    const before = rest.indexOf(beforeSectionId), after = rest.indexOf(afterSectionId);
+    if (before >= 0 && after >= 0 && after + 1 !== before) throw new Error(`beforeSectionId（${beforeSectionId}）與 afterSectionId（${afterSectionId}）指向不同位置；只提供其中一個。`);
+    if (before >= 0) afterSectionId = undefined; else if (after >= 0) beforeSectionId = undefined;
+  }
   if ((beforeSectionId === undefined) === (afterSectionId === undefined)) throw new Error("beforeSectionId 與 afterSectionId 須擇一提供。");
   const anchorId = (beforeSectionId ?? afterSectionId)!;
   if (anchorId === sectionId) throw new Error("不能把區塊移到自己的前面或後面。");
