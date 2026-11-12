@@ -201,7 +201,7 @@ const data = <T>(result: Awaited<ReturnType<Client["callTool"]>>) => {
 
 test("real MCP create → review save → update → stale review → export preserves sections, version and old export contract", async () => withClient(async (client, store) => {
   const created = data<{ answer: { id: string } }>(await client.callTool({ name: "create_answer", arguments: {
-    templateId: template.id, title: "Anonymous end-to-end", question: sample().question, sections: sample().sections, lineTargets: [{ sectionId: "a", lines: 2 }, { sectionId: "b", lines: 2 }],
+    templateId: template.id, title: "Anonymous end-to-end", question: sample().question, sections: sample().sections, lineTargets: [{ sectionId: "a", lines: 2 }, { sectionId: "b", lines: 3 }],
   } }));
   const answerId = created.answer.id;
   const saved = data<ReturnType<typeof report>>(await client.callTool({ name: "set_answer_review", arguments: { answerId, expectedVersion: 1, plan: plan() } }));

@@ -178,6 +178,7 @@ export const layoutOptionsSchema = z.strictObject({
   keepHeadingWithNext: z.boolean().optional(),
   avoidPunctuationOnlyLines: z.boolean().optional(),
   autoHangingIndent: z.boolean().optional().describe("Automatically indent continuation lines of paragraphs that start with a recognized list number unless hangingIndent is explicitly set."),
+  neatFormat: z.boolean().optional().describe("Exam-book 'neat' layout: headings keep their own line; numbers sit left of a fixed text line 2 cells in; prose under headings or numbered items aligns there; headless lead/closing prose indents only its first line. Explicit indents win."),
   compactPaper: z.boolean().optional().describe('165/166 only: remove unformatted blank paragraphs and join short headings with their first body paragraph; false preserves standalone headings and blanks.'),
 });
 export type LayoutOptions = z.infer<typeof layoutOptionsSchema>;

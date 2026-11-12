@@ -19,6 +19,7 @@ import { originalPaperAvailableWidth, originalPaperMeasure } from "../src/origin
 
 const template = templateSchema.parse(JSON.parse(await fs.readFile(new URL("../templates/police_information_essay.json", import.meta.url), "utf8")));
 const enabled = { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true };
+const createDefaults = { ...enabled, neatFormat: true };
 const legacy = { wholeLatinWords: false, keepHeadingWithNext: false, avoidPunctuationOnlyLines: false };
 
 test("whole Latin words preserve all characters, long words and breaks at spaces", () => {
@@ -176,8 +177,8 @@ for (const paper of [false, true]) test(`split warnings reach check, bundle and 
 test("create tools default and partially override options; hash includes only supplied options", async () => withClient(async (client, store) => {
   const args = { templateId: template.id, title: "預設", sections, idempotencyKey: "layout_hash_01" };
   const created = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...args, responseDetail: "full" } }));
-  assert.deepEqual(created.answer.layoutOptions, enabled);
-  assert.deepEqual((await store.getRevision(created.answer.id, 1)).layoutOptions, enabled);
+  assert.deepEqual(created.answer.layoutOptions, createDefaults);
+  assert.deepEqual((await store.getRevision(created.answer.id, 1)).layoutOptions, createDefaults);
   assert.ok(created.layout.lines.some(line => line.isPadding));
   const canonical = (value: unknown) => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
@@ -187,13 +188,13 @@ test("create tools default and partially override options; hash includes only su
   const batch = data<{ answers: Array<{ answerId: string }> }>(await client.callTool({ name: "create_answers", arguments: { answers: [
     { templateId: template.id, title: "批次預設", sections }, { templateId: template.id, title: "部分", sections, layoutOptions: { wholeLatinWords: false } },
   ] } }));
-  assert.deepEqual((await store.getAnswer(batch.answers[0].answerId)).layoutOptions, enabled);
-  assert.deepEqual((await store.getAnswer(batch.answers[1].answerId)).layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true });
+  assert.deepEqual((await store.getAnswer(batch.answers[0].answerId)).layoutOptions, createDefaults);
+  assert.deepEqual((await store.getAnswer(batch.answers[1].answerId)).layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true, neatFormat: true });
   const explicit = { ...args, idempotencyKey: "layout_hash_02", layoutOptions: { wholeLatinWords: false } };
   const first = data<AnswerSnapshot>(await client.callTool({ name: "create_answer", arguments: { ...explicit, responseDetail: "full" } }));
   const { idempotencyKey: _key, ...request } = explicit;
   assert.equal((await store.getAnswer(first.answer.id)).createRequestHash, createHash("sha256").update(canonical({ ...request, templateId: template.id })).digest("hex"));
-  assert.deepEqual(first.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true });
+  assert.deepEqual(first.answer.layoutOptions, { wholeLatinWords: false, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true, neatFormat: true });
   assert.equal(data<{ replayed: boolean }>(await client.callTool({ name: "create_answer", arguments: explicit })).replayed, true);
   assert.throws(() => answerDocumentSchema.parse({ ...first.answer, layoutOptions: { extra: true } }), /Unrecognized/);
   for (const name of ["create_answer", "update_answer_info"] as const) {

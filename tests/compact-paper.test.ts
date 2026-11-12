@@ -10,8 +10,8 @@ import {answerSectionSchema} from '../src/domain.js';
 
 test('compact paper instruction is reachable through native guide and actual prompts/get',async()=>{
  const guide=writingGuide() as any;
- assert.ok(guide.paperLayout?.instruction.includes('sections[].heading'));
- assert.ok(guide.paperLayout?.instruction.includes('壹、前言：'));
+ assert.ok(guide.paperLayout?.instruction.includes('neatFormat'));
+ assert.ok(guide.paperLayout?.instruction.includes('獨佔一行'));
  const server=createEssayMcpServer(new FileStore()),client=new Client({name:'compact-contract',version:'1'});
  const [a,b]=InMemoryTransport.createLinkedPair();await server.connect(a);await client.connect(b);
  try{
@@ -19,7 +19,7 @@ test('compact paper instruction is reachable through native guide and actual pro
   assert.deepEqual(loaded.writingGuide,guide);
   for(const name of ['draft_answer','compress_answer']){
    const prompt=await client.getPrompt({name,arguments:name==='draft_answer'?{question:'合成題，解釋控制的作用。'}:{answerId:'ans_synthetic'}});
-   const body=JSON.stringify(prompt.messages);assert.ok(body.includes('sections[].heading'));assert.ok(body.includes('空白'));assert.ok(body.includes('既有'));
+   const body=JSON.stringify(prompt.messages);assert.ok(body.includes('neatFormat'));assert.ok(body.includes('空白'));assert.ok(body.includes('既有'));
   }
  }finally{await client.close();await server.close();}
 });

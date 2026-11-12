@@ -236,7 +236,7 @@ async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionN
   let answer: AnswerDocument;
   try {
     answer = { ...createAnswerDocument({ templateId, title, question, sections }), exam, questionNo,
-      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true,
+      layoutOptions: { wholeLatinWords: true, keepHeadingWithNext: true, avoidPunctuationOnlyLines: true, autoHangingIndent: true, neatFormat: true,
         ...(template.paperProfile ? { compactPaper: true } : {}), ...layoutOptions },
       ...(lineTargets ? { lineTargets: Object.fromEntries(lineTargets.map(({ sectionId, lines }) => [sectionId, lines])) } : {}) };
     const targetIds = new Set<string>();
@@ -523,6 +523,14 @@ function deletedSections(answer: AnswerDocument, sectionId: string): AnswerSecti
 function movedSections(answer: AnswerDocument, sectionId: string,
   { beforeSectionId, afterSectionId }: { beforeSectionId?: string; afterSectionId?: string }): AnswerSection[] {
   const moving = findSection(answer, sectionId);
+  if (beforeSectionId !== undefined && afterSectionId !== undefined) {
+    // Strict-schema clients must send both; keep the one that names a real other section,
+    // or both when they agree (after X directly precedes before Y).
+    const rest = answer.sections.filter((item) => item.id !== sectionId).map((item) => item.id);
+    const before = rest.indexOf(beforeSectionId), after = rest.indexOf(afterSectionId);
+    if (before >= 0 && after >= 0 && after + 1 !== before) throw new Error(`beforeSectionId（${beforeSectionId}）與 afterSectionId（${afterSectionId}）指向不同位置；只提供其中一個。`);
+    if (before >= 0) afterSectionId = undefined; else if (after >= 0) beforeSectionId = undefined;
+  }
   if ((beforeSectionId === undefined) === (afterSectionId === undefined)) throw new Error("beforeSectionId 與 afterSectionId 須擇一提供。");
   const anchorId = (beforeSectionId ?? afterSectionId)!;
   if (anchorId === sectionId) throw new Error("不能把區塊移到自己的前面或後面。");
@@ -1539,7 +1547,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const warnings = layoutWarnings(current.layout, template);
       const notes = [...plan.notes, ...layoutQualityNotes(template, current.answer, current.layout)];
       const structuredContent = { answerId, version: current.answer.version, layout: current.layout, sections: plan.sections, notes, warnings };
-      return { structuredContent, content: textContent(`${summarizeLayout(current.layout)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
+      return { structuredContent, content: textContent(`${summarizeLayout(current.layout, true)}\n各節：${describeLines(plan.sections)}\n${notes.join("\n")}${warnings.map((warning) => `\n${warning.code} 第${warning.page}頁第${warning.line}行：${warning.message}`).join("")}`) };
     },
   );
 

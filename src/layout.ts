@@ -172,6 +172,27 @@ function withAutomaticHangingIndent(
   return { ...format, hangingIndent: format.firstLineIndent + markerWidth };
 }
 
+/** Text column of the neat format (50招 p.9/p.16): two full-width cells in; numbers sit to its left. */
+const NEAT_TEXT_COLUMN = 4;
+type NeatRole = "numbered" | "body" | "lead" | "plain";
+/** Explicit indents (other than echoed zeros) keep the author's layout. */
+function hasExplicitIndent(...formats: Array<{ firstLineIndent?: number; hangingIndent?: number; leftIndent?: number } | undefined>): boolean {
+  return formats.some(format => Boolean(format?.firstLineIndent || format?.hangingIndent || format?.leftIndent));
+}
+function withNeatIndent(text: string, format: ParagraphFormat, template: AnswerTemplate, role: NeatRole): ParagraphFormat {
+  const marker = listNumberMarker(text);
+  if (marker) {
+    const width = template.paperProfile
+      ? Math.round(originalPaperMeasure(template)(marker) / (template.fontSizePt / 2))
+      : displayWidth(marker, format.tabSize);
+    const first = Math.max(0, NEAT_TEXT_COLUMN - width);
+    return { ...format, firstLineIndent: first, hangingIndent: first + width };
+  }
+  if (role === "body") return { ...format, firstLineIndent: NEAT_TEXT_COLUMN, hangingIndent: NEAT_TEXT_COLUMN };
+  if (role === "lead") return { ...format, firstLineIndent: NEAT_TEXT_COLUMN, hangingIndent: 0 };
+  return format;
+}
+
 function mergeHeadingStyle(template: AnswerTemplate, section: AnswerSection): HeadingStyle {
   return headingStyleSchema.parse({
     ...DEFAULT_HEADING_STYLE,
@@ -385,7 +406,8 @@ function compactPaperSection(template: AnswerTemplate, section: AnswerSection, o
   if (!paragraphs.length) return section.heading?.trim() ? section : { ...section, omitEmptySection: true };
   let heading = section.heading;
   if (heading?.trim() === '') heading = undefined;
-  if (heading && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
+  // The neat format keeps every heading on its own line, as both exam books require.
+  if (heading && !options.neatFormat && displayWidth(heading) <= template.columns - 2 && !/[\r\n]/u.test(heading)) {
     const prefix = heading + (/[：:]$/u.test(heading) ? '' : '：');
     const spaces = paragraphs[0].text.match(/^\s*/u)![0];
     const firstBody = spaces + (splitGraphemes(paragraphs[0].text.slice(spaces.length))[0] ?? '');
@@ -407,8 +429,11 @@ export function layoutSections(
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
+  const ordered = [...sections].sort((a, b) => a.order - b.order);
+  // Neat format: only the opening and closing sections are lead/closing prose; headless text between them is body.
+  const edgeIds = new Set([ordered[0]?.id, ordered.at(-1)?.id]);
 
-  for (const storedSection of [...sections].sort((a, b) => a.order - b.order)) {
+  for (const storedSection of ordered) {
     const section = compactPaperSection(template, storedSection, options);
     if (section.omitEmptySection) {
       sectionLineCounts.set(section.id, 0);
@@ -416,14 +441,18 @@ export function layoutSections(
     }
     const sectionStart = lines.length;
     const headingStyle = mergeHeadingStyle(template, section);
+    const neat = options.neatFormat && !hasExplicitIndent(template.paragraphDefaults, section.paragraphFormat);
+    let numberedSeen = false;
     if (section.heading) {
       if (headingStyle.numbered) headingOrdinal += 1;
+      const headingText = formatHeading(section.heading, headingStyle, headingOrdinal);
+      const headingFormat = paragraphFormatSchema.parse(headingStyle);
       addParagraph(
         lines,
         section.id,
         0,
-        formatHeading(section.heading, headingStyle, headingOrdinal),
-        paragraphFormatSchema.parse(headingStyle),
+        headingText,
+        neat && !hasExplicitIndent(section.headingStyle) ? withNeatIndent(headingText, headingFormat, template, "plain") : headingFormat,
         { isHeading: true },
         template,
         options,
@@ -441,11 +470,15 @@ export function layoutSections(
         section.id,
         section.sourceParagraphIndexes?.[index] ?? index + 1,
         paragraph.text,
-        withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
+        neat && !hasExplicitIndent(paragraph.format)
+          ? withNeatIndent(paragraph.text, format, template, listNumberMarker(paragraph.text) ? "numbered"
+            : section.heading || numberedSeen || !edgeIds.has(section.id) ? "body" : "lead")
+          : withAutomaticHangingIndent(paragraph.text, format, template, options, explicitHangingIndent),
         {},
         template,
         options,
       );
+      if (listNumberMarker(paragraph.text)) numberedSeen = true;
     });
     sectionLineCounts.set(section.id, lines.length - sectionStart);
   }
@@ -552,7 +585,8 @@ export function renderTextLine(line: LayoutLine, template: AnswerTemplate): stri
   return `${" ".repeat(indent)}${content}`;
 }
 
-export function summarizeLayout(report: LayoutReport): string {
+/** `plan` adds the cut plan for a far-over answer; only fresh checks pass it, so edits do not re-plan mid-way. */
+export function summarizeLayout(report: LayoutReport, plan = false): string {
   const pages = report.pageUsage
     .slice(0, report.pagesConfigured)
     .map((page) => `第${page.page}頁 ${page.linesUsed}/${page.capacity}行`)
@@ -564,7 +598,29 @@ export function summarizeLayout(report: LayoutReport): string {
   if (report.fits) {
     return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，尚餘 ${report.remainingLines} 行，狀態：OK。`;
   }
-  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。`;
+  return `${pages}；總計 ${report.totalLines}/${report.capacity} 行，超出 ${report.overflowLines} 行，狀態：超出。${plan ? largeOverflowPlan(report) : ""}`;
+}
+
+// Evals: on a far-over draft, models shaved one sentence per replace_text and ran out of turns.
+// Cuts go to unprotected sections first, then compressionHints' order, and add one spare line
+// because a shorter section can push a following heading to the next page (keepHeadingWithNext).
+const LARGE_OVERFLOW_LINES = 5;
+function largeOverflowPlan(report: LayoutReport): string {
+  if (report.overflowLines < LARGE_OVERFLOW_LINES) return "";
+  let need = report.overflowLines + 1;
+  const cuts: string[] = [];
+  const ordered = [...report.compressionHints].sort((a, b) => Number(a.protected) - Number(b.protected) || a.rank - b.rank);
+  for (const hint of ordered) {
+    if (need <= 0) break;
+    const floor = hint.heading ? 2 : 1; // shortcut: assumes a one-line heading; long headings or many paragraphs need more
+    const share = hint.protected ? 0.3 : 0.5; // protected sections only tighten wording
+    const cut = Math.min(need, Math.floor(hint.currentLines * share), Math.max(0, hint.currentLines - floor));
+    if (cut <= 0) continue;
+    cuts.push(`${hint.sectionId} ${hint.currentLines}→${hint.currentLines - cut} 行`);
+    need -= cut;
+  }
+  if (need > 0) return "超出較多：只濃縮措辭仍放不進，需要捨棄論點或改寫架構；先向使用者說明取捨，不要悄悄刪除。";
+  return `超出較多：不要逐句小改；依序對下列各節各用一次 replace_text 整節濃縮到目標行數（保留標題與各論點；段落有格式時用 paragraphs 帶回原 format）：${cuts.join("、")}。每次寫入後看回傳行數，已在容量內就停止，不再壓縮其餘節，最後再 check_layout。`;
 }
 
 // Runtime validation remains at the domain boundary; these imports also make

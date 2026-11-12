@@ -4,15 +4,15 @@ export const WRITING_GUIDE_HINT = '\nwritingGuide已附三階段寫作指引、�
 /** Static caller guidance; never inspects an answer or calls a model/source. */
 export function writingGuide() {
   return {
-    version:'essay-guide-20261103.3',
+    version:'essay-guide-20261111.1',
     limits:{callerGuidanceOnly:true,automaticSemanticVerification:false,automaticSourceVerification:false,
       templateUnchanged:true,paperCapacityLines:44,capacityAppliesTo:'165/166原稿紙；其他模板以回傳template容量為準',recordedEvidenceMaxNoteCharacters:2000},
     stages:{
-      draft:'先按每小問與指令動詞擬綱；依明確配分安排時間、核心篇幅與標題，先核心再深入，無配分不捏造。依題型選路徑，不要求全部出現：解釋看概念機制；比較逐共同維度對照；原因說明機制條件；對策對原因、執行與取捨；案例連結具體事實與要件，不重抄，只有真相關爭議才列不同見解。前言本文結論可選，不強制每段四句或案例。先論證後壓縮，不捏造法條、官方採點或高分保證。',
+      draft:'先按每小問與指令動詞擬綱；依明確配分安排時間、核心篇幅與標題，先核心再深入，無配分不捏造。依題型選路徑，不要求全部出現：解釋看概念機制；比較逐共同維度對照；原因說明機制條件；對策對原因、執行與取捨；案例連結具體事實與要件，不重抄，只有真相關爭議才列不同見解。前言、結語為必要段落（法科實例題、計算題只需結論），不強制每段四句或案例。先論證後壓縮，不捏造法條、官方採點或高分保證。',
       compress:'先read_answer與check_layout，逐小問比較修改前後。先刪套話、重複與離題補充，再縮句；保護要件、否定條件、比較維度、推理與原因對策對應。不能只剩名詞、刪必要小問、縮字級或改165版面。fits只表示容量；每次修改後重查語義並重核review，不能複製舊checked。',
       review:'依原題、原句與實際材料逐項核對。將呼叫者發現記入對應requirements[].review.note，使用下列issueNoteTemplate；無法定位就寫待定位，不捏造原句或頁碼。未解決缺口用rejected；只有真正核對且該項問題已解決才用checked，未核對則省略證據。修改後review stale，實際重核後以最新expectedVersion呼叫set_answer_review，再review_answer。callerNote只是呼叫者原文，不是自動結論。',
     },
-    paperLayout:{instruction:COMPACT_PAPER_INSTRUCTION,sectionExample:{id:'intro',heading:'壹、前言',text:'依職務需求配置權限，並保留複核程序。'},note:'新建165/166預設layoutOptions.compactPaper=true：無特殊格式的短heading與首段同列；空段及完全空白且無特殊格式的section不佔行，判斷實際文字，不只看isSpacer。原始資料及空section id仍保存供複查。非空heading而正文缺漏仍保留；明確段距等特殊格式或compactPaper=false保留原排版。歷史答案未設定時不套用。不是內容驗證。'},
+    paperLayout:{instruction:COMPACT_PAPER_INSTRUCTION,sectionExample:{id:'s1',heading:'(一)權限配置的原則：',text:'依職務需求配置權限，並保留複核程序。'},note:'新建答案預設layoutOptions.neatFormat=true：heading獨佔一行，前言、結語不設heading；165/166另預設compactPaper=true：空段及完全空白且無特殊格式的section不佔行，判斷實際文字，不只看isSpacer。原始資料及空section id仍保存供複查。非空heading而正文缺漏仍保留；明確段距等特殊格式或compactPaper=false保留原排版。歷史答案未設定時不套用。不是內容驗證。'},
     applicability:APPLICABILITY_INSTRUCTION,
     materialBoundaries:MATERIAL_BOUNDARY_INSTRUCTION,
     taskBoundaries:TASK_BOUNDARY_INSTRUCTION,

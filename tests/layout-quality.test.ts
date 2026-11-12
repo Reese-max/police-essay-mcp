@@ -181,7 +181,7 @@ test("layout quality notes name skipped levels and disabled auto hanging indent"
     { id: "c", text: "丙段頂格。", paragraphFormat: { firstLineIndent: 0 } },
   ]);
   assert.deepEqual(indents.length, 1);
-  assert.match(indents[0], /「丙段頂格。」首行縮排 0，與其他內文段落的 4 不同/);
+  assert.match(indents[0], /「丙段頂格。」首行起點 0，與其他內文段落的 4 不同/);
 });
 
 test("compactPaper inlined headings and colon list items are not embedded headings", { skip: !process.env.ESSAY_MCP_PAPER_FONT }, () => {
