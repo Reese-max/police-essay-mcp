@@ -299,3 +299,17 @@ test("renumbering notes reach the preview, and an impossible renumbering is stil
     assert.match(text(inserted), /無法自動重新編號：.*第 100 項/);
   });
 });
+
+test("review rv-final: toggling avoidPunctuationOnlyLines alone is a saved change, not a no-op", async () => {
+  await withClient(async (client, store) => {
+    const created = await client.callTool({ name: "create_answer", arguments: { title: "標點", sections: [{ id: "a", text: "內容。" }],
+      layoutOptions: { avoidPunctuationOnlyLines: false } } });
+    const answer = (created.structuredContent as { answer: AnswerDocument }).answer;
+    const updated = await client.callTool({ name: "update_answer_info", arguments: { answerId: answer.id, expectedVersion: answer.version,
+      layoutOptions: { ...answer.layoutOptions, avoidPunctuationOnlyLines: true } } });
+    assert.equal(updated.isError, undefined, text(updated));
+    const saved = await store.getAnswer(answer.id);
+    assert.equal(saved.layoutOptions?.avoidPunctuationOnlyLines, true, text(updated));
+    assert.equal(saved.version, answer.version + 1);
+  });
+});
