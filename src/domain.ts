@@ -144,17 +144,7 @@ export const answerSectionInputSchema = answerSectionInputBaseSchema.superRefine
     });
   }
 
-  // Assistants send the unused field empty: paragraphs [] with text, or text "" with paragraphs. Neither is a conflict.
-  if (input.text && input.paragraphs?.length) {
-    const paragraphText = input.paragraphs.map((paragraph) => paragraph.text).join("\n");
-    if (normalizeNewlines(input.text) !== normalizeNewlines(paragraphText)) {
-      context.addIssue({
-        code: "custom",
-        path: ["paragraphs"],
-        message: "text 與 paragraphs 內容不一致；請只提供其中一種，或讓兩者完全相同。",
-      });
-    }
-  }
+
 });
 
 export const answerSectionSchema = answerSectionInputBaseSchema.extend({
@@ -448,6 +438,8 @@ function looseText(text: string): string {
  * A find that matches more than once must name occurrence or replaceAll; a newline in replace
  * splits the paragraph (each part keeps its format) and emptying a paragraph removes it.
  */
+export class NoChangesError extends Error {}
+
 export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { sections: AnswerSection[]; replacements: number[] } {
   const working = sections.map((section) => ({
     section,
@@ -548,7 +540,7 @@ export function applyTextEdits(sections: AnswerSection[], edits: TextEdit[]): { 
     }, item.section.order);
   });
   if (!working.some((item) => item.changed) || JSON.stringify(updated) === JSON.stringify(sections)) {
-    throw new Error("修改後的內容與原文相同，沒有需要儲存的變更。");
+    throw new NoChangesError("修改後的內容與原文相同，沒有需要儲存的變更。");
   }
   return { sections: updated, replacements };
 }

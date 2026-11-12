@@ -219,7 +219,7 @@ test("legacy reads, update toggles, duplicates, previews and revisions use store
   assert.equal(oldCopy.answer.layoutOptions, undefined); assert.deepEqual(oldCopy.layout, original.layout);
   const toggled = data<AnswerSnapshot & { changes: string[] }>(await client.callTool({ name: "update_answer_info", arguments: {
     answerId: answer.id, expectedVersion: 1, layoutOptions: enabled, responseDetail: "full" } }));
-  assert.deepEqual(toggled.changes, ["整字換行：關 → 開", "標題不落頁尾：關 → 開", "自動懸掛縮排：關 → 開"]);
+  assert.deepEqual(toggled.changes, ["整字換行：關 → 開", "標題不落頁尾：關 → 開", "避免標點獨佔一行：關 → 開", "自動懸掛縮排：關 → 開"]);
   assert.equal(toggled.answer.version, 2); assert.equal(toggled.layout.totalLines, original.layout.totalLines + 1);
   assert.deepEqual(data<AnswerSnapshot>(await client.callTool({ name: "load_exam_paper", arguments: { answerId: answer.id } })).layout, toggled.layout);
   const copy = data<AnswerSnapshot>(await client.callTool({ name: "duplicate_answer", arguments: { answerId: answer.id, responseDetail: "full" } }));

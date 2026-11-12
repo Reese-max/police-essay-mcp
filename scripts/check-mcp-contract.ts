@@ -121,7 +121,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "create_answer": {
     "before": "Use this when the user wants a new editable essay answer bound to a specific answer-sheet template. Sections support per-paragraph indentation, alignment, spacing, tabs, emphasis, and automatic heading styles.",
-    "after": "Create an editable answer. Omit templateId for the default 165 paper; pass one only when the user picks a paper. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4. Preserve supplied drafts; include explicit section IDs, matching lineTargets in version 1 and known exam/questionNo. Allocate targets from the user's budget or template capacity, not current usage; do not expand drafts to meet targets. examId resumes existing planned questions; retry with the same idempotencyKey and identical request."
+    "after": "Create an editable answer. Nonempty paragraphs take precedence over text. Omit templateId for the default 165 paper; pass one only when the user picks a paper. Indent values are display-width units: one full-width cell is 2, so a 2-cell first-line indent is firstLineIndent 4. Preserve supplied drafts; include explicit section IDs, matching lineTargets in version 1 and known exam/questionNo. Allocate targets from the user's budget or template capacity, not current usage; do not expand drafts to meet targets. examId resumes existing planned questions; retry with the same idempotencyKey and identical request."
   },
   "delete_text": {
     "before": "Use this when the user explicitly wants to remove one section from an answer; the remaining sections are reflowed afterward.",
@@ -157,7 +157,7 @@ export const DESCRIPTION_CHANGES: Record<string, { before: string; after: string
   },
   "replace_text": {
     "before": "Use this when the user wants to revise one existing section without regenerating unrelated sections; optional paragraphs can replace the text with independent formatting, and the answer is reflowed afterward.",
-    "after": "Replace one section's text or paragraphs at expectedVersion; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched. During compression retain headings, numbered subheadings and distinct substantive points; do not replace multiple sections with one summary."
+    "after": "Replace one section's text or paragraphs at expectedVersion; nonempty paragraphs take precedence over newText; omit heading to keep it (a new heading replaces it, null removes it); other sections stay untouched. During compression retain headings, numbered subheadings and distinct substantive points; do not replace multiple sections with one summary."
   },
   "write_answer": {
     "before": "Use this when the user has generated or rewritten the full answer and wants it stored as ordered editable sections; paragraph-level formatting is preserved and line count is delegated to the layout engine.",

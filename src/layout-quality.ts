@@ -175,6 +175,20 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     ? "結構提醒：編號段落的續行未對齊內文；建議以 update_answer_info 設定 layoutOptions.autoHangingIndent=true。"
     : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
   notes.push(...bookNotes);
+  // 50招 p.122 / 高分寫作 p.92: about 1.5 lines per point; allow 25% variation.
+  const question = answer.question ?? "";
+  const explicitTotal = question.match(/[（(]\s*(?:共|總分)\s*(\d+)\s*分\s*[）)]/u);
+  const matches = [...question.matchAll(/[（(]\s*(\d+)\s*分\s*[）)]/gu)];
+  const scores = matches.map(match => Number(match[1]));
+  const sum = scores.reduce((total, score) => total + score, 0);
+  const subquestion = question.search(/[（(][一二三四五六七八九十\d]+[）)]/u);
+  // An overall score before the first numbered subquestion is not a sub-score.
+  const leadingTotal = subquestion >= 0 && matches[0] && matches[0].index! < subquestion;
+  const points = explicitTotal ? Number(explicitTotal[1]) : leadingTotal ? scores[0] : sum;
+  const target = Math.min(report.capacity, points * 1.5);
+  if (answer.layoutOptions?.neatFormat && target > 0 && report.totalLines < target * 0.75) {
+    notes.push(`篇幅提醒：目前 ${report.totalLines} 行，明顯少於配分建議約 ${Math.round(target)} 行（配分×1.5，以容量 ${report.capacity} 行為上限）；自行撰寫的新答案建議補充論述或例證，勿加空白湊行；使用者提供的原稿仍須先取得擴寫授權。`);
+  }
   return notes;
 }
 

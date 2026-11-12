@@ -69,7 +69,7 @@ test("update_answer_info files an answer under an exam, and duplicate_answer cop
       assert.match(text(result), /考試：未設定→「114年警察特考」/);
       assert.match(text(result), /題號：未設定→第 1 題/);
       result = await client.callTool({ name: "update_answer_info", arguments: { answerId: answer.id, expectedVersion: 2, exam: "114年警察特考" } });
-      assert.equal(result.isError, true);
+      assert.equal(result.isError, undefined);
       assert.match(text(result), /沒有需要儲存的變更/);
 
       result = await client.callTool({ name: "list_answers", arguments: {} });
