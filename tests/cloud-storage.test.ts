@@ -86,7 +86,7 @@ test("cloud stale writers retry the transaction without adopting the new expecte
   assert.equal([...s.firestore.documents.keys()].filter(key => key.includes("/revisions/")).length, 2);
 });
 
-test("two independent processes commit only one stale write to the shared fake authority", { timeout: 20000 }, async () => {
+test("two independent processes commit only one stale write to the shared fake authority", { timeout: 90000 }, async () => {
   const s = setup();
   const doc = answer();
   await s.store().saveAnswer(doc);

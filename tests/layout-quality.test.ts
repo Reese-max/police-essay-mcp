@@ -51,6 +51,10 @@ test("embedded heading paragraphs count only numbered body paragraphs without se
   assert.equal(leadIn.embeddedHeadingParagraphs, 0);
   const proseBelow = score(standard, [{ text: "（三）流程\n擬具需求並公告周知。" }]);
   assert.equal(proseBelow.embeddedHeadingParagraphs, 1);
+  const shortList = score(standard, [{ heading: "貳、順序", text: "一、CPU暫存器與快取\n二、記憶體\n三、磁碟" }]);
+  assert.equal(shortList.embeddedHeadingParagraphs, 0);
+  const titlesWithProse = score(standard, [{ text: "一、管理措施\n應落實。\n二、檢討機制\n應定期。" }]);
+  assert.equal(titlesWithProse.embeddedHeadingParagraphs, 2);
 });
 
 test("numbered paragraph detection covers the supported Chinese and Arabic marker families", () => {
@@ -194,4 +198,47 @@ test("compactPaper inlined headings and colon list items are not embedded headin
     { id: "c", heading: "參、丙", text: "說明。" }, { id: "d", heading: `肆、${long}`, text: "說明。" },
   ], options);
   assert.equal(mixed.hierarchyIssues, 0);
+});
+test("hierarchy checks sentence-ending list items and names headless sections that restart numbering", async () => {
+  const { layoutQualityNotes } = await import("../src/layout-quality.js");
+  const notesFor = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) => {
+    const answer = createAnswerDocument({ templateId: standard.id, title: "t", sections });
+    return layoutQualityNotes(standard, answer, layoutSections(standard, answer.sections));
+  };
+  const skipped = notesFor([{ id: "a", heading: "壹、概念", text: "（一）驗證：確認身分。\n（二）授權：最小權限。" }]);
+  assert.match(skipped.join(""), /「（一）驗證：確認身分。」跳過中間層級/);
+  const headless = notesFor([
+    { id: "a", text: "（一）意義：甲說明。\n（二）比較：乙說明。" },
+    { id: "b", text: "（一）意義：丙說明。\n（二）比較：丁說明。" },
+  ]);
+  assert.equal(headless.length, 1);
+  assert.match(headless[0], /「（一）意義：丙說明。」所在的節沒有標題.*補上該節 heading/);
+  const leadIn = notesFor([
+    { id: "a", heading: "一、爭點分析", text: "（一）意義：甲說明。\n（二）要件：乙說明。" },
+    { id: "b", text: "針對本爭點，說明如下：\n（一）意義：丙說明。\n（二）要件：丁說明。" },
+  ]);
+  assert.equal(leadIn.length, 1);
+  assert.match(leadIn[0], /所在的節沒有標題/);
+  assert.deepEqual(notesFor([
+    { id: "a", heading: "一、甲", text: "（一）意義：甲說明。\n（二）比較：乙說明。" },
+    { id: "b", heading: "二、乙", text: "（一）意義：丙說明。\n（二）比較：丁說明。" },
+  ]), []);
+});
+
+test("overflow note gives a character budget from the measured characters per line", async () => {
+  const { planLines } = await import("../src/planning.js");
+  const answer = createAnswerDocument({ templateId: standard.id, title: "t", sections: [{ text: "甲".repeat(5000) }] });
+  const layout = layoutSections(standard, answer.sections);
+  const perLine = [...layout.lines[0].text].length;
+  const note = planLines(answer, layout).notes.find(text => text.startsWith("超出答案紙"))!;
+  assert.match(note, new RegExp(`每行約 ${perLine} 字，約需刪 ${layout.overflowLines * perLine} 字`));
+});
+
+test("a headings-only answer is reported as having no body instead of OK", async () => {
+  const { summarizeLayout } = await import("../src/layout.js");
+  const status = (sections: Parameters<typeof createAnswerDocument>[0]["sections"]) =>
+    summarizeLayout(layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "t", sections }).sections));
+  assert.match(status([{ heading: "壹、論證評析", text: "" }, { heading: "貳、導入決策", paragraphs: [{ text: "" }] }]), /尚無內文.*write_answer/);
+  assert.match(status([{ heading: "壹、概念", text: "" }, { heading: "一、定義", text: "內容。" }]), /狀態：OK/);
+  assert.match(status([]), /尚無內文/);
 });
