@@ -64,6 +64,7 @@ try{
     const pv=await version(id);await change('preview_change',id,{operation:'edit_text',edits:[{find:'alpha',replace:'alpha-preview'}]});assert.equal(await version(id),pv);
     await change('edit_text',id,{edits:[{find:'alpha',replace:'alpha-edited'}]});
     await change('replace_text',id,{sectionId:'b',newText:'Synthetic beta replacement.'});
+    await change('replace_texts',id,{replacements:[{sectionId:'a',newText:'Synthetic alpha-edited batch.'},{sectionId:'b',newText:'Synthetic beta batch.'}]});
     await change('insert_text',id,{section:{id:'tail',text:'Synthetic temporary tail.'}});
     await change('format_section',id,{sectionId:'tail',paragraphFormat:{firstLineIndent:1}});
     await change('move_section',id,{sectionId:'b',beforeSectionId:'a'});
