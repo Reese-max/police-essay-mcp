@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, verify, type JsonWebKey } from "node:crypto";
 
 export const OAUTH_SCOPES = ["essay.read", "essay.write", "essay.export"] as const;
-export const WRITE_TOOLS = ["start_exam", "delete_exam", "create_answer", "create_answers", "write_answer", "replace_text", "format_section", "insert_text", "delete_text", "delete_answer",
+export const WRITE_TOOLS = ["start_exam", "delete_exam", "create_answer", "create_answers", "write_answer", "replace_text", "replace_texts", "format_section", "insert_text", "delete_text", "delete_answer",
   "edit_text", "restore_revision", "move_section", "renumber_items", "set_line_targets", "update_answer_info", "duplicate_answer", "set_answer_review"] as const;
 export const EXPORT_TOOLS = ["export_answer", "export_exam_bundle"] as const;
 export const READ_TOOLS = ["get_exam_progress", "list_templates", "load_exam_paper", "list_answers", "read_answer",

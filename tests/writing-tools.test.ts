@@ -313,3 +313,73 @@ test("review rv-final: toggling avoidPunctuationOnlyLines alone is a saved chang
     assert.equal(saved.version, answer.version + 1);
   });
 });
+
+test("replace_texts batches sections atomically in one version and previews the same change", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([
+      { id: "intro", text: "舊前言。" },
+      { id: "body", heading: "(一)本文：", text: "舊本文。" },
+      { id: "end", text: "綜上所述，保留結語。" },
+    ]);
+    await store.saveAnswer(answer);
+    const replacements = [
+      { sectionId: "intro", newText: "新前言。" },
+      { sectionId: "body", newText: "應忽略的文字", paragraphs: [{ text: "新本文。", format: { bold: true } }] },
+    ];
+    const args = { answerId: answer.id, expectedVersion: 1, replacements, responseDetail: "full" };
+    const preview = await client.callTool({ name: "preview_change", arguments: { ...args, responseDetail: undefined, operation: "replace_texts" } });
+    assert.equal(preview.isError, undefined, text(preview));
+    assert.deepEqual(await store.getAnswer(answer.id), plain(answer));
+    const result = await client.callTool({ name: "replace_texts", arguments: args });
+    assert.equal(result.isError, undefined, text(result));
+    const saved = await store.getAnswer(answer.id);
+    assert.equal(saved.version, 2);
+    assert.equal((await store.listRevisions(answer.id, { limit: 10 })).length, 2);
+    assert.deepEqual(saved.sections.map(s => s.id), ["intro", "body", "end"]);
+    assert.equal(saved.sections[0].text, "新前言。");
+    assert.equal(saved.sections[1].text, "新本文。");
+    assert.equal(saved.sections[1].heading, answer.sections[1].heading);
+    assert.equal(saved.sections[1].paragraphs![0].format?.bold, true);
+    assert.deepEqual(saved.sections[2], plain(answer.sections[2]));
+    assert.deepEqual((preview.structuredContent as any).after.answer.sections, plain(saved.sections));
+    // The original single-section request remains compatible, including heading removal.
+    const single = await client.callTool({ name: "replace_text", arguments: {
+      answerId: answer.id, expectedVersion: 2, sectionId: "body", heading: null, newText: "單節修改。",
+    } });
+    assert.equal(single.isError, undefined, text(single));
+    assert.equal((await store.getAnswer(answer.id)).version, 3);
+    assert.equal((await store.getAnswer(answer.id)).sections[1].heading, undefined);
+  });
+});
+
+test("replace_texts rejects the entire batch on invalid sections, content or conflicts", async () => {
+  await withClient(async (client, store) => {
+    const answer = answerWith([{ id: "a", text: "甲。" }, { id: "b", text: "乙。" }]);
+    await store.saveAnswer(answer);
+    const valid = { sectionId: "a", newText: "不可部分寫入。" };
+    for (const replacements of [
+      [valid, { sectionId: "missing", newText: "不存在。" }],
+      [valid, { sectionId: "b" }],
+      [valid, { sectionId: "b", paragraphs: [{ text: "非法格式。", format: { leftIndent: -1 } }] }],
+      [valid, valid], [],
+    ]) {
+      const result = await client.callTool({ name: "replace_texts", arguments: { answerId: answer.id, expectedVersion: 1, replacements } });
+      assert.equal(result.isError, true, text(result));
+      const preview = await client.callTool({ name: "preview_change", arguments: { answerId: answer.id, operation: "replace_texts", expectedVersion: 1, replacements } });
+      assert.equal(preview.isError, true, text(preview));
+      assert.deepEqual(await store.getAnswer(answer.id), plain(answer));
+      assert.equal((await store.listRevisions(answer.id, { limit: 10 })).length, 1);
+    }
+    const mixed = await client.callTool({ name: "replace_texts", arguments: {
+      answerId: answer.id, expectedVersion: 1, sectionId: "a", newText: "混用。", replacements: [valid],
+    } });
+    assert.equal(mixed.isError, true);
+    const stale = await client.callTool({ name: "replace_texts", arguments: {
+      answerId: answer.id, expectedVersion: 2, replacements: [valid, { sectionId: "b", newText: "衝突。" }],
+    } });
+    assert.equal(stale.isError, true);
+    assert.match(text(stale), /Version conflict/);
+    assert.deepEqual(await store.getAnswer(answer.id), plain(answer));
+    assert.equal((await store.listRevisions(answer.id, { limit: 10 })).length, 1);
+  });
+});

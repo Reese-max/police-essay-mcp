@@ -101,11 +101,17 @@ const formattingPayloadSchema = z.object({
 });
 
 /** The write tools preview_change can preview; their own argument names are reused unchanged. */
-const PREVIEW_OPERATIONS = ["write_answer", "replace_text", "format_section", "insert_text", "delete_text", "edit_text",
+const PREVIEW_OPERATIONS = ["write_answer", "replace_text", "replace_texts", "format_section", "insert_text", "delete_text", "edit_text",
   "move_section", "renumber_items"] as const;
 type PreviewOperation = typeof PREVIEW_OPERATIONS[number];
 
 const sectionIdSchema = z.string().min(1);
+const replacementBatchSchema = z.strictObject({
+  replacements: z.array(replacementContentSchema.extend({ sectionId: sectionIdSchema })).min(1).max(100),
+}).superRefine(({ replacements }, context) => {
+  if (new Set(replacements.map(item => item.sectionId)).size !== replacements.length)
+    context.addIssue({ code: "custom", path: ["replacements"], message: "replacements 的 sectionId 不可重複。" });
+});
 const textEditsSchema = z.array(textEditSchema).min(1).max(50);
 const textModeSchema = z.enum(["paper", "paragraphs"]).default("paper").describe("TXT only: paper grid or unwrapped paragraphs.");
 const examIdSchema = z.string().regex(/^exam_[A-Za-z0-9-]+$/);
@@ -355,6 +361,7 @@ async function commitCreate(store: EssayStore, prepared: PreparedCreate): Promis
 const previewArgumentSchemas = {
   write_answer: z.object({ sections: z.array(answerSectionInputSchema).max(100) }),
   replace_text: replacementContentSchema.extend({ sectionId: sectionIdSchema }),
+  replace_texts: replacementBatchSchema.strip(),
   format_section: formattingPayloadSchema.extend({ sectionId: sectionIdSchema }),
   insert_text: z.object({ afterSectionId: sectionIdSchema.optional(), section: answerSectionInputSchema }),
   delete_text: z.object({ sectionId: sectionIdSchema }),
@@ -507,6 +514,12 @@ function replacedSections(answer: AnswerDocument, sectionId: string,
     : section);
 }
 
+function batchReplacedSections(answer: AnswerDocument, replacements: z.infer<typeof replacementBatchSchema>["replacements"]): AnswerSection[] {
+  let sections = answer.sections;
+  for (const { sectionId, ...content } of replacements) sections = replacedSections({ ...answer, sections }, sectionId, content);
+  return sections;
+}
+
 function formattedSections(answer: AnswerDocument, sectionId: string,
   { paragraphFormat, headingStyle, paragraphFormats }: z.infer<typeof formattingPayloadSchema>): AnswerSection[] {
   findSection(answer, sectionId);
@@ -613,6 +626,7 @@ function proposedSections(answer: AnswerDocument, operation: Exclude<PreviewOper
       const value = previewArguments(operation, schemas.replace_text, args);
       return replacedSections(answer, value.sectionId, value);
     }
+    case "replace_texts": return batchReplacedSections(answer, previewArguments(operation, schemas.replace_texts, args).replacements);
     case "format_section": {
       const value = previewArguments(operation, schemas.format_section, args);
       return formattedSections(answer, value.sectionId, value);
@@ -657,7 +671,7 @@ async function makeChangePreview<Operation extends PreviewOperation>(
   };
 }
 
-const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "format_section", "insert_text", "preview_change"]);
+const FORMATTING_TOOLS = new Set(["create_answer", "write_answer", "replace_text", "replace_texts", "format_section", "insert_text", "preview_change"]);
 
 function noAnswerFoundMessage(answerId: string): string {
   return `找不到答案 ${answerId}。先呼叫 create_answer 建立答案，或確認 answerId。`;
@@ -1107,6 +1121,27 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     },
   );
 
+  const replaceTextsTool = registerTool(
+    "replace_texts",
+    {
+      title: "批次替換申論區塊",
+      description: "Replace multiple existing sections atomically in one version. Send replacements with sectionId and newText or paragraphs; preserve unrelated content and headings. All items must be valid before any are saved.",
+      inputSchema: replacementBatchSchema.safeExtend({ answerId: answerIdSchema, expectedVersion: expectedVersionSchema, responseDetail: responseDetailSchema }),
+      outputSchema: writeOutputSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+      _meta: { ui: { visibility: ["model", "app"] } },
+    },
+    async ({ answerId, expectedVersion, responseDetail, replacements }) => {
+      const before = await loadSnapshot(store, answerId);
+      assertExpectedVersion(before.answer, expectedVersion);
+      const sections = batchReplacedSections(before.answer, replacements);
+      await store.saveAnswer(hypotheticalAnswer(before.answer, sections), { expectedVersion: before.answer.version });
+      const current = await loadSnapshot(store, answerId);
+      return { structuredContent: writeResponse(current, responseDetail),
+        content: textContent(`已批次修改 ${replacements.length} 節；${summarizeLayout(current.layout)}${changeText(before, current)}`) };
+    },
+  );
+
   const formatSectionTool = registerTool(
     "format_section",
     {
@@ -1214,7 +1249,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     "preview_change",
     {
       title: "預覽修改",
-      description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId), edit_text (edits), move_section (sectionId, beforeSectionId or afterSectionId) or renumber_items (sectionId).",
+      description: "Use this before any write tool when the user wants to see what it would change without saving: each changed paragraph with its page and line, the line-count delta and any overflow. Set operation to the write tool being previewed and pass that tool's own arguments with it: write_answer (sections), replace_text (sectionId, newText or paragraphs, heading), replace_texts (replacements), format_section (sectionId, paragraphFormat, headingStyle, paragraphFormats), insert_text (section, afterSectionId), delete_text (sectionId), edit_text (edits), move_section (sectionId, beforeSectionId or afterSectionId) or renumber_items (sectionId).",
       // Keep top-level arguments intact; previewedSections validates the selected tool's schema.
       inputSchema: z.object({
         answerId: answerIdSchema,
@@ -1994,7 +2029,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
   );
 
   for (const [name, tool] of [
-    ["start_exam", startExamTool], ["delete_exam", deleteExamTool], ["create_answer", createAnswerTool], ["create_answers", createAnswersTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool],
+    ["start_exam", startExamTool], ["delete_exam", deleteExamTool], ["create_answer", createAnswerTool], ["create_answers", createAnswersTool], ["write_answer", writeAnswerTool], ["replace_text", replaceTextTool], ["replace_texts", replaceTextsTool],
     ["format_section", formatSectionTool], ["insert_text", insertTextTool], ["delete_text", deleteTextTool],
     ["delete_answer", deleteAnswerTool], ["edit_text", editTextTool], ["restore_revision", restoreRevisionTool],
     ["move_section", moveSectionTool], ["renumber_items", renumberItemsTool], ["set_line_targets", setLineTargetsTool],

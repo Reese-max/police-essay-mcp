@@ -29303,6 +29303,10 @@
   },
   "intentionalDifferences": [
     {
+      "path": "owner.tools[replace_texts];*.tools[preview_change].operation",
+      "reason": "New essay.write batch replacement validates every item before one save and one version; preview_change shares the same derivation. Existing replace_text fields and semantics remain unchanged."
+    },
+    {
       "path": "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
       "reason": "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget."
     },

@@ -10,7 +10,7 @@ import { FileStore } from "../src/storage.js";
 import { ANSWER_SHEET_WIDGET_URI } from "../src/widget.js";
 import { toolScope } from "../src/oauth.js";
 
-export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
+export const INTENTIONAL_DIFFERENCES = [{"path": "owner.tools[replace_texts];*.tools[preview_change].operation", "reason": "New essay.write batch replacement validates every item before one save and one version; preview_change shares the same derivation. Existing replace_text fields and semantics remain unchanged."}, { path: "*.tools[review_answer];owner.tools[set_answer_review];*.resources[answer-review-plan-schema]",
   reason: "Add explicit, version-bound review manifests and read-only structural checks; source and semantic correctness remain not_checked. Full plan schema is a resource to retain the tools/list budget." }, { path: "*.tools[check_layout,create_answer,delete_text,format_section,insert_text,list_answers,list_templates,load_exam_paper,read_answer,render_answer_sheet,replace_text,write_answer].description;owner.tools[create_answer].inputSchema.examId;*.tools[start_exam,get_exam_progress]",
   reason: "Exam plans and derived resume progress; optional examId links creates. Exact short descriptions replace workflow prose moved to server instructions to preserve the 80000-byte budget." },
 { path: "*.tools[render_exam_overview]",
@@ -54,7 +54,7 @@ export const INTENTIONAL_DIFFERENCES = [{ path: "*.tools[review_answer];owner.to
 { path: "*.resourceTemplates[export-artifact].description",
    reason: "Export resource guidance names export_answer and export_exam_bundle instead of the removed legacy tools." }];
 export const BASE_COMMIT = "18cb1760160d2849039277c13546f168a0956329";
-export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "delete_answer", "delete_exam", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
+export const ADDED_TOOLS = ["review_answer", "set_answer_review", "start_exam", "get_exam_progress", "create_answers", "replace_texts", "delete_answer", "delete_exam", "duplicate_answer", "edit_text", "export_answer", "export_exam_bundle", "list_revisions", "move_section",
   "preview_change", "render_exam_overview", "renumber_items", "restore_revision", "set_line_targets", "update_answer_info"];
 /** Added tools that only need essay.read, so read credentials list them too. */
 export const ADDED_READ_TOOLS = ["review_answer", "get_exam_progress", "list_revisions", "preview_change", "render_exam_overview"];
