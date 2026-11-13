@@ -164,6 +164,15 @@ async function createReplay(store: EssayStore, answer: AnswerDocument): Promise<
 async function prepareCreate(store: EssayStore, input: unknown, defaultQuestionNo?: number): Promise<PreparedCreate> {
   const parsed = createRequestSchema.safeParse(input);
   if (!parsed.success) throw new CreateError("INVALID_INPUT", parsed.error.issues.map(issue => `${issue.path.join(".") || "輸入"}：${issue.message}`).join("；"));
+  // Keep valid exam links unchanged; a missing/foreign id must not waste the saved draft.
+  if (parsed.data.examId) {
+    try { await store.getExam(parsed.data.examId); }
+    catch (error) {
+      if (!isStoreNotFound(error)) throw error;
+      const standalone = await prepareCreate(store, { ...(input as CreateRequest), examId: undefined }, defaultQuestionNo);
+      return { ...standalone, message: "examId 不存在，已改存成單題答案、未歸入任何考試；答案已保存，不必重建。" };
+    }
+  }
   const request = { ...parsed.data, examId: parsed.data.examId ?? undefined };
   const keyHash = request.examId && request.idempotencyKey ? sha256(request.idempotencyKey) : undefined;
   let savedCreate: AnswerDocument | undefined;
@@ -941,11 +950,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       },
     },
     async ({ responseDetail, ...request }) => {
-      const { current, replayed, linkPending, message } = await commitCreate(store, await prepareCreate(store, request));
+      const { current, replayed, linkPending, message, examId } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
       return {
-        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) },
-        content: textContent((replayed ? (request.examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) },
+        content: textContent((replayed ? (examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
           + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
           + (message ? `\n${message}` : "")
           + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")),
@@ -978,7 +987,13 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           let defaultQuestionNo: number | undefined;
           if (request?.examId) {
             const used = assigned.get(request.examId) ?? new Set<number>();
-            const plan = await requestedExam(store, request.examId);
+            let plan: ExamPlan;
+            try { plan = await store.getExam(request.examId); }
+            catch (error) {
+              if (!isStoreNotFound(error)) throw error;
+              prepared.push(await prepareCreate(store, request));
+              continue;
+            }
             defaultQuestionNo = request.questionNo ?? (request.idempotencyKey ? plan.createRequests?.[sha256(request.idempotencyKey)]?.questionNo : undefined)
               ?? [...plan.questions].sort((a,b) => a.questionNo - b.questionNo).find(q => !q.answerId && !used.has(q.questionNo))?.questionNo;
             const item = await prepareCreate(store, request, defaultQuestionNo);
@@ -997,7 +1012,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           results.push({ index: index + 1, answerId: answer.id, title: answer.title,
             ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
             version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
-            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending, message } : {}) });
+            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) });
         } catch (error) {
           throw new Error(`已完成：${results.map(item => `第 ${item.index} 項 ${item.answerId}${item.replayed ? "（重送）" : ""}`).join("、") || "無"}。\n`
             + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);

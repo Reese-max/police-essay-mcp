@@ -58,12 +58,22 @@ for (const cloud of [false, true]) {
       await assert.rejects(store.getExam(id), isStoreNotFound);
       const missing = await call(c, "delete_exam", { examId: id, expectedVersion: version });
       assert.equal(missing.isError, true); assert.match(text(missing), /找不到考試計畫.*examId/);
-      // An invented examId on create says where the real one comes from.
-      const invented = await call(c, "create_answer", { examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
-      assert.equal(invented.isError, true); assert.match(text(invented), /找不到考試計畫；examId 必須是 start_exam 回傳的值/);
+      // Unknown examId saves a standalone answer without retrying or linking another plan.
+      const invented = await call(c, "create_answer", { templateId: "police_information_essay", examId: "exam_invented01", title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.equal(invented.isError, undefined); assert.match(text(invented), /已改存成單題答案.*不必重建/);
       const own = data(await call(c, "start_exam", { title: "期中考", questions: [{ questionNo: 1 }] })).examId;
-      const truncated = await call(c, "create_answer", { examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
-      assert.match(text(truncated), new RegExp(`你目前的考試：${own}（期中考）`)); // a dropped digit can be corrected by copying
+      const truncated = await call(c, "create_answer", { templateId: "police_information_essay", examId: own.slice(0, -1), title: "第一題", sections: [{ id: "a", text: "內容。" }] });
+      assert.match(text(truncated), /已改存成單題答案/);
+      assert.equal((await store.getExam(own)).questions[0].answerId, undefined);
+      const retry = { templateId: "police_information_essay", examId: "exam_invented03", title: "重送", idempotencyKey: "fallback-retry-01", sections: [{ id: "a", text: "內容。" }] };
+      const first = data(await call(c, "create_answer", retry));
+      const again = await call(c, "create_answer", retry);
+      assert.equal(data(again).answer.id, first.answer.id);
+      assert.match(text(again), /^重送：此 idempotencyKey 已建立/);
+      assert.equal((await store.getAnswer(first.answer.id)).version, 1);
+      assert.equal((await store.getAnswer(first.answer.id)).exam, undefined);
+      const conflict = await call(c, "create_answer", { ...retry, title: "不同請求" });
+      assert.equal(conflict.isError, true); assert.match(text(conflict), /IDEMPOTENCY_KEY_REUSED/);
       data(await call(c, "delete_exam", { examId: own, expectedVersion: 1 }));
       // A stale link to an already missing answer must not prevent plan cleanup.
       await store.saveExam({ ...exam(), questions: [{ questionNo: 1, answerId: answer.id }] });
@@ -421,10 +431,13 @@ test("cross-owner exam IDs are indistinguishable from unknown IDs for all exam e
         : name === "create_answers" ? { examId: id, answers: [{ title: "draft" }] }
         : name === "delete_exam" ? { examId: id, expectedVersion: 1 } : { examId: id };
       const foreign = await call(h.client, name, args(exam().id)), unknown = await call(h.client, name, args("exam_unknown"));
-      assert.equal(foreign.isError, true, name); assert.equal(unknown.isError, true, name);
-      assert.deepEqual(foreign, unknown, name); assert.doesNotMatch(text(foreign), /警察特考/);
+      const creates = name.startsWith("create_");
+      assert.equal(foreign.isError, creates ? undefined : true, name); assert.equal(unknown.isError, foreign.isError, name);
+      const scrub = (r: unknown) => JSON.parse(JSON.stringify(r).replace(/ans_[A-Za-z0-9-]+/g, "ans_X").replace(/"(createdAt|updatedAt)":"[^"]*"/g, '"$1":"T"'));
+      assert.deepEqual(scrub(foreign), scrub(unknown), name); assert.doesNotMatch(text(foreign), /警察特考/);
     }
-    assert.equal((await other.listAnswers()).length, 0);
+    assert.equal((await store.listAnswers()).length, 0);
+    for (const saved of await other.listAnswers()) assert.equal((await other.getAnswer(saved.id)).exam, undefined);
   } finally { await h.close(); }
 }));
 
