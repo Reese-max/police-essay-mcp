@@ -211,7 +211,9 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     : "結構提醒：編號段落的續行未對齊內文；建議移除段落的 hangingIndent 讓引擎自動對齊。");
   notes.push(...bookNotes);
   // 50招 p.122 / 高分寫作 p.92: about 1.5 lines per point; allow 25% variation.
-  const question = answer.question ?? "";
+  // Full-width digits and 國字 scores 「（二十五分）」 count like 「（25分）」.
+  const question = asciiDigits(answer.question ?? "").replace(/([（(]\s*(?:共|總分)?\s*)([一二三四五六七八九十]+)(\s*分\s*[）)])/gu,
+    (match, open: string, value: string, close: string) => { const score = parseChineseNumber(value); return score ? `${open}${score}${close}` : match; });
   const explicitTotal = question.match(/[（(]\s*(?:共|總分)\s*(\d+)\s*分\s*[）)]/u);
   const matches = [...question.matchAll(/[（(]\s*(\d+)\s*分\s*[）)]/gu)];
   const scores = matches.map(match => Number(match[1]));
@@ -223,6 +225,41 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   const target = Math.min(report.capacity, points * 1.5);
   if (answer.layoutOptions?.neatFormat && target > 0 && report.totalLines < target * 0.75) {
     notes.push(`篇幅提醒：目前 ${report.totalLines} 行，明顯少於配分建議約 ${Math.round(target)} 行（配分×1.5，以容量 ${report.capacity} 行為上限）；自行撰寫的新答案建議補充論述或例證，勿加空白湊行；使用者提供的原稿仍須先取得擴寫授權。`);
+  }
+  // 50招: lead 3–5 lines (2–3 when the body is long), closing longer (3–4 at least); 高分寫作 p.107: lead 3, closing 3–4.
+  // Notes fire only below the floors (lead <2, closing <3 lines); agent-guidance asks for lead 3–5 / closing 4–6.
+  // Full essays only; empty sections are skipped and a single-section answer is left to the flattened-structure note.
+  const sectionText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
+  const filled = [...answer.sections].sort((a, b) => a.order - b.order).filter(section => section.heading?.trim() || sectionText(section));
+  if (answer.layoutOptions?.neatFormat && filled.length >= 2 && (points >= 15 || (!points && report.totalLines >= 20))) {
+    // 「(四)結論與建議：」「(六)比較與結語：」「(四)本案結論：」 still mark the closing here (the label note itself stays exact-match).
+    const edgeLabel = (heading: string) => {
+      const rest = heading.slice(classifyNumbering(heading)?.prefix.length ?? 0).trim();
+      return /^(前言|緒論|導論|引言|結論|結語|小結|總結)(?:[與及和暨].{0,6})?[：:]?$/u.test(rest) || /^.{1,8}(?:結論|結語|總結)[：:]?$/u.test(rest);
+    };
+    // Same edge rule as the layout: the first/last headless prose section; one opening with (一)/一、 is body,
+    // unless a 「結論與建議」-style heading already marks it (its points may be listed as (一)(二)).
+    const prose = (section: typeof filled[number]) => section.heading?.trim() ? edgeLabel(section.heading.trim()) && !!sectionText(section)
+      : !!sectionText(section) && !((classifyNumbering(sectionText(section))?.level ?? 9) <= 3);
+    const linesOf = (id: string) => report.lines.filter(line => line.sectionId === id && !line.isHeading && !line.isSpacer && line.text.trim()).length;
+    const lead = prose(filled[0]) ? filled[0] : undefined;
+    const last = filled.at(-1)!;
+    const closing = prose(last) ? last : undefined;
+    const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
+    const keep = "若因此超頁，前言保留 2 行、結語保留 3 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+    const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
+    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫 2–3 行點出題旨與答題主軸，不重抄題目。${own}${keep}`);
+    else if (linesOf(lead.id) < 2) notes.push(`結構提醒：前言只有 1 行（${exempt}）；書上建議前言 3–5 行，本文較長時 2–3 行即可，點出題旨與答題主軸。${own}${keep}`);
+    const tail = (last.paragraphs?.length ? last.paragraphs.map(p => p.text) : (last.text ?? "").split("\n")).at(-1)?.trim() ?? "";
+    const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
+    if (!closing && /^(綜上|總之|綜合|總結|結論)/u.test(tail)) {
+      notes.push(`結構提醒：最後一節末段${start(tail)}是結語，卻寫在${last.heading?.trim() ? `「${last.heading.trim()}」` : start(sectionText(last))}節內；請用 replace_text 從該節刪去這段，再以 insert_text（省略 afterSectionId）新增不帶 heading 的節放入原文（內容照舊），不要另寫第二段結語。使用者提供的原稿或既有答案只向使用者建議，取得同意後才調整。`);
+    } else if (!closing) {
+      notes.push(`結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，以「綜上」統整各點並提出建議或展望，本文較長時 3–4 行即可；${kinds}${own}${keep}`);
+    } else {
+      const closingLines = linesOf(closing.id);
+      if (closingLines < 3) notes.push(`結構提醒：結語只有 ${closingLines} 行；書上建議結語 4–6 行，本文較長時 3–4 行即可，以「綜上」統整各點並提出建議或展望；${kinds}${own}${keep}`);
+    }
   }
   return notes;
 }
@@ -334,8 +371,9 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     if (levels.has(1)) bookNotes.push("格式提醒：答案內標號從 (一) 起算（題號已在題號欄），不用「壹、」；請改為 (一)→1.→(1)，只改編號不改內容。");
     if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
     // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
-    const ordered = [...answer.sections].sort((a, b) => a.order - b.order);
-    const bodyText = (section: typeof ordered[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
+    const bodyText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
+    // Empty sections are skipped so a trailing blank one does not turn the real closing into "middle" body text.
+    const ordered = [...answer.sections].sort((a, b) => a.order - b.order).filter(section => section.heading?.trim() || bodyText(section));
     // A section opening with its own (一)/一、 item carries the 大標 inline (50招 p.204 「最充實」 format).
     const headless = ordered.slice(1, -1).filter(section => !section.heading?.trim() && bodyText(section)
       && !((classifyNumbering(bodyText(section))?.level ?? 9) <= 3));
