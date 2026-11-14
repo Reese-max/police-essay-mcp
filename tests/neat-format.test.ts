@@ -77,8 +77,12 @@ test("book notes: body points need a 大標, items each own a paragraph", () => 
   assert.doesNotMatch(inline.notes, /沒有大標/, "a 大標 written inline at the paragraph start counts (最充實 format)");
   const restart = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙。" }] }, { id: "end", text: "綜上所述。" }]);
   assert.match(restart.notes, /「1.丙。」在本文中卻沒有大標/); assert.doesNotMatch(restart.notes, /編號又從頭起算/, "one note per problem");
-  assert.match(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)乙。(2)丙。" }] }]).notes, /一段內有多個編號項/);
-  assert.doesNotMatch(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)依第2條規定。" }] }]).notes, /多個編號項/);
+  assert.match(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)乙。(2)丙。" }] }]).notes, /併在同一段/);
+  const chinesePeers = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙。」(二)丙。" }] }]).notes;
+  assert.match(chinesePeers, /一段內有多個編號項/); assert.doesNotMatch(chinesePeers, /併在同一段/, "one note per packed paragraph");
+  const arabicInChinese = notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(一)乙：1.丙。2.丁。" }] }]).notes;
+  assert.match(arabicInChinese, /併在同一段/); assert.doesNotMatch(arabicInChinese, /一段內有多個編號項/, "one note per packed paragraph");
+  assert.doesNotMatch(notes([{ id: "a", heading: "(一)甲：", paragraphs: [{ text: "(1)依第2條規定。" }] }]).notes, /併在同一段/);
 });
 
 test("a colon-ended 中標 over body text is not an embedded heading in neat answers", () => {
@@ -88,7 +92,7 @@ test("a colon-ended 中標 over body text is not an embedded heading in neat ans
 });
 
 test("review rv6: decimals, stacked 中標 and a closing-less last section", () => {
-  assert.doesNotMatch(notes([{ id: "s", heading: "(一)查處情形：", paragraphs: [{ text: "1.本案查扣共5公斤；1.5公斤為安非他命。" }] }]).notes, /多個編號項/);
+  assert.doesNotMatch(notes([{ id: "s", heading: "(一)查處情形：", paragraphs: [{ text: "1.本案查扣共5公斤；1.5公斤為安非他命。" }] }]).notes, /併在同一段/);
   assert.match(notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙。" }] }, { id: "b", paragraphs: [{ text: "1.丙重起。" }] }]).notes, /編號又從頭起算/);
 });
 
@@ -119,4 +123,23 @@ test("a far-over answer gets a cut plan that reaches capacity; a small overflow 
     small = layoutSections(standard, createAnswerDocument({ templateId: standard.id, title: "near", sections: [long("a", n)] }).sections, neat);
   assert.ok(small.overflowLines > 0 && small.overflowLines < 5);
   assert.doesNotMatch(summarizeLayout(small, true), /超出較多/);
+});
+
+test("format integrity: packed peers, duplicate headings and literal newlines", () => {
+  for (const options of [neat, {}]) {
+    for (const [text, items] of [["1.言論自由。2.資訊自主。3.安全求助。", "「2.」「3.」"], ["(1)甲；(2)乙。", "「(2)」"], ["（1）甲。（2）乙。", "「（2）」"],
+      ["1.依學者見解：「保障人格權。」 2.資訊自主。", "「2.」"], ["1.甲。2、乙。3、丙。", "「2、」「3、」"], ["1.審查標準：(1)合法性。(2)合理性。", "「(2)」"], ["前言。1.甲。2.乙。", "「2.」"]])
+      assert.ok(notes([{ text }], options).notes.includes(`格式提醒：第 1 節把${items}併在同一段；各點另起一段（paragraphs 各一項），若因此超頁改精簡各點措辭，不要併段。`), text);
+    for (const text of ["1.依第2.1節辦理。", "1.甲；1.5公斤。", "1.甲。依第2.1節辦理。", "1.甲。\n2.乙。", "(一)甲。\n(二)乙。", "1.甲。(1)乙。",
+      "1.審查標準：(1)合法性。", "(1)乙。1.丙。", "2.甲。1.乙。"])
+      assert.doesNotMatch(notes([{ text }], options).notes, /併在同一段/);
+    assert.match(notes([{ heading: "(二)甲：", text: "甲。" }, { heading: "（二）乙：", text: "乙。" }], options).notes, /大標編號或標題重複/);
+    assert.match(notes([{ heading: "(二)備份與備援的差異：", text: "甲。" }, { heading: "(三)備份與備援的差異：", text: "乙。" }], options).notes, /大標編號或標題重複/);
+    assert.doesNotMatch(notes([{ heading: "(一)甲：", text: "甲。" }, { heading: "(二)乙：", text: "乙。" }], options).notes, /大標編號或標題重複/);
+    assert.doesNotMatch(notes([{ heading: "一、甲：", text: "甲。" }, { heading: "(一)意義：", text: "甲。" }, { heading: "二、乙：", text: "乙。" }, { heading: "(一)意義：", text: "乙。" }], options).notes, /大標編號或標題重複/, "(一) restarts under each 一、");
+    assert.doesNotMatch(notes([{ heading: "(一)甲：", text: "甲。" }, { heading: "1.意義：", text: "甲。" }, { heading: "(二)乙：", text: "乙。" }, { heading: "1.意義：", text: "乙。" }], options).notes, /大標編號或標題重複/, "中標 titles may repeat under different 大標");
+    assert.match(notes([{ heading: "(一)甲\\n乙", text: "甲。" }], options).notes, /字面.*真正分段/);
+    assert.match(notes([{ paragraphs: [{ text: "甲\\n乙" }] }], options).notes, /字面.*真正分段/);
+    assert.doesNotMatch(notes([{ text: "甲\n乙" }], options).notes, /字面/);
+  }
 });
