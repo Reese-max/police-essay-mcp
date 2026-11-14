@@ -22,6 +22,8 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   for(const fragment of ['ans_prompt-case','3','套話','否定','每次修改','stale','freshness=current','語義','not_checked'])assert.ok(text.includes(fragment),fragment);
   assert.ok(text.indexOf('先補漏答')<text.indexOf('依序刪除'));
   assert.ok(client.getInstructions()?.includes('不能以關鍵字出現代替語義核對'));
+  // Depth and bonus-point guidance reaches every client through the server instructions, with the no-fabrication limit.
+  for(const fragment of ['論述深度','依題型補一層','扣回題目情境','句式不求一致','全篇挑二、三處','不確定的學者、名言、條號、數據與年份一律不寫','仍以兩頁為限'])assert.ok(client.getInstructions()?.includes(fragment),fragment);
   const resource=await client.readResource({uri:'essay://instructions/workflow'});const workflow=resource.contents.map(c=>'text'in c?c.text:'').join('\n');
   for(const item of ESSAY_TEACHING_CASES)assert.ok(workflow.includes(item.teachingExample));assert.ok(workflow.includes('非官方高分範文'));
  }finally{await client.close();await server.close();}
