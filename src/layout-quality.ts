@@ -156,9 +156,44 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   const { quality, paragraphs, embeddedHeadings, hierarchyIssues, offIndentParagraphs, usualIndent, bookNotes, bookHeadless } = analyzeLayout(template, answer, report);
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
   const notes: string[] = [];
+  // Keys are scoped per heading level and reset under a new parent: "(一)" legitimately restarts under each "一、".
+  const seenByLevel = new Map<number, Set<string>>(), duplicateNumbers = new Set<string>();
+  for (const [index, section] of answer.sections.entries()) {
+    const heading = section.heading?.trim() ?? "";
+    const numbering = classifyNumbering(heading);
+    if (numbering && numbering.level <= 3) {
+      for (const level of [...seenByLevel.keys()]) if (level > numbering.level) seenByLevel.delete(level);
+      const seen = seenByLevel.get(numbering.level) ?? new Set<string>();
+      seenByLevel.set(numbering.level, seen);
+      const numberKey = `#${numbering.family}:${numbering.value}`;
+      const title = heading.slice(numbering.prefix.length).replace(/[：:]\s*$/u, "").trim();
+      if (seen.has(numberKey)) duplicateNumbers.add(section.id);
+      if (seen.has(numberKey) || (title && seen.has(title)))
+        notes.push(`格式提醒：第 ${index + 1} 節大標編號或標題重複；請合併重複節或改正編號、標題，保留獨立論點。`);
+      seen.add(numberKey);
+      if (title) seen.add(title);
+    }
+    const texts = section.paragraphs?.length ? section.paragraphs.map(p => p.text) : (section.text ?? "").split("\n");
+    if ([heading, ...texts].some(text => text.includes("\\n")))
+      notes.push(`格式提醒：第 ${index + 1} 節含字面反斜線 n；請改成真正分段（paragraphs 各一項），保留內容。`);
+    for (const text of texts) {
+      // A 1./(1) item after a sentence end, when the same level already had a smaller number in this paragraph.
+      const lastByLevel = new Map<number, number>(), packed: string[] = [];
+      for (const match of text.matchAll(/(^|[。；;：:][」』）)]*)\s*((?:[（(][0-9０-９]+[）)]|[0-9０-９]+[.．、](?![0-9０-９])))/gu)) {
+        const item = classifyNumbering(match[2]);
+        if (!item || item.level < 4) continue;
+        const before = lastByLevel.get(item.level);
+        if (/^[。；;]/u.test(match[1]) && before !== undefined && item.value > before) packed.push(match[2]);
+        lastByLevel.set(item.level, item.value);
+      }
+      if (packed.length) notes.push(`格式提醒：第 ${index + 1} 節把「${packed.join("」「")}」併在同一段；各點另起一段（paragraphs 各一項），若因此超頁改精簡各點措辭，不要併段。`);
+    }
+  }
+
   if (quality.flattenedStructure) notes.push("結構提醒：整份只有一節而編號項目都寫在段落；建議每個大點各成一節，編號與標題放 heading。");
   for (const paragraph of embeddedHeadings) notes.push(`結構提醒：${start(paragraph.text)}像標題卻寫成段落文字；建議改為該節 heading 或另立一節。`);
   for (const issue of hierarchyIssues) {
+    if (issue.kind === "gap" && paragraphs[issue.order].isHeading && duplicateNumbers.has(paragraphs[issue.order].sectionId)) continue;
     // The neat format's "no 大標" note already names these sections.
     if (issue.kind === "headless" && bookHeadless.has(paragraphs[issue.order].sectionId)) continue;
     const at = start(paragraphs[issue.order].text);
@@ -307,8 +342,9 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     for (const section of headless) bookHeadless.add(section.id);
     if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題：用 replace_text 對該節帶 heading 即可（內文照舊，不必新增或搬移節）；若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
     // Several numbered items run together in one paragraph ("(1)…。(2)…") should each start their own paragraph.
+    // Arabic 1./(1) peers are reported by layoutQualityNotes' "併在同一段" note; this one covers (一)-level peers.
     const packed = paragraphs.filter(paragraph => !paragraph.isHeading && classifyNumbering(firstText(paragraph))
-      && /[。；;]\s*(?:[（(](?:[0-9０-９]+|[一二三四五六七八九十]+)[）)]|[0-9０-９]+[.．、](?![0-9０-９]))/u.test(paragraph.text));
+      && /[。；;][」』）)]*\s*[（(][一二三四五六七八九十]+[）)]/u.test(paragraph.text));
     if (packed.length) bookNotes.push(`格式提醒：${packed.map(paragraph => start(paragraph.text)).join("、")}一段內有多個編號項；請每項各成一段（paragraphs），不改內容。`);
     // Full-width brackets are wider than the two cells left of the text line, so their text cannot align there.
     if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」「(1)」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
