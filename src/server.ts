@@ -921,7 +921,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       }
     }
     const progress = await examProgress(store, examId);
-    return { structuredContent: progress, content: textContent(progress.summary) };
+    // A resumed exam skips start_exam, so questions still to be written get their references here.
+    const lawReferences = lawReferencesFor(progress.questions.map(q => q.stage === "not_started" && "question" in q ? q.question : undefined));
+    return { structuredContent: { ...progress, ...(lawReferences ? { lawReferences } : {}) },
+      content: textContent(progress.summary + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
   });
 
   const deleteExamTool = registerTool("delete_exam", {
