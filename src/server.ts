@@ -3,6 +3,7 @@ import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRU
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
 import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
 import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
+import { lawReferenceHint, lawReferencesFor } from "./law-references.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -897,8 +898,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       try { await store.saveExam(plan); } catch (error) { if (!await replay()) throw error; replayed = true; }
     }
     const progress = await examProgress(store, id);
+    const lawReferences = lawReferencesFor(plan.questions.map(q => q.question));
     // Assistants that read only the text invented their own examId; state the real one there too.
-    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}`) };
+    return { structuredContent: { examId: id, summary: progress.summary, replayed, ...(lawReferences ? { lawReferences } : {}) },
+      content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}` + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
   });
   registerTool("get_exam_progress", {
     title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
@@ -966,12 +969,15 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ responseDetail, ...request }) => {
       const { current, replayed, linkPending, message, examId } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
+      // start_exam already attached references for exam answers; a standalone answer gets them here.
+      const lawReferences = examId ? undefined : lawReferencesFor([current.answer.question]);
       return {
-        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) },
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}), ...(lawReferences ? { lawReferences } : {}) },
         content: textContent((replayed ? (examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
           + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
           + (message ? `\n${message}` : "")
-          + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")),
+          + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")
+          + (lawReferences ? lawReferenceHint(lawReferences) : "")),
       };
     },
   );
