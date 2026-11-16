@@ -51,6 +51,7 @@ export function originalPaperFont(template: AnswerTemplate, fontPath = originalP
     const { mtimeMs, size } = statSync(fontPath);
     if (cachedHandwritingFont?.path === fontPath && cachedHandwritingFont.mtimeMs === mtimeMs && cachedHandwritingFont.size === size) return cachedHandwritingFont.face;
     const face = fontkit.openSync(fontPath);
+    if (!("layout" in face)) throw new Error("font collection"); // .ttc/.dfont open as a collection without layout()
     cachedHandwritingFont = { path: fontPath, mtimeMs, size, face };
     return face;
   } catch { throw new Error("165 原稿紙（手寫體）字型無法載入。"); }

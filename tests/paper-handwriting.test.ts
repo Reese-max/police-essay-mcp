@@ -56,6 +56,10 @@ test('standard SHA lock survives a handwriting path and invalid handwriting file
   assert.throws(()=>wrapOriginalPaper('測試',format,standard),/SHA-256 mismatch/);
   process.env.ESSAY_MCP_HANDWRITING_FONT=invalid;
   assert.throws(()=>wrapOriginalPaper('測試',format,template),{message:'165 原稿紙（手寫體）字型無法載入。'});
+  // A font collection (.ttc) opens without error but has no layout(); it must fail as clearly as an invalid file.
+  const collection=join(dir,'collection.ttc'), header=Buffer.alloc(12); header.write('ttcf',0,'latin1'); header.writeUInt32BE(0x00010000,4);
+  await fs.writeFile(collection,header); process.env.ESSAY_MCP_HANDWRITING_FONT=collection;
+  assert.throws(()=>wrapOriginalPaper('測試',format,template),{message:'165 原稿紙（手寫體）字型無法載入。'});
  } finally { restore('ESSAY_MCP_PAPER_FONT',paper); restore('ESSAY_MCP_HANDWRITING_FONT',handwriting); await fs.rm(dir,{recursive:true,force:true}); }
 });
 
@@ -73,6 +77,7 @@ test('handwriting cache does not bypass the standard SHA lock and invalidates ch
  const handwriting=process.env.ESSAY_MCP_HANDWRITING_FONT;
  try {
   const file=join(dir,'font.ttf'); await fs.copyFile(handwriting!,file);
+  await fs.appendFile(file,' '); // never the approved hash, even when the handwriting variable points at the standard font
   process.env.ESSAY_MCP_HANDWRITING_FONT=file;
   const face=originalPaperFont(template); assert.equal(originalPaperFont(template),face);
   assert.throws(()=>originalPaperFont(standard,file),/SHA-256 mismatch/);
