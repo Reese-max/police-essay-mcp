@@ -1,0 +1,46 @@
+{
+  "id": "police_information_essay_165_handwriting",
+  "name": "165 原稿紙・兩頁申論（手寫體）",
+  "description": "與 165 原稿紙使用相同底圖與版面，以 ESSAY_MCP_HANDWRITING_FONT 設定的手寫字型排版；僅在使用者明確要求手寫體時使用。保留文字，不自動刪改；只接受靠左、非粗體、非斜體，可改用縮排與空行。",
+  "paperSize": "A4",
+  "pages": 2,
+  "linesPerPage": 22,
+  "columns": 38,
+  "overflowPolicy": "reject",
+  "fontFamily": "Handwriting",
+  "fontSizePt": 19,
+  "lineHeightPt": 22,
+  "paragraphDefaults": {
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4,
+    "bold": false,
+    "italic": false
+  },
+  "headingDefaults": {
+    "bold": false,
+    "italic": false,
+    "numbered": false,
+    "numbering": "chinese",
+    "separator": "、",
+    "firstLineIndent": 0,
+    "leftIndent": 0,
+    "rightIndent": 0,
+    "alignment": "left",
+    "spaceBeforeLines": 0,
+    "spaceAfterLines": 0,
+    "tabSize": 4
+  },
+  "marginsMm": {
+    "left": 45.974,
+    "right": 35.02377777777777,
+    "top": 42.64633345054665,
+    "bottom": 71.758377330918
+  },
+  "paperProfile": "original_166",
+  "paperFont": "handwriting"
+}

@@ -12,6 +12,8 @@
 
 ## 題目到交付
 
+僅在使用者明確要求手寫體時，改選 `police_information_essay_165_handwriting`，並將 `ESSAY_MCP_HANDWRITING_FONT` 設為手寫字型檔絕對路徑。此範本沿用 165 底圖、兩頁各 22 行與原版面，仍只接受靠左、非粗體、非斜體；使用時才載入字型，不檢查教育部字型雜湊或名稱，缺字即停止。PDF、預覽及 DOCX 使用該字型，DOCX 嵌入實際家族名稱；標準版仍獨立使用 `ESSAY_MCP_PAPER_FONT`，兩者互不替代，Word 實際渲染驗收仍依下列流程進行。
+
 1. 模型讀題，列出各小題配分、應答元素及要求數量。研究與來源查核由模型及檢索工具負責，MCP 不自行生成事實或評定正確性。
 2. 依配分寫擬答，分成穩定 ID 的 sections；三小題可用 `part_1`、`part_2`、`part_3`。正文與題目另存。
 3. 呼叫 `create_answer`，省略模板即預設 `police_information_essay_165`（也可明確指定）；`create_answers` 與全卷建立同樣適用，舊答案不遷移，明確指定其他模板仍有效；接著 `write_answer` 寫入 sections。讀取工具當前 schema，使用 `expectedVersion` 避免覆蓋較新的修改。
