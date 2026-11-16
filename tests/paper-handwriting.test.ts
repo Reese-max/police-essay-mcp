@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync, promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import * as fontkit from 'fontkit';
 import JSZip from 'jszip';
@@ -34,7 +35,7 @@ test('165 templates require their own font environment variable', () => {
 
 test('handwriting template loads and lists without fonts and preserves every geometry field', async () => {
  const paper=process.env.ESSAY_MCP_PAPER_FONT, handwriting=process.env.ESSAY_MCP_HANDWRITING_FONT;
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-store-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-store-'));
  try {
   delete process.env.ESSAY_MCP_PAPER_FONT; delete process.env.ESSAY_MCP_HANDWRITING_FONT;
   const store=new FileStore({answerDir:join(dir,'answers'),exportDir:join(dir,'exports')});
@@ -48,7 +49,7 @@ test('handwriting template loads and lists without fonts and preserves every geo
 
 test('standard SHA lock survives a handwriting path and invalid handwriting files fail clearly', async () => {
  const paper=process.env.ESSAY_MCP_PAPER_FONT, handwriting=process.env.ESSAY_MCP_HANDWRITING_FONT;
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-invalid-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-invalid-'));
  try {
   const invalid=join(dir,'invalid.ttf'); await fs.writeFile(invalid,'not a font');
   process.env.ESSAY_MCP_PAPER_FONT=invalid; process.env.ESSAY_MCP_HANDWRITING_FONT=join(dir,'handwriting.ttf');
@@ -68,7 +69,7 @@ test('handwriting preserves mixed text and rejects missing glyphs and invalid la
 }));
 
 test('handwriting cache does not bypass the standard SHA lock and invalidates changed files', {skip}, () => withoutStandardFont(async () => {
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-cache-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-cache-'));
  const handwriting=process.env.ESSAY_MCP_HANDWRITING_FONT;
  try {
   const file=join(dir,'font.ttf'); await fs.copyFile(handwriting!,file);
@@ -81,7 +82,7 @@ test('handwriting cache does not bypass the standard SHA lock and invalidates ch
 }));
 
 test('handwriting PDF exports two pages without the standard font', {skip}, () => withoutStandardFont(async () => {
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-pdf-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-pdf-'));
  try {
   const file=join(dir,'answer.pdf'); const result=await exportPdf(report(),template,file);
   assert.equal(result.pages,2); assert.equal(result.font,process.env.ESSAY_MCP_HANDWRITING_FONT);
@@ -96,7 +97,7 @@ test('handwriting SVG uses outlines and placements without the standard font', {
 }));
 
 test('handwriting DOCX embeds and uses the real family without MOE names', {skip}, () => withoutStandardFont(async () => {
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-docx-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-docx-'));
  try {
   const file=join(dir,'answer.docx'); const layout=report();
   assert.equal((await exportDocx(layout,template,file)).pages,2);
@@ -119,7 +120,7 @@ test('handwriting DOCX embeds and uses the real family without MOE names', {skip
 }));
 
 test('mixed paper DOCX bundle embeds and uses each paper font', {skip:skip||!process.env.ESSAY_MCP_PAPER_FONT}, async () => {
- const dir=await fs.mkdtemp(join(process.cwd(),'.paper-handwriting-bundle-'));
+ const dir=await fs.mkdtemp(join(tmpdir(),'paper-handwriting-bundle-'));
  try {
   const entries=[standard,template].map(template=>({template,report:layoutSections(template,createAnswerDocument({templateId:template.id,title:'合輯',sections:[{text:'資訊安全 ABC 165。'}]}).sections)}));
   const file=join(dir,'bundle.docx'); assert.equal((await exportDocxBundle(entries,file)).pages,4);
