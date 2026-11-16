@@ -49,14 +49,21 @@ test("template-only load defaults to 165 and named general resource remains gene
 }));
 
 test("165 changes only template identity; the 166 compatibility template keeps every rendering setting", async () => {
-  const store = new FileStore();
-  const current = await store.getTemplate(paper), legacy = await store.getTemplate(legacyPaper);
-  assert.equal(current.name, "165 原稿紙・兩頁申論");
-  assert.equal(legacy.name, "165 原稿紙・兩頁申論");
-  assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
-  assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
-  const templates = await store.listTemplates();
-  assert.deepEqual(templates.map(t => t.id), [general, paper, "police_information_essay_165_handwriting", legacyPaper]);
+  const handwriting = process.env.ESSAY_MCP_HANDWRITING_FONT, directory = process.env.ESSAY_MCP_HANDWRITING_FONT_DIR;
+  try {
+    delete process.env.ESSAY_MCP_HANDWRITING_FONT; delete process.env.ESSAY_MCP_HANDWRITING_FONT_DIR;
+    const store = new FileStore();
+    const current = await store.getTemplate(paper), legacy = await store.getTemplate(legacyPaper);
+    assert.equal(current.name, "165 原稿紙・兩頁申論");
+    assert.equal(legacy.name, "165 原稿紙・兩頁申論");
+    assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
+    assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
+    const templates = await store.listTemplates();
+    assert.deepEqual(templates.map(t => t.id), [general, paper, legacyPaper]);
+  } finally {
+    if (handwriting === undefined) delete process.env.ESSAY_MCP_HANDWRITING_FONT; else process.env.ESSAY_MCP_HANDWRITING_FONT = handwriting;
+    if (directory === undefined) delete process.env.ESSAY_MCP_HANDWRITING_FONT_DIR; else process.env.ESSAY_MCP_HANDWRITING_FONT_DIR = directory;
+  }
 });
 
 test("both file and cloud template lists display 165 for canonical and legacy IDs", async () => {
