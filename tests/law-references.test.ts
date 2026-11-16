@@ -20,6 +20,11 @@ test("every bundled law is reachable by its own name and carries labelled, non-e
   const ccp = lawReferencesFor(["說明搜索票之聲請程序"])!.laws[0];
   assert.deepEqual(ccp.articles.map(a => a.article), ["第122條", "第128條", "第128條之1", "第128條之2", "第130條", "第131條", "第131條之1", "第133條", "第137條", "第152條"]);
   assert.match(ccp.articles[2].text, /^偵查中檢察官認有搜索之必要者[\s\S]*司法警察官因調查犯罪嫌疑人犯罪情形及蒐集證據/);
+  // Only 個資法 has amendments awaiting an Executive Yuan effective date; that warning travels with its articles.
+  assert.deepEqual(LAW_TEXTS.filter(law => law.effectiveNote).map(law => law.name), ["個人資料保護法"]);
+  const pdpa = lawReferencesFor(["說明個人資料外洩之通知義務"])!.laws[0];
+  assert.match(pdpa.effectiveNote!, /尚未生效[\s\S]*第1-1、12、18[\s\S]*施行日期，由行政院定之/);
+  assert.equal(ccp.effectiveNote, undefined);
 });
 
 test("law references attach only to questions that name their subject", () => {
@@ -71,6 +76,8 @@ test("start_exam and standalone create_answer hand the verbatim articles to the 
     const standalone = await call("create_answer", { templateId: "police_information_essay", title: "個資", question: "說明個人資料外洩之通知義務。", sections });
     assert.deepEqual(standalone.data.lawReferences.laws.map((l: any) => l.name), ["個人資料保護法"]);
     assert.match(standalone.text, /已附個人資料保護法/);
+    assert.match(standalone.text, /個人資料保護法有修正條文尚未生效（見 effectiveNote）：引用 effectiveNote 列出條號的修正內容時註明「修正條文施行日期由行政院定之」[\s\S]*未列出的條文不受影響/);
+    assert.doesNotMatch(law.text, /尚未生效/); // 刑事訴訟法 carries no such warning
 
     const inExam = await call("create_answer", { templateId: "police_information_essay", title: "刑訴", examId: law.data.examId, questionNo: 1,
       question: "依刑事訴訟法說明搜索票之聲請程序。（25分）", sections });
