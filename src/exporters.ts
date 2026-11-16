@@ -240,7 +240,7 @@ export async function exportDocxBundle(entries: ExportPages[], outputPath: strin
   const papers = new Map<string, { fontPath: string; name: string; altName?: string; characters: string[] }>();
   for (const [index, { template, report }] of entries.entries()) if (template.paperProfile) {
     const fontPath = originalPaperFontPath(template);
-    const key = template.paperFont ?? "standard";
+    const key = template.paperFont === "handwriting" ? fontPath : "standard";
     if (!papers.has(key)) papers.set(key, { fontPath, name: originalPaperFont(template).familyName,
       ...(template.paperFont === "handwriting" ? {} : { altName: "教育部標準楷書" }), characters: [EDITABLE_PAPER_CHARACTERS] });
     papers.get(key)!.characters.push(...report.lines.filter(line => line.page <= counts[index]).map(line => line.text));

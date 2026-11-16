@@ -1,7 +1,7 @@
 {
   "id": "police_information_essay_165_handwriting",
   "name": "165 原稿紙・兩頁申論（手寫體）",
-  "description": "與 165 原稿紙使用相同底圖與版面，以 ESSAY_MCP_HANDWRITING_FONT 設定的手寫字型排版；僅在使用者明確要求手寫體時使用。保留文字，不自動刪改；只接受靠左、非粗體、非斜體，可改用縮排與空行。",
+  "description": "與 165 原稿紙使用相同底圖與版面，以 ESSAY_MCP_HANDWRITING_FONT 設定的預設手寫字型排版；使用者要求手寫體但未指定字型時使用。若指定字型名稱，請選名稱包含該字型的範本。保留原字，不自動刪節；只接受靠左、非粗體、非斜體，可調整縮排與空行。",
   "paperSize": "A4",
   "pages": 2,
   "linesPerPage": 22,

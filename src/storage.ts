@@ -1,6 +1,7 @@
 import { encodeAnswer, decodeAnswer } from "./answer-codec.js";
 import { promises as fs } from "node:fs";
 import { layoutSections } from "./layout.js";
+import { isPaperFontAvailable } from "./original-paper.js";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
@@ -163,7 +164,7 @@ export class FileStore implements EssayStore {
         return templateSchema.parse(JSON.parse(raw));
       }),
     );
-    return templates.sort((left, right) => left.id.localeCompare(right.id));
+    return templates.filter(isPaperFontAvailable).sort((left, right) => left.id.localeCompare(right.id));
   }
 
   async getExam(id: string): Promise<ExamPlan> {

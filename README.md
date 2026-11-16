@@ -225,7 +225,18 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 此模式須取得教育部標準楷書 5.1 完整未修改字型，設定 `ESSAY_MCP_PAPER_FONT` 為檔案絕對路徑。`export_answer` 的 DOCX 與 PDF 一樣只內嵌答案用到的字形（另含 ASCII 與常用全形標點），未安裝此字型的 Word／LibreOffice 也以同一字型、同一換行顯示；在 Word 新增內嵌範圍以外的字時才改用替代字型。字型不隨 repository 分發。字型來源與使用條件見 [原稿紙工作流](docs/original-paper-workflow.md)。
 
-手寫體範本 `police_information_essay_165_handwriting` 沿用相同底圖與版面，僅在使用者明確要求手寫體時選用。設定 `ESSAY_MCP_HANDWRITING_FONT` 為手寫字型檔的絕對路徑；字型在使用時才驗證，不影響啟動或列出範本。只接受靠左、非粗體、非斜體；DOCX 以字型檔的實際家族名稱嵌入，標準版的教育部字型鎖定與預設範本不變。
+手寫體沿用 165 底圖、兩頁各 22 行與版面，只接受靠左、非粗體、非斜體。要求手寫體但未指定字型時，選預設手寫範本；指定字型時，選名稱包含該字型的範本：
+
+| 範本 ID | 字型與設定 |
+| --- | --- |
+| `police_information_essay_165_handwriting` | 預設手寫體：`ESSAY_MCP_HANDWRITING_FONT` 指定字型檔 |
+| `police_information_essay_165_handwriting_yozai` | 悠哉字體：`Yozai-Regular.ttf` |
+| `police_information_essay_165_handwriting_xiaolai` | 小賴字體：`Xiaolai-Regular.ttf` |
+| `police_information_essay_165_handwriting_marker` | 霞鶩漫黑：`LXGWMarkerGothic-Regular.ttf` |
+
+具名字型檔須放在 `ESSAY_MCP_HANDWRITING_FONT_DIR` 指定的資料夾，與預設手寫體變數互不替代。字型不隨專案附送，由操作人員自行下載：[Yozai](https://github.com/lxgw/yozai-font)、[Xiaolai](https://github.com/lxgw/kose-font)、[LXGW Marker Gothic](https://github.com/lxgw/LxgwMarkerGothic)，三者皆為 SIL OFL 1.1。
+
+未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案仍可載入範本；使用時才驗證字型，無法載入或缺字即停止。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
 
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板透過 `export_answer` 輸出的 DOCX、PDF、TXT 均拒絕超頁及 `allowOverflow: true`。
 

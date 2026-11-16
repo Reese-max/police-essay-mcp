@@ -1,4 +1,5 @@
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as fontkit from "fontkit";
@@ -21,6 +22,11 @@ export function originalPaperImage(): Buffer {
 }
 export function originalPaperFontPath(template?: AnswerTemplate): string {
   if (template?.paperFont === "handwriting") {
+    if (template.paperFontFile) {
+      const directory = process.env.ESSAY_MCP_HANDWRITING_FONT_DIR;
+      if (!directory) throw new Error(`165 原稿紙（手寫體）須設定 ESSAY_MCP_HANDWRITING_FONT_DIR，並放入 ${template.paperFontFile}。`);
+      return path.join(directory, template.paperFontFile);
+    }
     const fontPath = process.env.ESSAY_MCP_HANDWRITING_FONT;
     if (!fontPath) throw new Error("165 原稿紙（手寫體）須設定 ESSAY_MCP_HANDWRITING_FONT，指向手寫字型檔。");
     return fontPath;
@@ -29,10 +35,14 @@ export function originalPaperFontPath(template?: AnswerTemplate): string {
   if (!fontPath) throw new Error("165 原稿紙須設定 ESSAY_MCP_PAPER_FONT，指向教育部標準楷書完整字型。");
   return fontPath;
 }
+export function isPaperFontAvailable(template: AnswerTemplate): boolean {
+  if (template.paperFont !== "handwriting") return true;
+  try { return existsSync(originalPaperFontPath(template)); } catch { return false; }
+}
 export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
 type OriginalPaperFormat = Omit<ParagraphFormat, "hangingIndent"> & { hangingIndent?: number };
 let cachedFont: { path: string; mtimeMs: number; size: number; face: ReturnType<typeof fontkit.openSync> } | undefined;
-let cachedHandwritingFont: typeof cachedFont;
+const cachedHandwritingFonts = new Map<string, NonNullable<typeof cachedFont>>();
 export function validateOriginalPaperFontFamily(familyName: string): void {
   if (familyName !== "TW-MOE-Std-Kai") throw new Error("165 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
 }
@@ -49,10 +59,11 @@ export function originalPaperFont(template: AnswerTemplate, fontPath = originalP
   if (template.paperFont !== "handwriting") return validatedOriginalPaperFont(fontPath);
   try {
     const { mtimeMs, size } = statSync(fontPath);
-    if (cachedHandwritingFont?.path === fontPath && cachedHandwritingFont.mtimeMs === mtimeMs && cachedHandwritingFont.size === size) return cachedHandwritingFont.face;
+    const cached = cachedHandwritingFonts.get(fontPath);
+    if (cached?.mtimeMs === mtimeMs && cached.size === size) return cached.face;
     const face = fontkit.openSync(fontPath);
     if (!("layout" in face)) throw new Error("font collection"); // .ttc/.dfont open as a collection without layout()
-    cachedHandwritingFont = { path: fontPath, mtimeMs, size, face };
+    cachedHandwritingFonts.set(fontPath, { path: fontPath, mtimeMs, size, face });
     return face;
   } catch { throw new Error("165 原稿紙（手寫體）字型無法載入。"); }
 }

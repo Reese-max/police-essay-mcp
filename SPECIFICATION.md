@@ -24,7 +24,18 @@
 - `load_exam_paper` 省略模板且帶答案 ID 時沿用該答案；只有模板的呼叫使用新預設。明確模板與答案不符仍拒絕。
 - 舊預設建立的冪等重試保留已存模板，完整請求雜湊仍防止不同請求重用 key。
 
-手寫體範本 `police_information_essay_165_handwriting` 與 165 原稿紙使用相同底圖與版面，字型改由 `ESSAY_MCP_HANDWRITING_FONT` 指定的手寫字型檔，不做雜湊與字族檢查，於使用時才載入；僅在使用者明確要求手寫體時選用。標準範本的教育部標準楷書鎖定不受影響，兩個範本各自讀取自己的環境變數。
+手寫體沿用 165 底圖、兩頁各 22 行與版面，只接受靠左、非粗體、非斜體。要求手寫體但未指定字型時，選預設手寫範本；指定字型時，選名稱包含該字型的範本：
+
+| 範本 ID | 字型與設定 |
+| --- | --- |
+| `police_information_essay_165_handwriting` | 預設手寫體：`ESSAY_MCP_HANDWRITING_FONT` 指定字型檔 |
+| `police_information_essay_165_handwriting_yozai` | 悠哉字體：`Yozai-Regular.ttf` |
+| `police_information_essay_165_handwriting_xiaolai` | 小賴字體：`Xiaolai-Regular.ttf` |
+| `police_information_essay_165_handwriting_marker` | 霞鶩漫黑：`LXGWMarkerGothic-Regular.ttf` |
+
+具名字型檔須放在 `ESSAY_MCP_HANDWRITING_FONT_DIR` 指定的資料夾，與預設手寫體變數互不替代。字型不隨專案附送，由操作人員自行下載：[Yozai](https://github.com/lxgw/yozai-font)、[Xiaolai](https://github.com/lxgw/kose-font)、[LXGW Marker Gothic](https://github.com/lxgw/LxgwMarkerGothic)，三者皆為 SIL OFL 1.1。
+
+未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案仍可載入範本；使用時才驗證字型，無法載入或缺字即停止。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
 
 一般模板 `police_information_essay` 仍保留 42 欄、14pt 正黑體及縮排、對齊、段距、Tab、粗斜體、標題格式等功能，須明確指定。以下一般模板 JSON 為可選範例，不是新建預設。
 
