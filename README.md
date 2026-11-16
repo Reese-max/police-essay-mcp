@@ -236,7 +236,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 具名字型檔須放在 `ESSAY_MCP_HANDWRITING_FONT_DIR` 指定的資料夾，與預設手寫體變數互不替代。字型不隨專案附送，由操作人員自行下載：[Yozai](https://github.com/lxgw/yozai-font)、[Xiaolai](https://github.com/lxgw/kose-font)、[LXGW Marker Gothic](https://github.com/lxgw/LxgwMarkerGothic)，三者皆為 SIL OFL 1.1。
 
-未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案仍可載入範本；使用時才驗證字型，無法載入或缺字即停止。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
+未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案的範本代碼仍然有效，但排版、預覽與匯出都需要該字型，字型不存在、無法載入或缺字時回報錯誤，不替換字型。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
 
 `check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板透過 `export_answer` 輸出的 DOCX、PDF、TXT 均拒絕超頁及 `allowOverflow: true`。
 

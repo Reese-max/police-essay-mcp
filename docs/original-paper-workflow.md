@@ -23,7 +23,7 @@
 
 具名字型檔須放在 `ESSAY_MCP_HANDWRITING_FONT_DIR` 指定的資料夾，與預設手寫體變數互不替代。字型不隨專案附送，由操作人員自行下載：[Yozai](https://github.com/lxgw/yozai-font)、[Xiaolai](https://github.com/lxgw/kose-font)、[LXGW Marker Gothic](https://github.com/lxgw/LxgwMarkerGothic)，三者皆為 SIL OFL 1.1。
 
-未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案仍可載入範本；使用時才驗證字型，無法載入或缺字即停止。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
+未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案的範本代碼仍然有效，但排版、預覽與匯出都需要該字型，字型不存在、無法載入或缺字時回報錯誤，不替換字型。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
 
 1. 模型讀題，列出各小題配分、應答元素及要求數量。研究與來源查核由模型及檢索工具負責，MCP 不自行生成事實或評定正確性。
 2. 依配分寫擬答，分成穩定 ID 的 sections；三小題可用 `part_1`、`part_2`、`part_3`。正文與題目另存。
