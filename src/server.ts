@@ -3,6 +3,7 @@ import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRU
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
 import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
 import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
+import { lawReferenceHint, lawReferencesFor } from "./law-references.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
@@ -318,6 +319,13 @@ async function linkSavedCreate(store: EssayStore, prepared: PreparedCreate): Pro
     return { ...prepared, linkPending: true, message: "答案已保存；考試連結待完成。請呼叫 get_exam_progress 或以相同請求重試 create_answer。" };
   }
   return prepared;
+}
+
+// start_exam attached references only for the question texts it was given; any other answer gets them when created.
+async function questionWithoutStartExamReferences(store: EssayStore, examId: string | undefined, answer: AnswerDocument) {
+  if (!examId || answer.questionNo === undefined) return answer.question;
+  const plan = await store.getExam(examId).catch(() => undefined);
+  return plan?.questions.find(q => q.questionNo === answer.questionNo)?.question === answer.question ? undefined : answer.question;
 }
 
 async function commitCreate(store: EssayStore, prepared: PreparedCreate): Promise<PreparedCreate> {
@@ -897,8 +905,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       try { await store.saveExam(plan); } catch (error) { if (!await replay()) throw error; replayed = true; }
     }
     const progress = await examProgress(store, id);
+    const lawReferences = lawReferencesFor(plan.questions.map(q => q.question));
     // Assistants that read only the text invented their own examId; state the real one there too.
-    return { structuredContent: { examId: id, summary: progress.summary, replayed }, content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}`) };
+    return { structuredContent: { examId: id, summary: progress.summary, replayed, ...(lawReferences ? { lawReferences } : {}) },
+      content: textContent(`examId=${id}（後續 create_answers／create_answer 請帶此值）；${progress.summary}` + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
   });
   registerTool("get_exam_progress", {
     title: "讀取考試進度", _meta: { ui: { visibility: ["model", "app"] } }, description: "Read real stages and nextStep first when resuming an interrupted exam; omit examId to find saved exams.",
@@ -918,7 +928,13 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       }
     }
     const progress = await examProgress(store, examId);
-    return { structuredContent: progress, content: textContent(progress.summary) };
+    // A resumed exam skips start_exam, so questions still being written (not started or drafted) get their references here.
+    const lawReferences = lawReferencesFor(await Promise.all(progress.questions.map(async q =>
+      q.stage === "not_started" ? ("question" in q ? q.question : undefined)
+      // A missing answer must not break resuming; other storage errors still surface, as in examProgress.
+      : q.stage === "drafted" && q.answerId ? (await store.getAnswer(q.answerId).catch(error => { if (isStoreNotFound(error)) return undefined; throw error; }))?.question : undefined)));
+    return { structuredContent: { ...progress, ...(lawReferences ? { lawReferences } : {}) },
+      content: textContent(progress.summary + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
   });
 
   const deleteExamTool = registerTool("delete_exam", {
@@ -966,12 +982,14 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ responseDetail, ...request }) => {
       const { current, replayed, linkPending, message, examId } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
+      const lawReferences = lawReferencesFor([await questionWithoutStartExamReferences(store, examId, current.answer)]);
       return {
-        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) },
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}), ...(lawReferences ? { lawReferences } : {}) },
         content: textContent((replayed ? (examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
           + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
           + (message ? `\n${message}` : "")
-          + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")),
+          + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")
+          + (lawReferences ? lawReferenceHint(lawReferences) : "")),
       };
     },
   );
@@ -1019,10 +1037,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         }
       }
       if (failures.length) throw new Error(failures.join("\n"));
-      const results = [];
+      const results = [], referenceQuestions: (string | undefined)[] = [];
       for (const [index, item] of prepared.entries()) {
         try {
-          const { current: { answer, layout }, replayed, linkPending, message } = await commitCreate(store, item);
+          const { current: { answer, layout }, replayed, linkPending, message, examId: linkedExam } = await commitCreate(store, item);
+          referenceQuestions.push(await questionWithoutStartExamReferences(store, linkedExam, answer));
           results.push({ index: index + 1, answerId: answer.id, title: answer.title,
             ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
             version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
@@ -1032,9 +1051,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
             + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);
         }
       }
-      return { structuredContent: { answers: results }, content: textContent(results.map(item =>
+      const lawReferences = lawReferencesFor(referenceQuestions);
+      return { structuredContent: { answers: results, ...(lawReferences ? { lawReferences } : {}) }, content: textContent(results.map(item =>
         `第${item.questionNo ?? item.index}題/${item.title} ${item.answerId} ${item.totalLines}/${item.capacity} 行，`
-        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")) };
+        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")
+        + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
     },
   );
 
