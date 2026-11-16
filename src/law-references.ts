@@ -17,7 +17,7 @@ const TRIGGERS: Record<string, (text: string) => boolean> = {
 
 export type LawReferences = {
   source: string; cutoff: string;
-  laws: { name: string; amended: string; articles: { article: string; text: string }[] }[];
+  laws: { name: string; amended: string; effectiveNote?: string; articles: { article: string; text: string }[] }[];
 };
 
 const articleLabel = (no: string) => { const [main, sub] = no.split("-"); return `第${main}條${sub ? `之${sub}` : ""}`; };
@@ -26,7 +26,7 @@ export function lawReferencesFor(questions: (string | undefined)[]): LawReferenc
   // Judge each question on its own; words from two unrelated questions must not combine into a trigger.
   const texts = questions.filter((q): q is string => !!q);
   const laws = LAW_TEXTS.filter(law => texts.some(t => TRIGGERS[law.pcode]?.(t))).map(law => ({
-    name: law.name, amended: law.amended, articles: law.articles.map(a => ({ article: articleLabel(a.no), text: a.text })),
+    name: law.name, amended: law.amended, ...(law.effectiveNote ? { effectiveNote: law.effectiveNote } : {}), articles: law.articles.map(a => ({ article: articleLabel(a.no), text: a.text })),
   }));
   return laws.length ? { source: "全國法規資料庫（law.moj.gov.tw）", cutoff: LAW_CUTOFF, laws } : undefined;
 }
@@ -34,5 +34,7 @@ export function lawReferencesFor(questions: (string | undefined)[]): LawReferenc
 export function lawReferenceHint(refs: LawReferences): string {
   const count = refs.laws.reduce((sum, law) => sum + law.articles.length, 0);
   return `\n已附${refs.laws.map(law => `${law.name}（${law.amended}修正）`).join("、")}相關條文原文 ${count} 條（lawReferences，${refs.source}，資料截止${refs.cutoff}）：`
-    + "寫這些法規的條號或條文內容以此為準，用自己的話摘要，只引用題目用得到的；題目要求的其他法規照常作答，條號沒把握時只寫法規名稱與要件，不捏造條號。";
+    + "寫這些法規的條號或條文內容以此為準，用自己的話摘要，只引用題目用得到的；題目要求的其他法規照常作答，條號沒把握時只寫法規名稱與要件，不捏造條號。"
+    + refs.laws.filter(law => law.effectiveNote).map(law =>
+      `${law.name}有修正條文尚未生效（見 effectiveNote）：引用 effectiveNote 列出條號的修正內容時註明「修正條文施行日期由行政院定之」，不寫成已施行的現行規定；未列出的條文不受影響。`).join("");
 }
