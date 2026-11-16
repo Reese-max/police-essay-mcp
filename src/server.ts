@@ -321,6 +321,13 @@ async function linkSavedCreate(store: EssayStore, prepared: PreparedCreate): Pro
   return prepared;
 }
 
+// start_exam attached references only for the question texts it was given; any other answer gets them when created.
+async function questionWithoutStartExamReferences(store: EssayStore, examId: string | undefined, answer: AnswerDocument) {
+  if (!examId || answer.questionNo === undefined) return answer.question;
+  const plan = await store.getExam(examId).catch(() => undefined);
+  return plan?.questions.find(q => q.questionNo === answer.questionNo)?.question === answer.question ? undefined : answer.question;
+}
+
 async function commitCreate(store: EssayStore, prepared: PreparedCreate): Promise<PreparedCreate> {
   if (prepared.examId && prepared.keyHash) {
     for (let attempt = 0; ; attempt++) {
@@ -921,8 +928,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       }
     }
     const progress = await examProgress(store, examId);
-    // A resumed exam skips start_exam, so questions still to be written get their references here.
-    const lawReferences = lawReferencesFor(progress.questions.map(q => q.stage === "not_started" && "question" in q ? q.question : undefined));
+    // A resumed exam skips start_exam, so questions still being written (not started or drafted) get their references here.
+    const lawReferences = lawReferencesFor(await Promise.all(progress.questions.map(async q =>
+      q.stage === "not_started" ? ("question" in q ? q.question : undefined)
+      // A missing answer must not break resuming; other storage errors still surface, as in examProgress.
+      : q.stage === "drafted" && q.answerId ? (await store.getAnswer(q.answerId).catch(error => { if (isStoreNotFound(error)) return undefined; throw error; }))?.question : undefined)));
     return { structuredContent: { ...progress, ...(lawReferences ? { lawReferences } : {}) },
       content: textContent(progress.summary + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
   });
@@ -972,8 +982,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     async ({ responseDetail, ...request }) => {
       const { current, replayed, linkPending, message, examId } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
-      // start_exam already attached references for exam answers; a standalone answer gets them here.
-      const lawReferences = examId ? undefined : lawReferencesFor([current.answer.question]);
+      const lawReferences = lawReferencesFor([await questionWithoutStartExamReferences(store, examId, current.answer)]);
       return {
         structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}), ...(lawReferences ? { lawReferences } : {}) },
         content: textContent((replayed ? (examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
@@ -1028,10 +1037,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         }
       }
       if (failures.length) throw new Error(failures.join("\n"));
-      const results = [];
+      const results = [], referenceQuestions: (string | undefined)[] = [];
       for (const [index, item] of prepared.entries()) {
         try {
-          const { current: { answer, layout }, replayed, linkPending, message } = await commitCreate(store, item);
+          const { current: { answer, layout }, replayed, linkPending, message, examId: linkedExam } = await commitCreate(store, item);
+          referenceQuestions.push(await questionWithoutStartExamReferences(store, linkedExam, answer));
           results.push({ index: index + 1, answerId: answer.id, title: answer.title,
             ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
             version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
@@ -1041,9 +1051,11 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
             + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);
         }
       }
-      return { structuredContent: { answers: results }, content: textContent(results.map(item =>
+      const lawReferences = lawReferencesFor(referenceQuestions);
+      return { structuredContent: { answers: results, ...(lawReferences ? { lawReferences } : {}) }, content: textContent(results.map(item =>
         `第${item.questionNo ?? item.index}題/${item.title} ${item.answerId} ${item.totalLines}/${item.capacity} 行，`
-        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")) };
+        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")
+        + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
     },
   );
 

@@ -4,10 +4,12 @@ import { LAW_CUTOFF, LAW_TEXTS } from "./law-references-data.js";
 // A law is attached only when the question names its subject; keep triggers narrow so unrelated questions get nothing.
 // Search algorithms (深度優先搜索…) and ITIL-style incident handling share words with criminal search and security incidents.
 const ALGORITHM_SEARCH = /(?:優先|啟發式|狀態空間|二元|二分|線性|循序|局部|窮舉|鄰域|束|樹狀?)搜索|搜索(?:引擎|演算法|樹|空間)/g;
+// 假扣押 is a civil-procedure remedy, not a criminal seizure.
+const CIVIL_SEIZURE = /假扣押/g;
 const SECURITY_CONTEXT = /資安|資通安全|資訊安全|惡意|勒索|入侵|駭客|端點防護|告警|外洩/;
-const securityIncident = (t: string) => /資通安全事件|資安事件/.test(t) || (/資訊事件|事件通報/.test(t) && SECURITY_CONTEXT.test(t));
+const securityIncident = (t: string) => /資通安全事件|資安事件|資訊安全事件/.test(t) || (/資訊事件|事件通報/.test(t) && SECURITY_CONTEXT.test(t));
 const TRIGGERS: Record<string, (text: string) => boolean> = {
-  C0010001: t => /搜索|搜扣|扣押|刑事訴訟法/.test(t.replace(ALGORITHM_SEARCH, "")),
+  C0010001: t => /搜索|搜扣|扣押|刑事訴訟法/.test(t.replace(ALGORITHM_SEARCH, "").replace(CIVIL_SEIZURE, "")),
   A0030297: t => /資通安全管理法|資安法|資通安全長|資安長/.test(t) || securityIncident(t),
   A0030305: securityIncident,
   I0050021: t => /個人資料|個資/.test(t),
@@ -21,8 +23,9 @@ export type LawReferences = {
 const articleLabel = (no: string) => { const [main, sub] = no.split("-"); return `第${main}條${sub ? `之${sub}` : ""}`; };
 
 export function lawReferencesFor(questions: (string | undefined)[]): LawReferences | undefined {
-  const text = questions.filter(Boolean).join("\n");
-  const laws = LAW_TEXTS.filter(law => TRIGGERS[law.pcode]?.(text)).map(law => ({
+  // Judge each question on its own; words from two unrelated questions must not combine into a trigger.
+  const texts = questions.filter((q): q is string => !!q);
+  const laws = LAW_TEXTS.filter(law => texts.some(t => TRIGGERS[law.pcode]?.(t))).map(law => ({
     name: law.name, amended: law.amended, articles: law.articles.map(a => ({ article: articleLabel(a.no), text: a.text })),
   }));
   return laws.length ? { source: "全國法規資料庫（law.moj.gov.tw）", cutoff: LAW_CUTOFF, laws } : undefined;

@@ -34,6 +34,11 @@ test("law references attach only to questions that name their subject", () => {
     "說明搜索引擎最佳化之原理", "說明資訊安全管理措施", "比較深度優先搜索與廣度優先搜索", "說明啟發式搜索演算法",
     "說明ITIL事件管理之事件通報流程"]) assert.equal(lawReferencesFor([unrelated]), undefined, unrelated);
   assert.equal(lawReferencesFor([undefined, ""]), undefined);
+  assert.deepEqual(names(["請說明警察機關發生資訊安全事件時之法定通報時限"]), ["資通安全管理法", "資通安全事件通報應變及演練辦法"]);
+  assert.deepEqual(names(["說明另案扣押之要件"]), ["刑事訴訟法"]);
+  assert.equal(lawReferencesFor(["依民事訴訟法說明假扣押的要件"]), undefined); // civil, not criminal seizure
+  // Each question is judged alone: two unrelated questions must not combine into a security-incident trigger.
+  assert.equal(lawReferencesFor(["說明資訊安全管理措施", "說明ITIL事件管理之事件通報流程"]), undefined);
 });
 
 test("start_exam and standalone create_answer hand the verbatim articles to the assistant once", async () => {
@@ -73,6 +78,31 @@ test("start_exam and standalone create_answer hand the verbatim articles to the 
     assert.doesNotMatch(inExam.text, /lawReferences/);
     const written = await call("get_exam_progress", { examId: law.data.examId });
     assert.equal(written.data.lawReferences, undefined);
+
+    // start_exam without the question text attached nothing, so the answer that brings the text gets the references.
+    const numbered = await call("start_exam", { title: "只有題號", questions: [{ questionNo: 1 }] });
+    assert.equal(numbered.data.lawReferences, undefined);
+    const late = await call("create_answer", { templateId: "police_information_essay", title: "刑訴", examId: numbered.data.examId, questionNo: 1,
+      question: "依刑事訴訟法說明搜索票之聲請程序。", sections });
+    assert.deepEqual(late.data.lawReferences.laws.map((l: any) => l.name), ["刑事訴訟法"]);
+    // start_exam saw a different question text, so its references do not cover this answer.
+    const changed = await call("create_answer", { templateId: "police_information_essay", title: "個資", examId: plain.data.examId, questionNo: 1,
+      question: "說明個人資料外洩之通知義務。", sections });
+    assert.deepEqual(changed.data.lawReferences.laws.map((l: any) => l.name), ["個人資料保護法"]);
+
+    const batch = await call("create_answers", { answers: [
+      { templateId: "police_information_essay", title: "個資", question: "說明個人資料外洩之通知義務。", sections, idempotencyKey: "law-batch-1" },
+      { templateId: "police_information_essay", title: "零信任", question: "何謂零信任？", sections, idempotencyKey: "law-batch-2" }] });
+    assert.deepEqual(batch.data.lawReferences.laws.map((l: any) => l.name), ["個人資料保護法"]);
+    assert.match(batch.text, /已附個人資料保護法/);
+
+    // A draft still over capacity is being written, so resuming hands its references back.
+    const drafting = await call("start_exam", { title: "撰寫中", questions: [{ questionNo: 1, question: "依刑事訴訟法說明搜索票之聲請程序。" }] });
+    await call("create_answer", { templateId: "police_information_essay", title: "刑訴", examId: drafting.data.examId, questionNo: 1,
+      question: "依刑事訴訟法說明搜索票之聲請程序。", sections: [{ id: "body", text: "搜索票應記載案由與應搜索之處所。".repeat(400) }] });
+    const resumedDraft = await call("get_exam_progress", { examId: drafting.data.examId });
+    assert.equal(resumedDraft.data.questions[0].stage, "drafted");
+    assert.deepEqual(resumedDraft.data.lawReferences.laws.map((l: any) => l.name), ["刑事訴訟法"]);
   } finally {
     await client.close(); await server.close(); await fs.rm(root, { recursive: true, force: true });
   }

@@ -46,7 +46,8 @@ export const LAW_TEXTS: readonly { pcode: string; name: string; amended: string;
 if (process.argv.includes("--check")) {
   const current = await fs.readFile(OUT, "utf8").catch(() => "");
   // The cutoff date moves with every database refresh; only article text or amendment dates count as drift.
-  const body = (s: string) => s.replace(/export const LAW_CUTOFF = .*\n/, "");
+  // core.autocrlf checkouts are CRLF; compare text, not line endings.
+  const body = (s: string) => s.replace(/\r\n/g, "\n").replace(/export const LAW_CUTOFF = .*\n/, "");
   if (body(current) !== body(source)) { console.error("LAW_REFERENCES_DRIFT：線上條文與 src/law-references-data.ts 不同，請重跑本腳本並檢視 diff。"); process.exit(1); }
   console.log(`LAW_REFERENCES_OK ${laws.length} laws, cutoff ${cutoff}`);
 } else {
