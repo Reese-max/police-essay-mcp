@@ -56,7 +56,7 @@ test("165 changes only template identity; the 166 compatibility template keeps e
   assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
   assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
   const templates = await store.listTemplates();
-  assert.deepEqual(templates.map(t => t.id), [general, paper, legacyPaper]);
+  assert.deepEqual(templates.map(t => t.id), [general, paper, "police_information_essay_165_handwriting", legacyPaper]);
 });
 
 test("both file and cloud template lists display 165 for canonical and legacy IDs", async () => {

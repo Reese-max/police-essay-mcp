@@ -38,7 +38,7 @@ function pageLines(report: LayoutReport, page: number): LayoutLine[] {
   return report.lines.filter((line) => line.page === page);
 }
 
-import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFontPath, originalPaperRenderBaseline } from "./original-paper.js";
+import { originalPaper, originalPaperImage, validateOriginalPaper, originalPaperFont, originalPaperFontPath, originalPaperRenderBaseline } from "./original-paper.js";
 import { subsetFont } from "./font-subset.js";
 
 /** Printable ASCII and common full-width marks stay editable in Word beyond the answer's own characters. */
@@ -53,15 +53,15 @@ export function embeddedFontOptions(fontFamily: string, data: Buffer) {
 
 /**
  * docx writes a lowercase w:fontKey, which LibreOffice cannot deobfuscate; ST_Guid is uppercase.
- * The same hex digits keep the key bytes, so docx's obfuscated font1.odttf (rId1) stays valid.
+ * The same hex digits keep the key bytes, so docx's obfuscated font files and relationships stay valid.
  */
-export function embeddedFontTable(document: Document, fontFamily: string, altName: string): Array<{ path: string; data: string }> {
+export function embeddedFontTable(document: Document, fonts: string | Array<{ name: string; altName?: string }>, altName?: string): Array<{ path: string; data: string }> {
   const xml = (value: string) => value.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
-  const fontKey = document.FontTable.fontOptionsWithKey[0].fontKey.toUpperCase();
+  const faces = typeof fonts === "string" ? [{ name: fonts, altName }] : fonts;
   return [{ path: "word/fontTable.xml", data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<w:fonts xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-    + `<w:font w:name="${xml(fontFamily)}"><w:altName w:val="${xml(altName)}"/><w:charset w:val="88"/><w:family w:val="auto"/><w:pitch w:val="variable"/>`
-    + `<w:embedRegular r:id="rId1" w:fontKey="{${fontKey}}" w:subsetted="1"/></w:font></w:fonts>` }];
+    + faces.map(({ name, altName }, index) => `<w:font w:name="${xml(name)}">${altName === undefined ? "" : `<w:altName w:val="${xml(altName)}"/>`}<w:charset w:val="88"/><w:family w:val="auto"/><w:pitch w:val="variable"/>`
+      + `<w:embedRegular r:id="rId${index + 1}" w:fontKey="{${document.FontTable.fontOptionsWithKey[index].fontKey.toUpperCase()}}" w:subsetted="1"/></w:font>`).join("") + '</w:fonts>' }];
 }
 
 export function outputPageCount(report: LayoutReport, template: AnswerTemplate, allowOverflow: boolean): number {
@@ -192,6 +192,7 @@ export async function exportDocx(
 
 /** The single-answer builder also supplies every bundle section, including 165 paper geometry. */
 function docxSection({ report, template, bookmark }: ExportPages, pages: number, index: number) {
+  if (template.paperProfile && template.paperFont === "handwriting") template = { ...template, fontFamily: originalPaperFont(template).familyName };
   // Reject before creating a file or export handle: DOCX cannot contain XML 1.0
   // controls, isolated surrogates or Unicode noncharacters.
   for (const line of report.lines) {
@@ -236,13 +237,19 @@ export async function exportDocxBundle(entries: ExportPages[], outputPath: strin
   : Promise<{ path: string; pages: number; format: "docx" }> {
   const counts = entries.map(({ report, template }) => outputPageCount(report, template, allowOverflow));
   const sections = entries.map((entry, index) => docxSection(entry, counts[index], index));
-  const paper = entries.find(entry => entry.template.paperProfile);
-  // Embed one shared original-paper face with every member's used glyphs, as single-answer export does.
-  const embedded = paper ? embeddedFontOptions(paper.template.fontFamily, await subsetFont(originalPaperFontPath(),
-    [EDITABLE_PAPER_CHARACTERS, ...entries.flatMap(({ report }, index) => report.lines.filter(line => line.page <= counts[index]).map(line => line.text))])) : undefined;
+  const papers = new Map<string, { fontPath: string; name: string; altName?: string; characters: string[] }>();
+  for (const [index, { template, report }] of entries.entries()) if (template.paperProfile) {
+    const fontPath = originalPaperFontPath(template);
+    const key = template.paperFont ?? "standard";
+    if (!papers.has(key)) papers.set(key, { fontPath, name: originalPaperFont(template).familyName,
+      ...(template.paperFont === "handwriting" ? {} : { altName: "教育部標準楷書" }), characters: [EDITABLE_PAPER_CHARACTERS] });
+    papers.get(key)!.characters.push(...report.lines.filter(line => line.page <= counts[index]).map(line => line.text));
+  }
+  const fonts = await Promise.all([...papers.values()].map(async ({ fontPath, name, characters }) => embeddedFontOptions(name, await subsetFont(fontPath, characters)).fonts[0]));
+  const embedded = fonts.length ? { fonts, externalStyles: PAPER_STYLES } : undefined;
   const document = new Document({ ...embedded, creator: "police-essay-mcp", title: "國考申論答題紙",
     description: "由警察資訊申論答題紙 MCP 產生的固定版面文件", sections });
-  const overrides = paper ? embeddedFontTable(document, paper.template.fontFamily, "教育部標準楷書") : [];
+  const overrides = fonts.length ? embeddedFontTable(document, [...papers.values()]) : [];
   for (const index of entries.keys()) await onMember?.(index);
   await fs.mkdir(path.dirname(outputPath), { recursive: true });
   await fs.writeFile(outputPath, await Packer.toBuffer(document, false, overrides));
@@ -453,7 +460,7 @@ export async function exportPdfBundle(entries: ExportPages[], outputPath: string
   };
   try {
     for (const [index, { report, template, bookmark }] of entries.entries()) {
-      let fontPath = template.paperProfile ? originalPaperFontPath() : findPdfFont();
+      let fontPath = template.paperProfile ? originalPaperFontPath(template) : findPdfFont();
       let boldFontPath = findPdfFont(true);
       let italicFontPath = findPdfItalicFont();
       let regularFont: unknown;

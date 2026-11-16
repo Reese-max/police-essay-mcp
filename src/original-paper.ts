@@ -19,7 +19,12 @@ export function originalPaperImage(): Buffer {
   if (createHash("sha256").update(image).digest("hex") !== originalPaper.sha256) throw new Error("165 稿紙底圖雜湊不符。");
   return image;
 }
-export function originalPaperFontPath(): string {
+export function originalPaperFontPath(template?: AnswerTemplate): string {
+  if (template?.paperFont === "handwriting") {
+    const fontPath = process.env.ESSAY_MCP_HANDWRITING_FONT;
+    if (!fontPath) throw new Error("165 原稿紙（手寫體）須設定 ESSAY_MCP_HANDWRITING_FONT，指向手寫字型檔。");
+    return fontPath;
+  }
   const fontPath = process.env.ESSAY_MCP_PAPER_FONT;
   if (!fontPath) throw new Error("165 原稿紙須設定 ESSAY_MCP_PAPER_FONT，指向教育部標準楷書完整字型。");
   return fontPath;
@@ -27,6 +32,7 @@ export function originalPaperFontPath(): string {
 export const ORIGINAL_PAPER_FONT_SHA256 = "e2b6b1bd1d6303672a68d5057a1f1e4b5361e3d8842373ff3bd1c71fb9ea9b98";
 type OriginalPaperFormat = Omit<ParagraphFormat, "hangingIndent"> & { hangingIndent?: number };
 let cachedFont: { path: string; mtimeMs: number; size: number; face: ReturnType<typeof fontkit.openSync> } | undefined;
+let cachedHandwritingFont: typeof cachedFont;
 export function validateOriginalPaperFontFamily(familyName: string): void {
   if (familyName !== "TW-MOE-Std-Kai") throw new Error("165 原稿紙須使用教育部標準楷書 TW-MOE-Std-Kai。");
 }
@@ -39,14 +45,23 @@ export function validatedOriginalPaperFont(fontPath: string) {
   cachedFont = { path: fontPath, mtimeMs, size, face: opened };
   return opened;
 }
-function font() { return validatedOriginalPaperFont(originalPaperFontPath()); }
+export function originalPaperFont(template: AnswerTemplate, fontPath = originalPaperFontPath(template)) {
+  if (template.paperFont !== "handwriting") return validatedOriginalPaperFont(fontPath);
+  try {
+    const { mtimeMs, size } = statSync(fontPath);
+    if (cachedHandwritingFont?.path === fontPath && cachedHandwritingFont.mtimeMs === mtimeMs && cachedHandwritingFont.size === size) return cachedHandwritingFont.face;
+    const face = fontkit.openSync(fontPath);
+    cachedHandwritingFont = { path: fontPath, mtimeMs, size, face };
+    return face;
+  } catch { throw new Error("165 原稿紙（手寫體）字型無法載入。"); }
+}
 export function validateOriginalPaper(template: AnswerTemplate, fontPath?: string): void {
-  if (template.pages !== 2 || template.linesPerPage !== 22 || template.fontSizePt !== 19 || template.fontFamily !== "TW-MOE-Std-Kai" || template.lineHeightPt !== 22 || Math.abs(template.marginsMm.left * 72 / 25.4 - 130.32) > 0.01 || Math.abs(template.marginsMm.top * 72 / 25.4 - originalPaper.rows[0][0]) > 0.01 || Math.abs(595.28 - template.marginsMm.right * 72 / 25.4 - 496) > 0.01) throw new Error("165 原稿紙的頁數、行數、字級及位置須維持標準設定。");
+  if (template.pages !== 2 || template.linesPerPage !== 22 || template.fontSizePt !== 19 || (template.paperFont !== "handwriting" && template.fontFamily !== "TW-MOE-Std-Kai") || template.lineHeightPt !== 22 || Math.abs(template.marginsMm.left * 72 / 25.4 - 130.32) > 0.01 || Math.abs(template.marginsMm.top * 72 / 25.4 - originalPaper.rows[0][0]) > 0.01 || Math.abs(595.28 - template.marginsMm.right * 72 / 25.4 - 496) > 0.01) throw new Error("165 原稿紙的頁數、行數、字級及位置須維持標準設定。");
   originalPaperImage();
-  validatedOriginalPaperFont(fontPath ?? originalPaperFontPath());
+  originalPaperFont(template, fontPath);
 }
 export function originalPaperMeasure(template: AnswerTemplate): (value: string) => number {
-  const face = font();
+  const face = originalPaperFont(template);
   return (value: string) => {
     const glyphWidth = face.layout(value).positions.reduce((sum: number, p: { xAdvance: number }) => sum + p.xAdvance, 0) * template.fontSizePt / face.unitsPerEm;
     // Word may add quarter-em spacing between Han and Latin letters. Reserve it
@@ -62,12 +77,12 @@ export function originalPaperAvailableWidth(format: OriginalPaperFormat, templat
 }
 export function wrapOriginalPaper(text: string, format: OriginalPaperFormat, template: AnswerTemplate, options: LayoutOptions = {}): string[] {
   validateOriginalPaper(template);
-  if (format.bold || format.italic || format.alignment !== "left") throw new Error("165 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
+  if (format.bold || format.italic || format.alignment !== "left") throw new Error(template.paperFont === "handwriting" ? "165 原稿紙（手寫體）採靠左排版，請關閉粗體、斜體與分散對齊。" : "165 原稿紙採標準楷書靠左排版，請關閉粗體、斜體與分散對齊。");
   if (format.leftIndent + format.rightIndent + format.firstLineIndent >= template.columns
     || format.leftIndent + format.rightIndent + (format.hangingIndent ?? 0) >= template.columns) {
     throw new Error("段落縮排總寬度必須小於模板欄寬。請降低 firstLineIndent、hangingIndent、leftIndent 或 rightIndent。");
   }
-  const face = font();
+  const face = originalPaperFont(template);
   const measure = originalPaperMeasure(template);
   const lines: string[] = [];
   let current = "";
@@ -129,7 +144,7 @@ export function compactGlyphPath(commands: PathCommand[]): string {
 /** Glyph outlines give the browser the same paper/font geometry without downloading a font. */
 export function originalPaperPreview(template: AnswerTemplate, report: import('./domain.js').LayoutReport): string[] {
   validateOriginalPaper(template);
-  const face = font();
+  const face = originalPaperFont(template);
   const scale = template.fontSizePt / face.unitsPerEm;
   const escape = (value: string) => value.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!));
   const round = (value: number) => Math.round(value * 100) / 100;
