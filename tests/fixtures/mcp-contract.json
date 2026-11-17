@@ -29303,6 +29303,10 @@
   },
   "intentionalDifferences": [
     {
+      "path": "owner.tools[update_answer_info].inputSchema.templateId;owner.tools[update_answer_info].description",
+      "reason": "Optional string templateId switches an existing answer to a same-layout template atomically. Description before: Edit title, exam, question number, question or layout options at expectedVersion. After: Edit title, exam, question number, question or layout options at expectedVersion. templateId switches to a same-layout template (e.g. 165 standard or handwriting font). update_answer_info is an added tool absent from the historical baseline; its existing ADDED_TOOLS exclusion remains unchanged."
+    },
+    {
       "path": "owner.tools[replace_texts];*.tools[preview_change].operation",
       "reason": "New essay.write batch replacement validates every item before one save and one version; preview_change shares the same derivation. Existing replace_text fields and semantics remain unchanged."
     },

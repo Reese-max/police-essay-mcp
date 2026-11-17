@@ -105,6 +105,7 @@ export const templateSchema = z.object({
   paperSize: z.literal("A4"),
   paperProfile: z.literal("original_166").optional(),
   paperFont: z.literal("handwriting").optional(),
+  hidden: z.boolean().optional(),
   paperFontFile: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/).optional(),
   pages: z.number().int().positive(),
   linesPerPage: z.number().int().positive(),

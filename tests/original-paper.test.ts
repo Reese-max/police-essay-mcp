@@ -118,7 +118,8 @@ test('166 asset does not appear as a template and invalid formatting does not pe
  try {
   const store = new FileStore({answerDir:join(dir,'answers'),exportDir:join(dir,'exports')});
   const templates=await store.listTemplates();
-  assert.ok(templates.some(t=>t.id===template.id));
+  assert.ok(!templates.some(t=>t.id===template.id));
+  assert.equal((await store.getTemplate(template.id)).id,template.id);
   const answer=createAnswerDocument({templateId:template.id,title:'測試',sections:[{text:'不得存入無法渲染的格式',paragraphFormat:{bold:true}}]});
   await assert.rejects(store.saveAnswer(answer),/關閉粗體/);
   assert.equal((await store.listAnswers()).length,0);

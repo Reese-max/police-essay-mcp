@@ -86,7 +86,7 @@ export class CloudStore implements EssayStore {
   async listTemplates() {
     const names = (await fs.readdir(this.files.templateDir)).filter(name => name.endsWith(".json"));
     const templates = await Promise.all(names.map(name => this.getTemplate(name.slice(0, -5))));
-    return templates.filter(isPaperFontAvailable).sort((a, b) => a.id.localeCompare(b.id));
+    return templates.filter(template => !template.hidden && isPaperFontAvailable(template)).sort((a, b) => a.id.localeCompare(b.id));
   }
   resolveExportPath(filename: string, extension: ExportDetails["format"]) {
     return this.files.resolveExportPath(filename, extension);
