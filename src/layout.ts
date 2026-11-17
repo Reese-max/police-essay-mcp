@@ -3,7 +3,7 @@ import {
   headingStyleSchema,
   paragraphFormatSchema,
   normalizeNewlines,
-  unifyCompatibilityIdeographs,
+  layoutText,
   type AnswerParagraph,
   type AnswerSection,
   type AnswerTemplate,
@@ -431,7 +431,7 @@ export function layoutSections(
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
   // Lay out what the reader should see; the stored answer keeps exactly what was written.
-  const unify = unifyCompatibilityIdeographs;
+  const unify = (text: string) => layoutText(template, text);
   const ordered = sections.map(section => ({ ...section, text: unify(section.text), ...(section.heading ? { heading: unify(section.heading) } : {}),
     ...(section.paragraphs ? { paragraphs: section.paragraphs.map(paragraph => ({ ...paragraph, text: unify(paragraph.text) })) } : {}) }))
     .sort((a, b) => a.order - b.order);

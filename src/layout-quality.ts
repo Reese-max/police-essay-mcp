@@ -1,4 +1,4 @@
-import type { AnswerDocument, AnswerTemplate, LayoutLine, LayoutReport } from "./domain.js";
+import { layoutText, type AnswerDocument, type AnswerTemplate, type LayoutLine, type LayoutReport } from "./domain.js";
 import { lineIndentColumns, displayWidth } from "./layout.js";
 import { layoutWarnings } from "./planning.js";
 import { originalPaperMeasure } from "./original-paper.js";
@@ -265,8 +265,9 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
 }
 
 /** compactPaper inlines a short heading into the first body line ("一、標題：內文"); split it back out. */
-function splitInlinedHeadings(paragraphs: Paragraph[], answer: AnswerDocument): Paragraph[] {
-  const headings = new Map(answer.sections.map(section => [section.id, section.heading?.trim()]));
+function splitInlinedHeadings(paragraphs: Paragraph[], answer: AnswerDocument, template: AnswerTemplate): Paragraph[] {
+  // Compare against the heading as laid out, not as stored.
+  const headings = new Map(answer.sections.map(section => [section.id, section.heading === undefined ? undefined : layoutText(template, section.heading).trim()]));
   const done = new Set(paragraphs.filter(paragraph => paragraph.isHeading).map(paragraph => paragraph.sectionId));
   return paragraphs.flatMap(paragraph => {
     const heading = headings.get(paragraph.sectionId);
@@ -279,7 +280,7 @@ function splitInlinedHeadings(paragraphs: Paragraph[], answer: AnswerDocument): 
 }
 
 function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport) {
-  const paragraphs = splitInlinedHeadings(collectParagraphs(report), answer);
+  const paragraphs = splitInlinedHeadings(collectParagraphs(report), answer, template);
   const measure = template.paperProfile
     ? (() => {
         const paperMeasure = originalPaperMeasure(template);
