@@ -162,3 +162,31 @@ bash scripts/run-firestore-emulator-tests.sh
 Firestore emulator 測試未設定 FIRESTORE_EMULATOR_HOST 時明確 skip；只允許 loopback，使用 demo-police-essay 與每次隨機 owner，清理僅限該 owner 的測試資料。測試真正 SDK 的 transaction/create/revision/文件上限；updatedAt query 與設定檔保留 updatedAt index 的靜態檢查都有斷言。Emulator 不強制正式 Firestore 的索引設定，因此正式索引部署與查詢相容性仍須雲端驗收。
 
 OAuth 設定、單一 FileStore owner 與 provider 尚缺驗收見 [OAuth provider 要求](oauth-provider-requirements.md)。
+
+## 手寫字型與 no-traffic 驗收（2026-11-17）
+
+### 165 原稿紙手寫體範本的字型
+
+手寫字型不進映像（`.gcloudignore` 已排除字型檔），放在專用字型 bucket 的獨立前綴，以唯讀 Cloud Storage volume 掛入容器：
+
+```sh
+gcloud run deploy police-essay-mcp-staging --source . --region us-central1 \
+  --no-traffic --tag <標籤> --revision-suffix <後綴> \
+  --add-volume name=hwfonts,type=cloud-storage,bucket=<字型 bucket>,readonly=true,mount-options=only-dir=<前綴> \
+  --add-volume-mount volume=hwfonts,mount-path=/mnt/fonts/handwriting \
+  --update-env-vars ESSAY_MCP_HANDWRITING_FONT_DIR=/mnt/fonts/handwriting,ESSAY_MCP_HANDWRITING_FONT=/mnt/fonts/handwriting/<預設字型檔>
+```
+
+- 掛載需要第二代執行環境（未指定時 Cloud Run 自動選用），服務身分須對該 bucket 有 `roles/storage.objectViewer`。
+- 檔名須與各範本的 `paperFontFile` 相同；未掛載或缺檔時，對應的手寫範本只是不出現在 `list_templates`，不影響其他範本與 readiness。
+- 與教育部字型不同，手寫字型沒有 generation／SHA-256 鎖定，bucket 內容一變更就會被下一次排版讀到。要換字型請上傳到新前綴，再以新修訂版本改 `only-dir`，才能先驗收、再切流量，並可用舊修訂版本回退。
+- 掛載會使用容器記憶體。2026-11-17 在 512Mi 實測：三套字型全部載入並跑完整驗收，記憶體最高約 49%。
+
+### 對 no-traffic 修訂版本執行端對端驗收
+
+`scripts/http-e2e.ts` 與 `scripts/http-exam-e2e.ts` 拒絕跨來源下載，而下載連結一律取自 `ESSAY_PUBLIC_BASE_URL`。標記修訂版本的網址與正式網址不同來源，因此分兩步：
+
+1. 部署驗收用修訂版本（no-traffic、獨立標籤），把 `ESSAY_PUBLIC_BASE_URL` 設為該標籤自己的網址，對它執行兩支腳本。
+2. 通過後以同一映像建立正式修訂版本（`gcloud run services update --no-traffic --tag <標籤> --revision-suffix <後綴> --update-env-vars ESSAY_PUBLIC_BASE_URL=<正式網址>`），切換流量，再對正式網址重跑兩支腳本，最後移除驗收用標籤。
+
+回退以 `gcloud run services update-traffic police-essay-mcp-staging --region us-central1 --to-tags <前一版標籤>=100` 進行；答案資料不受影響。
