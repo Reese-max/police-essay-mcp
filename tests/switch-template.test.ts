@@ -116,7 +116,7 @@ test("legacy switches both ways, preserves the exam link, combines edits, and ch
   assert.deepEqual(await store.getExam(exam.examId), plan);
   const stale = await client.callTool({ name: "update_answer_info", arguments: { answerId: before.id, templateId: legacy, expectedVersion: 1 } });
   assert.equal(stale.isError, true); assert.match(JSON.stringify(stale.content), /Version conflict/);
-  assert.equal((await store.getAnswer(before.id)).version, 2);
+  assert.equal((await store.getAnswer(before.id)).version, 2); assert.equal((await store.getAnswer(before.id)).templateId, paper);
   const returned = await call(client, "update_answer_info", { answerId: before.id, templateId: legacy, expectedVersion: 2 });
   assert.equal(returned.answer.templateId, legacy); assert.equal(returned.answer.version, 3);
   assert.deepEqual((await store.listRevisions(before.id, { limit: 30 })).map(r => r.version).sort(), [1, 2, 3]);
@@ -134,6 +134,17 @@ test("missing or unloadable target font cannot save any combined edit", async ()
     await fs.writeFile(path.join(store.exportDir, "Xiaolai-Regular.ttf"), "not a font");
     await rejected(client, store, answer.id, handwriting, /稿紙（手寫體）字型無法載入/);
   } finally { restore("ESSAY_MCP_HANDWRITING_FONT_DIR", previous); }
+})));
+
+test("an empty answer still needs the target font, except between ids that share one", async () => withoutFonts(() => withClient(async (client, store) => {
+  // Layout opens no font for an answer without text, so the switch has to ask for it.
+  const answer = createAnswerDocument({ templateId: paper, title: "空白", sections: [] });
+  await fs.mkdir(store.answerDir, { recursive: true });
+  await fs.writeFile(path.join(store.answerDir, `${answer.id}.json`), JSON.stringify(answer));
+  await rejected(client, store, answer.id, handwriting, /ESSAY_MCP_HANDWRITING_FONT_DIR/);
+  // 165 and its legacy id use the same font: an empty answer may move between them without it, as it can be created without it.
+  const moved = await call(client, "update_answer_info", { answerId: answer.id, templateId: legacy, expectedVersion: 1 });
+  assert.equal(moved.answer.templateId, legacy); assert.equal(moved.answer.version, 2);
 })));
 
 test("same-layout switch rejects overflow before saving (font-independent branch coverage)", async () => withClient(async (client, store) => {
@@ -176,6 +187,30 @@ test("165 switches to Xiaolai once, exports its embedded font, and records histo
   const restored = await call(client, "restore_revision", { answerId: before.id, version: 1, expectedVersion: 2, responseDetail: "full" });
   assert.equal(restored.answer.templateId, handwriting, "existing restore restores content/targets only, not template metadata");
   assert.equal(restored.answer.version, 3); assert.deepEqual(restored.answer.sections, before.sections);
+}));
+
+test("history lays out each version with the template it was saved with", { skip: skipFonts }, async () => withClient(async (client) => {
+  const created = await call(client, "create_answer", { templateId: paper, title: "原稿", sections: [{ id: "body", text: "資料安全 ABC 165。" }] });
+  const answerId = created.answer.id;
+  const first = (await call(client, "list_revisions", { answerId })).revisions.find((r: any) => r.version === 1);
+  await call(client, "update_answer_info", { answerId, templateId: handwriting, expectedVersion: 1 });
+  const previous = process.env.ESSAY_MCP_HANDWRITING_FONT_DIR;
+  try {
+    delete process.env.ESSAY_MCP_HANDWRITING_FONT_DIR; // version 2's font goes away; version 1 never used it
+    const listed = (await call(client, "list_revisions", { answerId })).revisions;
+    const again = listed.find((r: any) => r.version === 1), second = listed.find((r: any) => r.version === 2);
+    assert.equal(again.layoutError, undefined, JSON.stringify(again));
+    assert.equal(again.totalLines, first.totalLines); assert.equal(again.fits, first.fits);
+    assert.match(second.layoutError, /ESSAY_MCP_HANDWRITING_FONT_DIR/);
+  } finally { restore("ESSAY_MCP_HANDWRITING_FONT_DIR", previous); }
+}));
+
+const yozai = "police_information_essay_165_handwriting_yozai";
+test("an answer moves between two handwriting fonts", { skip: skipFonts || !existsSync(path.join(process.env.ESSAY_MCP_HANDWRITING_FONT_DIR ?? "", "Yozai-Regular.ttf")) }, async () => withClient(async (client, store) => {
+  const created = await call(client, "create_answer", { templateId: handwriting, title: "原稿", sections: [{ id: "body", text: "資料安全 ABC 165。" }] });
+  const changed = await call(client, "update_answer_info", { answerId: created.answer.id, templateId: yozai, expectedVersion: 1, responseDetail: "full" });
+  assert.equal(changed.answer.templateId, yozai); assert.equal(changed.answer.version, 2);
+  assert.deepEqual(changed.layout, layoutSections(await store.getTemplate(yozai), changed.answer.sections, changed.answer.layoutOptions));
 }));
 
 test("a legacy answer with text switches to 165", { skip: skipFonts }, async () => withClient(async (client, store) => {

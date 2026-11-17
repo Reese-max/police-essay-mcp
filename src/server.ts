@@ -41,7 +41,7 @@ import { answerFileName, describeAnswerList, describeInfoChanges, encodeStrict, 
 import { exportDocx, exportPdf, exportText, exportPdfBundle, exportDocxBundle, exportParagraphTextBundle, outputPageCount, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore, isStoreNotFound, isStoreConflict, conflictBackoff, safeId, type EssayStore } from "./storage.js";
-import { originalPaperPreview } from "./original-paper.js";
+import { originalPaperFont, originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
 import { examProgress } from "./exam-progress.js";
@@ -1472,11 +1472,18 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const template = await store.getTemplate(current.templateId);
       // One extra version, so the oldest listed one can still be compared with its predecessor.
       const stored = await store.listRevisions(answerId, { limit: limit + 1 });
-      const templateNames = new Map([[template.id, template.name]]);
-      for (const id of new Set(stored.map(revision => revision.templateId))) if (!templateNames.has(id)) {
-        try { templateNames.set(id, (await store.getTemplate(id)).name); }
-        catch { templateNames.set(id, id); } // Keep history readable if an old template was removed.
+      // A version is laid out with the template it was saved with, not the answer's current one.
+      const templates = new Map([[template.id, template]]);
+      for (const id of new Set(stored.map(revision => revision.templateId))) if (!templates.has(id)) {
+        try { templates.set(id, await store.getTemplate(id)); }
+        catch { /* A removed template only makes its own versions unreadable; reported per version below. */ }
       }
+      const templateOf = (revision: AnswerDocument) => {
+        const found = templates.get(revision.templateId);
+        if (!found) throw new Error(`找不到模板 ${revision.templateId}。`);
+        return found;
+      };
+      const nameOf = (revision: AnswerDocument) => templates.get(revision.templateId)?.name ?? revision.templateId;
       const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
       byVersion.set(current.version, current);
       const revisions: Array<{ version: number; updatedAt: string; totalLines?: number; fits?: boolean;
@@ -1486,7 +1493,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         .map((revision) => {
           let after: AnswerSnapshot;
           try {
-            after = snapshot(revision, template);
+            after = snapshot(revision, templateOf(revision));
           } catch (error) {
             const layoutError = error instanceof Error ? error.message : "未知版面錯誤";
             return { version: revision.version, updatedAt: revision.updatedAt, layoutError,
@@ -1495,10 +1502,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           const previous = byVersion.get(revision.version - 1);
           let content: string[] | undefined;
           if (previous) {
-            try { content = describeChanges(snapshot(previous, template), after, 8); }
+            try { content = describeChanges(snapshot(previous, templateOf(previous)), after, 8); }
             catch { content = ["前一版版面無法計算，無法比較內容版面差異。"]; }
           }
-          const targets = previous ? [...describeInfoChanges(previous, revision, { before: templateNames.get(previous.templateId)!, after: templateNames.get(revision.templateId)! }), ...describeTargetChanges(previous, revision)] : [];
+          const targets = previous ? [...describeInfoChanges(previous, revision, { before: nameOf(previous), after: nameOf(revision) }), ...describeTargetChanges(previous, revision)] : [];
           // A version that only changed line targets lists just those, without "版面沒有改變。".
           const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
           const changes = revision.version === 1 ? ["建立答案。"] : compared ?? ["（前一版紀錄不存在，無法比較。）"];
@@ -2025,6 +2032,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         const layout = ({ id, name, description, fontFamily, paperFont, paperFontFile, hidden, ...rest }: AnswerTemplate) => rest;
         if (!isDeepStrictEqual(layout(previousTemplate), layout(template)))
           throw new Error(`只能切換到版面相同的範本（例如 165 原稿紙的標準楷書與手寫體之間）；「${template.name}」的版面與目前範本不同。`);
+        // Layout opens no font for an answer without text, so a move to a different font asks for it here.
+        if (template.paperProfile && (template.paperFont !== previousTemplate.paperFont || template.paperFontFile !== previousTemplate.paperFontFile)) originalPaperFont(template);
       }
       const before = { answer: { ...answer, sections: inLayoutOrder(answer.sections) } };
       const pick = <T>(value: T | null | undefined, current: T | undefined) => value === undefined ? current : value ?? undefined;
