@@ -2027,6 +2027,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const previousTemplate = await store.getTemplate(answer.templateId);
       let template = previousTemplate;
       if (templateId !== undefined && templateId !== answer.templateId) {
+        try { safeId(templateId); }
+        catch { throw new CreateError("INVALID_INPUT", "templateId 不是有效的識別碼。"); }
         try { template = await store.getTemplate(templateId); }
         catch (error) { if (isStoreNotFound(error)) throw new CreateError("TEMPLATE_NOT_FOUND", `找不到模板 ${templateId}。`); throw error; }
         const layout = ({ id, name, description, fontFamily, paperFont, paperFontFile, hidden, ...rest }: AnswerTemplate) => rest;

@@ -65,6 +65,7 @@ test("unknown templates and different layouts fail before opening any font and p
     await fs.mkdir(store.answerDir, { recursive: true });
     await fs.writeFile(path.join(store.answerDir, `${answer.id}.json`), JSON.stringify(answer));
     await rejected(client, store, answer.id, "missing_template", /找不到模板 missing_template。/);
+    await rejected(client, store, answer.id, "bad/id", /templateId 不是有效的識別碼。/);
     const target = templateId === general ? paper : general;
     const name = (await store.getTemplate(target)).name;
     const result = await client.callTool({ name: "update_answer_info", arguments: { answerId: answer.id, templateId: target, expectedVersion: 1 } });
