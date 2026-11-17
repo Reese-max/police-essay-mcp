@@ -16,7 +16,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   load_exam_paper: "Load template geometry and formatting rules. Before allocating proportional line targets, load the suitable known/default template if its capacity is not already available; no preceding list_templates is needed. Layout summaries are not full original text or substitutes for per-answer check_layout.",
   list_templates: "List templates only when choosing a non-default paper (ids are paper specs, not subject tags); omitting templateId selects the 165 original paper.",
   list_answers: "Find saved answers grouped by exam and ordered by question number. Reuse a known answerId instead of listing again.",
-  update_answer_info: "Edit title, exam, question number, question or layout options at expectedVersion.",
+  update_answer_info: "Edit title, exam, question number, question or layout options at expectedVersion. templateId switches to a same-layout template (e.g. 165 standard or handwriting font).",
   duplicate_answer: "Copy content, formatting and targets into an independent version-1 answer; do not duplicate merely to edit the original.",
   export_answer: "Export pinned answers as Word and PDF by default; TXT is also available. First check_layout at the final version; pin that checked version and provide both returned download links without another confirmation.",
   export_exam_bundle: "Export all planned questions via examId or ordered pinned answers as PDF and Word by default; all-or-nothing. First check_layout for every answer at its final version. Export once after all fit; give both links without asking to export.",
@@ -29,7 +29,7 @@ export const TOOL_DESCRIPTIONS: Record<string, string> = {
   restore_revision: "Restore historical content as a new version, guarded by expectedVersion.",
   delete_answer: "Explicit permanent deletion only: removes answer, revisions, export files and exam bundles containing it; requires expectedVersion. Vague wording (「這題不要了」「刪掉」) is not explicit — confirm first, naming the answer and that removal is irreversible; if the user only means to skip the question, leave it saved and make no writes.",
 };
-export const PAPER_FORMAT_INSTRUCTION = "165 原稿紙模板（police_information_essay_165）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。舊代碼 police_information_essay_166 保留為相容別名；既有答案沿用儲存的代碼，不遷移，兩者版面相同，顯示名稱均為「165 原稿紙・兩頁申論」。";
+export const PAPER_FORMAT_INSTRUCTION = "165 原稿紙模板（police_information_essay_165）只接受靠左、非粗體、非斜體的標準楷書；使用者要求粗體、斜體、置中、靠右或分散對齊時，直接說明不支援，不要嘗試寫入。既有答案可用 update_answer_info(templateId) 切換同版面範本來換字型，無須重建。舊代碼 police_information_essay_166 保留為相容別名、不再列出；既有答案沿用儲存的代碼，不遷移，兩者版面相同，顯示名稱均為「165 原稿紙・兩頁申論」。";
 export const REVIEW_INSTRUCTION = "使用者要求確認或審核答案內容時，先取得答案全文並實際核對（既有回傳未含全文時呼叫 read_answer），再依下列原則以 set_answer_review 保存判斷、呼叫 review_answer 確認 freshness 與 pending 後一次簡要回報；不可只在對話中回覆「已確認」而不留核對紀錄。" + REVIEW_REASONING_INSTRUCTION;
 
 export const EDIT_INSTRUCTION = [
@@ -54,7 +54,7 @@ export const EDIT_INSTRUCTION = [
   "只有使用者明確要求永久刪除才用 delete_answer，並帶目前 expectedVersion 與 userRequest（使用者要求刪除的原話）；不為重寫或壓縮而刪除重建。「這題不要了／取消／刪掉」等未明言永久的說法不算授權，先停止處理並保留答案；若意圖刪除，先口頭確認要刪的答案，說明會連同修訂、匯出檔案及包含它的合輯一併移除且不可復原，確認後才呼叫；只是不想作答則保留答案、不寫入。",
 ].join("\n");
 
-export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；字型由伺服器配置，缺少時工具會直接回錯；不必也無法自行確認，照常建立答案。只有使用者明確指定其他紙張才傳 templateId，紙張在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
+export const SERVER_INSTRUCTIONS = "新建答案及全卷建立省略 templateId 時使用 police_information_essay_165（38欄、兩頁各22行、19pt 教育部標準楷書、超頁拒絕）；字型由伺服器配置，缺少時工具會直接回錯；不必也無法自行確認，照常建立答案。只有使用者明確指定其他紙張才傳 templateId，紙張版面在建立時即固定，未指定時也不必先呼叫 list_templates；既有答案預設沿用原模板。templateId 是紙張規格不是題材分類：police_information_essay（無 _165 後綴）是42欄14pt、標題粗體、超頁壓縮的另一種練習格紙，行容量同為44行但非同一版型；題目涉及警察資訊不代表選它，行數符合也不代表選對。建立後以回傳的 templateId 核對版型再匯出（需要欄數時以 load_exam_paper 查詢）。這是一個固定版面國考申論答題紙 MCP。單題先呼叫 load_exam_paper 或 create_answer；所有答案都必須透過版面引擎計算行數。" + EDIT_INSTRUCTION + PAPER_FORMAT_INSTRUCTION + REVIEW_INSTRUCTION;
 
 export const WORKFLOW_RESOURCE_LINES = [
   "# 申論答題紙工作流程",

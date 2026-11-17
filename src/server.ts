@@ -6,6 +6,7 @@ import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
 import { lawReferenceHint, lawReferencesFor } from "./law-references.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import path from "node:path";
 import { isRetryableExportError, publicExportMessage } from "./export-errors.js";
 import { z } from "zod";
@@ -40,7 +41,7 @@ import { answerFileName, describeAnswerList, describeInfoChanges, encodeStrict, 
 import { exportDocx, exportPdf, exportText, exportPdfBundle, exportDocxBundle, exportParagraphTextBundle, outputPageCount, withTemporaryExport } from "./exporters.js";
 import { layoutSections, summarizeLayout } from "./layout.js";
 import { FileStore, isStoreNotFound, isStoreConflict, conflictBackoff, safeId, type EssayStore } from "./storage.js";
-import { originalPaperPreview } from "./original-paper.js";
+import { originalPaperFont, originalPaperPreview } from "./original-paper.js";
 import { ANSWER_SHEET_WIDGET_URI, POLICE_ESSAY_WIDGET_HTML } from "./widget.js";
 
 import { examProgress } from "./exam-progress.js";
@@ -1471,6 +1472,18 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const template = await store.getTemplate(current.templateId);
       // One extra version, so the oldest listed one can still be compared with its predecessor.
       const stored = await store.listRevisions(answerId, { limit: limit + 1 });
+      // A version is laid out with the template it was saved with, not the answer's current one.
+      const templates = new Map([[template.id, template]]);
+      for (const id of new Set(stored.map(revision => revision.templateId))) if (!templates.has(id)) {
+        try { templates.set(id, await store.getTemplate(id)); }
+        catch { /* A removed template only makes its own versions unreadable; reported per version below. */ }
+      }
+      const templateOf = (revision: AnswerDocument) => {
+        const found = templates.get(revision.templateId);
+        if (!found) throw new Error(`找不到模板 ${revision.templateId}。`);
+        return found;
+      };
+      const nameOf = (revision: AnswerDocument) => templates.get(revision.templateId)?.name ?? revision.templateId;
       const byVersion = new Map(stored.map((revision) => [revision.version, revision]));
       byVersion.set(current.version, current);
       const revisions: Array<{ version: number; updatedAt: string; totalLines?: number; fits?: boolean;
@@ -1480,7 +1493,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         .map((revision) => {
           let after: AnswerSnapshot;
           try {
-            after = snapshot(revision, template);
+            after = snapshot(revision, templateOf(revision));
           } catch (error) {
             const layoutError = error instanceof Error ? error.message : "未知版面錯誤";
             return { version: revision.version, updatedAt: revision.updatedAt, layoutError,
@@ -1489,10 +1502,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           const previous = byVersion.get(revision.version - 1);
           let content: string[] | undefined;
           if (previous) {
-            try { content = describeChanges(snapshot(previous, template), after, 8); }
+            try { content = describeChanges(snapshot(previous, templateOf(previous)), after, 8); }
             catch { content = ["前一版版面無法計算，無法比較內容版面差異。"]; }
           }
-          const targets = previous ? [...describeInfoChanges(previous, revision), ...describeTargetChanges(previous, revision)] : [];
+          const targets = previous ? [...describeInfoChanges(previous, revision, { before: nameOf(previous), after: nameOf(revision) }), ...describeTargetChanges(previous, revision)] : [];
           // A version that only changed line targets lists just those, without "版面沒有改變。".
           const compared = content && (targets.length && content.join() === "版面沒有改變。" ? targets : [...content, ...targets]);
           const changes = revision.version === 1 ? ["建立答案。"] : compared ?? ["（前一版紀錄不存在，無法比較。）"];
@@ -1998,6 +2011,7 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         responseDetail: responseDetailSchema,
         answerId: answerIdSchema,
         title: z.string().min(1).max(300).optional(),
+        templateId: z.string().optional(),
         exam: z.string().min(1).max(100).nullable().optional(),
         questionNo: z.number().int().min(1).max(20).nullable().optional(),
         question: z.string().max(10_000).nullable().optional(),
@@ -2007,15 +2021,32 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       outputSchema: writeOutputSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     },
-    async ({ responseDetail, answerId, title, exam, questionNo, question, layoutOptions, expectedVersion }) => {
-      const before = await loadSnapshot(store, answerId);
-      assertExpectedVersion(before.answer, expectedVersion);
+    async ({ responseDetail, answerId, title, templateId, exam, questionNo, question, layoutOptions, expectedVersion }) => {
+      const answer = await store.getAnswer(answerId);
+      assertExpectedVersion(answer, expectedVersion);
+      const previousTemplate = await store.getTemplate(answer.templateId);
+      let template = previousTemplate;
+      if (templateId !== undefined && templateId !== answer.templateId) {
+        try { safeId(templateId); }
+        catch { throw new CreateError("INVALID_INPUT", "templateId 不是有效的識別碼。"); }
+        try { template = await store.getTemplate(templateId); }
+        catch (error) { if (isStoreNotFound(error)) throw new CreateError("TEMPLATE_NOT_FOUND", `找不到模板 ${templateId}。`); throw error; }
+        const layout = ({ id, name, description, fontFamily, paperFont, paperFontFile, hidden, ...rest }: AnswerTemplate) => rest;
+        if (!isDeepStrictEqual(layout(previousTemplate), layout(template)))
+          throw new Error(`只能切換到版面相同的範本（例如 165 原稿紙的標準楷書與手寫體之間）；「${template.name}」的版面與目前範本不同。`);
+        // Layout opens no font for an answer without text, so a move to a different font asks for it here.
+        if (template.paperProfile && (template.paperFont !== previousTemplate.paperFont || template.paperFontFile !== previousTemplate.paperFontFile)) originalPaperFont(template);
+      }
+      const before = { answer: { ...answer, sections: inLayoutOrder(answer.sections) } };
       const pick = <T>(value: T | null | undefined, current: T | undefined) => value === undefined ? current : value ?? undefined;
-      const updated = hypotheticalAnswer({ ...before.answer, title: title ?? before.answer.title, exam: pick(exam, before.answer.exam),
+      const updated = hypotheticalAnswer({ ...before.answer, templateId: template.id, title: title ?? before.answer.title, exam: pick(exam, before.answer.exam),
         layoutOptions: layoutOptions === undefined ? before.answer.layoutOptions : { ...before.answer.layoutOptions, ...layoutOptions },
         questionNo: pick(questionNo, before.answer.questionNo), question: pick(question, before.answer.question) }, before.answer.sections);
-      const changes = describeInfoChanges(before.answer, updated);
+      const changes = describeInfoChanges(before.answer, updated, { before: previousTemplate.name, after: template.name });
       if (changes.length === 0) throw new NoChangesError("答案資訊與目前相同，沒有需要儲存的變更。");
+      const proposed = snapshot(updated, template);
+      if (updated.templateId !== answer.templateId && !proposed.layout.fits && template.overflowPolicy === "reject")
+        throw new Error(`改用「${template.name}」後超出 ${proposed.layout.overflowLines} 行，未變更範本。`);
       await store.saveAnswer(updated, { expectedVersion: before.answer.version });
       const current = await loadSnapshot(store, answerId);
       return {

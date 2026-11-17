@@ -56,17 +56,19 @@ test("165 changes only template identity; the 166 compatibility template keeps e
     const current = await store.getTemplate(paper), legacy = await store.getTemplate(legacyPaper);
     assert.equal(current.name, "165 原稿紙・兩頁申論");
     assert.equal(legacy.name, "165 原稿紙・兩頁申論");
-    assert.deepEqual(current, { ...legacy, id: paper, name: current.name });
+    const { hidden, ...legacyLayout } = legacy;
+    assert.equal(hidden, true);
+    assert.deepEqual(current, { ...legacyLayout, id: paper, name: current.name });
     assert.equal(current.paperProfile, "original_166", "the internal rendering profile must remain unchanged");
     const templates = await store.listTemplates();
-    assert.deepEqual(templates.map(t => t.id), [general, paper, legacyPaper]);
+    assert.deepEqual(templates.map(t => t.id), [general, paper]);
   } finally {
     if (handwriting === undefined) delete process.env.ESSAY_MCP_HANDWRITING_FONT; else process.env.ESSAY_MCP_HANDWRITING_FONT = handwriting;
     if (directory === undefined) delete process.env.ESSAY_MCP_HANDWRITING_FONT_DIR; else process.env.ESSAY_MCP_HANDWRITING_FONT_DIR = directory;
   }
 });
 
-test("both file and cloud template lists display 165 for canonical and legacy IDs", async () => {
+test("both file and cloud lists omit the legacy ID while both templates still load", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "essay-template-names-"));
   try {
     const stores = [new FileStore({ answerDir: path.join(root, "answers"), exportDir: path.join(root, "exports") }),
@@ -75,7 +77,7 @@ test("both file and cloud template lists display 165 for canonical and legacy ID
     for (const store of stores) {
       const templates = await store.listTemplates();
       for (const id of [paper, legacyPaper]) {
-        assert.equal(templates.find(t => t.id === id)?.name, "165 原稿紙・兩頁申論");
+        assert.equal(templates.find(t => t.id === id)?.name, id === legacyPaper ? undefined : "165 原稿紙・兩頁申論");
         assert.equal((await store.getTemplate(id)).name, "165 原稿紙・兩頁申論");
       }
       assert.equal(templates.find(t => t.id === general)?.name, (await store.getTemplate(general)).name);
@@ -86,7 +88,7 @@ test("both file and cloud template lists display 165 for canonical and legacy ID
 test("MCP names, load messages, defaults, tool descriptions and workflow identify 165 through both IDs", async () => withClient(async (client, store) => {
   const listed = await call(client, "list_templates");
   for (const id of [paper, legacyPaper]) {
-    assert.equal(listed.templates.find((t: { id: string }) => t.id === id).name, "165 原稿紙・兩頁申論");
+    assert.equal(listed.templates.find((t: { id: string }) => t.id === id)?.name, id === legacyPaper ? undefined : "165 原稿紙・兩頁申論");
     const loaded = await client.callTool({ name: "load_exam_paper", arguments: { templateId: id } });
     assert.equal((loaded.structuredContent as any).template.name, "165 原稿紙・兩頁申論");
     assert.match(JSON.stringify(loaded.content), /已載入「165 原稿紙・兩頁申論」/);

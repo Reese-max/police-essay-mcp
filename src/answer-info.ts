@@ -42,10 +42,15 @@ export function describeAnswerList(answers: Array<Pick<AnswerDocument, "id" | "t
   return lines;
 }
 
-/** What changed in the title, question, exam or question number between two versions. */
-export function describeInfoChanges(before: AnswerDocument, after: AnswerDocument): string[] {
+/** What changed in template, title, question, exam, question number or layout options between versions. */
+export function describeInfoChanges(before: AnswerDocument, after: AnswerDocument, templates?: { before: string; after: string }): string[] {
   const lines: string[] = [];
   const quoted = (value: string | undefined) => value === undefined ? "未設定" : `「${value}」`;
+  if (before.templateId !== after.templateId) {
+    // The legacy 166 id shares its display name with 165: fall back to ids so the line still says what changed.
+    const named = templates && templates.before !== templates.after ? templates : { before: before.templateId, after: after.templateId };
+    lines.push(`範本：${quoted(named.before)}→${quoted(named.after)}`);
+  }
   if (before.title !== after.title) lines.push(`標題：${quoted(before.title)}→${quoted(after.title)}`);
   if (before.exam !== after.exam) lines.push(`考試：${quoted(before.exam)}→${quoted(after.exam)}`);
   if (before.questionNo !== after.questionNo) {

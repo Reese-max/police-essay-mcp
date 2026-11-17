@@ -164,7 +164,7 @@ export class FileStore implements EssayStore {
         return templateSchema.parse(JSON.parse(raw));
       }),
     );
-    return templates.filter(isPaperFontAvailable).sort((left, right) => left.id.localeCompare(right.id));
+    return templates.filter(template => !template.hidden && isPaperFontAvailable(template)).sort((left, right) => left.id.localeCompare(right.id));
   }
 
   async getExam(id: string): Promise<ExamPlan> {
