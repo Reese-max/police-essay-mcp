@@ -238,7 +238,7 @@ HTTP 預設只綁定 `127.0.0.1`，但 tunnel 可以直接代理這個位址，�
 
 未設定或檔案不存在的手寫範本會從 `list_templates` 隱藏，已存答案的範本代碼仍然有效，但排版、預覽與匯出都需要該字型，字型不存在、無法載入或缺字時回報錯誤，不替換字型。PDF、預覽及 DOCX 使用所選字型，DOCX 內嵌實際家族名稱，合併匯出保留各答案的字型。標準版的 `ESSAY_MCP_PAPER_FONT`、教育部字型鎖定、啟動檢查與新答案預設範本不變。
 
-`check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。此模板透過 `export_answer` 輸出的 DOCX、PDF、TXT 均拒絕超頁及 `allowOverflow: true`。
+`check_layout` 採實際字型寬度，預留 Word 中英文間距，並避免孤立句號。換行不刪改文字；超出 44 行會回報壓縮建議，但須由使用者或模型另行編輯。所有模板在排版時會把相容表意文字（U+F900–FAFF、U+2F800–2FA1F，常由 PDF 複製貼上帶入）換成外觀相同的一般字，以免稿紙字型缺字；預覽與匯出使用換過的字，儲存的答案內容不變。此模板透過 `export_answer` 輸出的 DOCX、PDF、TXT 均拒絕超頁及 `allowOverflow: true`。
 
 驗證新模式：設定字型後執行 `npm run check`、`npm test`、`npm run build`。可以 `node --import tsx scripts/paper165-smoke.ts /path/to/blocks.json` 建立測試輸出；blocks 為 `[{"text":"正文","kind":"normal"}]`。輸出位於 `exports/paper165-qa/`，須再轉出 Word PDF，核對兩頁、完整文字及每行位置。
 
