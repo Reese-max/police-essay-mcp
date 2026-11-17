@@ -36,6 +36,16 @@ export function normalizeNewlines(text: string): string {
   return text.replace(/\r\n|[\r\u0085\u2028\u2029\u000b\u000c]/gu, "\n");
 }
 
+/** Text pasted from PDFs carries compatibility ideographs that look identical to the unified ones but that most fonts, including the 165 paper font, lack. */
+export function unifyCompatibilityIdeographs(text: string): string {
+  return text.replace(/[\uf900-\ufaff\u{2F800}-\u{2FA1F}]/gu, (character) => character.normalize("NFC"));
+}
+
+/** The text a template actually lays out: paper templates use the unified forms, every other template what was written. */
+export function layoutText(template: { paperProfile?: unknown }, text: string): string {
+  return template.paperProfile ? unifyCompatibilityIdeographs(text) : text;
+}
+
 type WithoutDefaults<Shape extends z.ZodRawShape> = {
   [Key in keyof Shape]: z.ZodOptional<Shape[Key] extends z.ZodDefault<infer Inner> ? Inner : Shape[Key]>;
 };

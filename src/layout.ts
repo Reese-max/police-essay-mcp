@@ -3,6 +3,7 @@ import {
   headingStyleSchema,
   paragraphFormatSchema,
   normalizeNewlines,
+  layoutText,
   type AnswerParagraph,
   type AnswerSection,
   type AnswerTemplate,
@@ -429,7 +430,11 @@ export function layoutSections(
   const lines: LayoutLine[] = [];
   const sectionLineCounts = new Map<string, number>();
   let headingOrdinal = 0;
-  const ordered = [...sections].sort((a, b) => a.order - b.order);
+  // Lay out what the reader should see; the stored answer keeps exactly what was written.
+  const unify = (text: string) => layoutText(template, text);
+  const ordered = sections.map(section => ({ ...section, text: unify(section.text), ...(section.heading ? { heading: unify(section.heading) } : {}),
+    ...(section.paragraphs ? { paragraphs: section.paragraphs.map(paragraph => ({ ...paragraph, text: unify(paragraph.text) })) } : {}) }))
+    .sort((a, b) => a.order - b.order);
   // Neat format: only the opening and closing sections are lead/closing prose; headless text between them is body.
   const edgeIds = new Set([ordered[0]?.id, ordered.at(-1)?.id]);
 

@@ -213,7 +213,7 @@ Prompts：
 
 編頁前若標題末行與同節首個非 spacer 內文行分頁，且標題未在頁首、標題到首行內文可容納一頁，於標題前補空白到下一頁。這些行有 `isSpacer: true, isPadding: true`，歸屬同節，計入總行數、各節行數與溢出；匯出與畫板視為普通空白行，段落 TXT 捨棄 spacer。沒有內文行或標題區塊過長時不補行。
 
-1. 依 `order` 排序 sections。
+1. 依 `order` 排序 sections；稿紙模板（有 `paperProfile`）另把標題與內文中有對應一般字的相容表意文字（U+F900–FAFF、U+2F800–2FA1F）換成外觀相同的一般字，只影響版面、預覽與匯出，不改儲存內容；一般模板維持原字。
 2. 每個有標題的 section 先套用 `headingStyle`，必要時產生自動編號，再把標題視為獨立段落。
 3. 依 `paragraphs`（或由 `text` 換行產生的段落）合併模板、section 與 paragraph 格式。
 4. 每個段落先加入 `spaceBeforeLines`，再依首行／左右縮排計算可用欄寬。
