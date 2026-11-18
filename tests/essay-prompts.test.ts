@@ -6,7 +6,8 @@ import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {layoutSections} from '../src/layout.js';
 import {createAnswerDocument} from '../src/domain.js';
-import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION,APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION,REVIEW_REASONING_INSTRUCTION} from '../src/essay-instructions.js';
+import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION,APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION,REVIEW_REASONING_INSTRUCTION,WRITING_RULES_INSTRUCTION} from '../src/essay-instructions.js';
+import {REVIEW_INSTRUCTION} from '../src/agent-guidance.js';
 import {readFile} from 'node:fs/promises';
 
 test('real MCP prompts/get, initialization and workflow expose reasoning and revision instructions',async()=>{
@@ -21,11 +22,14 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   const r=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_prompt-case',overflowLines:'3'}});const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
   for(const fragment of ['ans_prompt-case','3','套話','否定','每次修改','stale','freshness=current','語義','not_checked'])assert.ok(text.includes(fragment),fragment);
   assert.ok(text.indexOf('先補漏答')<text.indexOf('依序刪除'));
-  assert.ok(client.getInstructions()?.includes('不能以關鍵字出現代替語義核對'));
-  // Depth and bonus-point guidance reaches every client through the server instructions, with the no-fabrication limit.
-  for(const fragment of ['自行撰寫答案的論述深度','依題型補一層','扣回題目情境','句式不求一致','全篇挑二、三處','不確定的學者、名言、條號、數據與年份一律不寫','仍以兩頁為限'])assert.ok(client.getInstructions()?.includes(fragment),fragment);
+  const instructions=client.getInstructions()!;
+  assert.ok(instructions.startsWith('【申論寫作規則】'),'server instructions must lead with the writing rules');
+  assert.ok(instructions.includes(WRITING_RULES_INSTRUCTION));
+  for(const removed of ['不保證已追到本人','涵攝要將具體事實','前言 3–5 行點出題旨','不能以關鍵字出現代替語義核對'])assert.ok(!instructions.includes(removed),removed);
+  const reviewTool=(await client.listTools()).tools.find(t=>t.name==='set_answer_review')!;
+  assert.ok(reviewTool.description?.includes(REVIEW_INSTRUCTION),'set_answer_review description keeps the review instruction');
   const resource=await client.readResource({uri:'essay://instructions/workflow'});const workflow=resource.contents.map(c=>'text'in c?c.text:'').join('\n');
-  for(const item of ESSAY_TEACHING_CASES)assert.ok(workflow.includes(item.teachingExample));assert.ok(workflow.includes('非官方高分範文'));
+  assert.ok(workflow.includes(WRITING_RULES_INSTRUCTION));assert.ok(workflow.includes(REVIEW_INSTRUCTION));assert.ok(!workflow.includes('五題型教學示例'));
  }finally{await client.close();await server.close();}
 });
 
@@ -42,7 +46,7 @@ test('actual draft/compress and initialization preserve failure-derived constrai
   }
   const response=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_boundary-case'}});
   assert.ok(response.messages.some(m=>m.content.type==='text'&&m.content.text.includes(TASK_BOUNDARY_INSTRUCTION)));
-  assert.ok(client.getInstructions()?.includes(TASK_BOUNDARY_INSTRUCTION));
+  assert.ok(!client.getInstructions()?.includes(TASK_BOUNDARY_INSTRUCTION),'review-only boundaries stay out of the drafting instructions');
   assert.equal(fixture.cases[0].independentActionsInBad.length,3);assert.equal(fixture.cases[0].limits.maxIndependentActions,2);
  }finally{await client.close();await server.close();}
 });
