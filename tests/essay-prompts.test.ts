@@ -17,7 +17,8 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   const listed=(await client.listPrompts()).prompts;assert.deepEqual(listed.map(p=>p.name).sort(),['compress_answer','draft_answer']);
   for(const item of ESSAY_TEACHING_CASES){
    const r=await client.getPrompt({name:'draft_answer',arguments:{question:item.question}});const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
-   assert.ok(text.includes(item.question));for(const fragment of ['指令動詞','沒有配分','主張','機制','比較維度','執行主體','涵攝','不自稱90分','44行','semantic/sourceVerification=not_checked'])assert.ok(text.includes(fragment),fragment);
+   assert.ok(text.includes(item.question));for(const fragment of ['指令動詞','沒有配分','主張','機制','比較維度','執行主體','涵攝','不自稱90分'])assert.ok(text.includes(fragment),fragment);
+   assert.ok(text.includes(WRITING_RULES_INSTRUCTION));assert.ok(!text.includes(REVIEW_REASONING_INSTRUCTION),'review caveats stay out of the drafting prompt');
   }
   const r=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_prompt-case',overflowLines:'3'}});const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
   for(const fragment of ['ans_prompt-case','3','套話','否定','每次修改','stale','freshness=current','語義','not_checked'])assert.ok(text.includes(fragment),fragment);
@@ -42,7 +43,7 @@ test('actual draft/compress and initialization preserve failure-derived constrai
    const input=`${item.question}\n材料：${item.material}`;
    const response=await client.getPrompt({name:'draft_answer',arguments:{question:input}});
    const text=response.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
-   assert.ok(text.includes(input),'original question and constraints retained');assert.ok(text.includes(TASK_BOUNDARY_INSTRUCTION));
+   assert.ok(text.includes(input),'original question and constraints retained');assert.ok(text.includes('題目限定數量'));assert.ok(!text.includes(TASK_BOUNDARY_INSTRUCTION));
   }
   const response=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_boundary-case'}});
   assert.ok(response.messages.some(m=>m.content.type==='text'&&m.content.text.includes(TASK_BOUNDARY_INSTRUCTION)));
@@ -71,8 +72,8 @@ test('real prompts carry source applicability and material boundaries once, pres
   for(const item of fixture.cases){
    const input=`${item.question}\n材料：${item.material}`;const r=await client.getPrompt({name:'draft_answer',arguments:{question:input}});
    const text=r.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');assert.ok(text.includes(input));
-   assert.equal(text.split(APPLICABILITY_INSTRUCTION).length-1,1);assert.equal(text.split(MATERIAL_BOUNDARY_INSTRUCTION).length-1,1);
-   assert.ok(text.endsWith(REVIEW_REASONING_INSTRUCTION));
+   assert.equal(text.split(APPLICABILITY_INSTRUCTION).length-1,0);assert.equal(text.split(MATERIAL_BOUNDARY_INSTRUCTION).length-1,0);
+   assert.ok(text.includes(WRITING_RULES_INSTRUCTION));
   }
   const r=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_source-scope'}});
   assert.ok(r.messages.some(m=>m.content.type==='text'&&m.content.text.includes(MATERIAL_BOUNDARY_INSTRUCTION)));

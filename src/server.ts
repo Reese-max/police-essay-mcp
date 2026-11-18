@@ -1,7 +1,7 @@
 import { layoutQualityNotes } from "./layout-quality.js";
 import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRUCTIONS, WORKFLOW_RESOURCE_LINES } from "./agent-guidance.js";
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
-import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
+import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION, WRITING_RULES_INSTRUCTION, COMPACT_PAPER_INSTRUCTION } from "./essay-instructions.js";
 import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
 import { lawReferenceHint, lawReferencesFor } from "./law-references.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -2110,8 +2110,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           text: [
             `請回答申論題：${question}`,
             scoringPoints ? `採點方向：${scoringPoints}` : "",
+            WRITING_RULES_INSTRUCTION,
             DRAFT_INSTRUCTION,
-            REVIEW_INSTRUCTION,
+            // Review caveats stay out of drafting; they reach the model through set_answer_review.
+            COMPACT_PAPER_INSTRUCTION,
           ].filter(Boolean).join("\n"),
         },
       }],
