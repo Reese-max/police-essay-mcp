@@ -167,14 +167,15 @@ test("format integrity: packed peers, duplicate headings and literal newlines", 
   }
 });
 
-test("lead and closing: one or two lines pass, three lines prompt only for full essays", () => {
+test("lead: one line or over five prompt; closing: over two lines prompts; full essays only", () => {
   const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
-  const keep = "若因此超頁，開頭、結語各 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+  const keep = "若因此超頁，開頭 2–3 句、結語 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
   const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
-  const longLead = (n: number) => `結構提醒：前言 ${n} 行；開頭一到兩行即可：用「」框出本題核心概念，說明依此進行的程序或分析。${own}${keep}`;
+  const shortLead = `結構提醒：前言只有 1 行（${exempt}）；開頭寫 2–3 句（約 3–5 行）：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析。${own}${keep}`;
+  const longLead = (n: number) => `結構提醒：前言 ${n} 行；開頭 2–3 句（約 3–5 行）即可：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析。${own}${keep}`;
   const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
   const longClose = (n: number) => `結構提醒：結語 ${n} 行；結語一到兩行即可，回扣題目所問，不新增論點。${own}${keep}`;
-  const noLead = `結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫一到兩行，用「」框出本題核心概念並說明依此進行的程序或分析，不重抄題目。${own}${keep}`;
+  const noLead = `結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫 2–3 句（約 3–5 行）：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析，不重抄題目。${own}${keep}`;
   const noClose = `結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，寫一到兩行回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`;
   const body = (n: number) => [
     { id: "s1", heading: "(一)第一點：", text: "乙".repeat(n) },
@@ -188,13 +189,15 @@ test("lead and closing: one or two lines pass, three lines prompt only for full 
   const q25 = "一、試說明之。（25分）";
   // Standard sheet: 21 characters a line, 19 on an indented first line or body line.
   const lead1 = { id: "intro", text: "甲".repeat(15) }, lead2 = { id: "intro", text: "甲".repeat(30) }, lead3 = { id: "intro", text: "甲".repeat(50) };
+  const lead6 = { id: "intro", text: "甲".repeat(110) };
   const close = (n: number) => ({ id: "end", text: `綜上所述，${"丁".repeat(n)}` });
 
-  // One or two lines pass; three lines prompt with their real count.
-  assert.deepEqual(notesOf([lead1, ...body(110), { id: "end", text: "綜上所述，丁丁" }], q25), []);
-  assert.deepEqual(notesOf([lead2, ...body(110), close(25)], q25), []);
-  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], q25), [longLead(3)]);
-  assert.deepEqual(notesOf([lead1, ...body(110), close(40)], q25), [longClose(3)]);
+  // Lead: two to five lines pass, one line or six prompt; closing: one or two lines pass, three prompt.
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", text: "綜上所述，丁丁" }], q25), []);
+  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], q25), []);
+  assert.deepEqual(notesOf([lead1, ...body(110), close(25)], q25), [shortLead]);
+  assert.deepEqual(notesOf([lead6, ...body(110), close(25)], q25), [longLead(6)]);
+  assert.deepEqual(notesOf([lead2, ...body(110), close(40)], q25), [longClose(3)]);
   for (const note of [longClose(3), noClose]) { assert.doesNotMatch(note, /4–6 行|以「綜上」統整/); }
   // Missing on one side only; a first section opening with its own (一) is body, not a lead.
   assert.deepEqual(notesOf([...body(110), close(25)], q25), [noLead]);
@@ -208,7 +211,7 @@ test("lead and closing: one or two lines pass, three lines prompt only for full 
   assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)結論與建議：", paragraphs: [{ text: `(一)法制面：${"丁".repeat(10)}` }, { text: `(二)實務面：${"戊".repeat(10)}` }] }], q25), []);
   // Label headings mark the edges and only their body lines count; an empty trailing section is ignored.
   assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "結論：", text: "丁".repeat(30) }], q25), []);
-  assert.deepEqual(notesOf([{ id: "intro", heading: "前言：", text: "甲".repeat(15) }, ...body(110), close(25)], q25), []);
+  assert.deepEqual(notesOf([{ id: "intro", heading: "前言：", text: "甲".repeat(30) }, ...body(110), close(25)], q25), []);
   assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)結論與建議：", text: "丁".repeat(30) }], q25), []);
   assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)比較與結語：", text: "丁".repeat(30) }], q25), []);
   assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)本案結論：", text: "丁".repeat(30) }], q25), []);
@@ -218,14 +221,14 @@ test("lead and closing: one or two lines pass, three lines prompt only for full 
   const blankAfter = { ...createAnswerDocument({ templateId: standard.id, title: "blank", question: q25, sections: [lead2, ...body(110), close(25), { id: "blank", text: "" }] as never }), layoutOptions: neat };
   assert.ok(!layoutQualityNotes(standard, blankAfter, layoutSections(standard, blankAfter.sections, neat)).some(note => note.includes("沒有大標")));
   // Full essays only: 15 points and up, or 20+ lines when the score is unknown; full-width digits count.
-  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], "一、試說明之。（15分）"), [longLead(3)]);
+  assert.deepEqual(notesOf([lead6, ...body(110), close(25)], "一、試說明之。（15分）"), [longLead(6)]);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（14分）"), []);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（１０分）"), []);
-  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], "一、試說明之。（二十五分）"), [longLead(3)]);
+  assert.deepEqual(notesOf([lead6, ...body(110), close(25)], "一、試說明之。（二十五分）"), [longLead(6)]);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（十分）"), []);
   assert.deepEqual(notesOf([lead1, ...body(130), close(25)]), []);
   assert.deepEqual(notesOf([lead2, ...body(130), close(25)]), []);
-  assert.deepEqual(notesOf([lead3, ...body(150), close(25)]), [longLead(3)]);
+  assert.deepEqual(notesOf([lead6, ...body(150), close(25)]), [longLead(6)]);
   // A single section is left to the flattened-structure note; answers without neatFormat get nothing.
   assert.deepEqual(notesOf([{ id: "x", text: "甲".repeat(500) }], q25), []);
   assert.deepEqual(notesOf([lead1, ...body(110), close(25)], q25, {}), []);
