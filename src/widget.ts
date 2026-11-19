@@ -73,7 +73,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .exam-tabs button[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
     .exam-tabs .tab-status { color: var(--muted); font-size: 12px; }
     .exam-tabs .tab-status.warning { color: var(--bad); }
-    .sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 385px), 1fr)); gap: 16px; align-items: start; }
+    .sheet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px; align-items: start; }
     .sheet-grid:has(.paper-body) { grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); }
     .paper { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
     .paper.overflow { border-color: #f1b8b1; }
