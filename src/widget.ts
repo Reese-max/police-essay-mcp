@@ -180,7 +180,6 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         <span class="chip" id="remaining">剩餘：—</span>
       </span>
       <span class="chip" id="version">版本：—</span>
-      <span class="chip id" id="answer-id">答案：—</span>
     </div>
     <div id="exam-progress" class="notice" role="status" aria-live="polite" hidden></div>
     <p class="notice" id="notice" role="status"></p>
@@ -189,7 +188,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       <div class="empty">請在對話中要求 Police Essay MCP 建立或載入答案，畫板會在這裡顯示。</div>
     </section>
     <details class="workbench" id="workbench">
-      <summary><span class="editor-title">修改答案</span><span class="editor-help">區塊編輯、字句修改、順序與版本；點稿紙任一行也會打開</span></summary>
+      <summary><span class="editor-title">修改答案</span><span class="editor-help">區塊與字句修改、順序、版本、答案 ID；點任一行也會打開</span></summary>
       <section class="editor" aria-label="答題區塊編輯器">
         <div class="editor-head">
           <div class="editor-title">區塊快速編輯</div>
@@ -248,6 +247,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         <div class="editor-head">
           <div class="editor-title">區塊順序、編號與版本</div>
           <div class="editor-help">搬移目前選取的區塊；重新編號先預覽，再按一次確認；每一版都可以還原，還原會另存新版本。</div>
+          <div class="editor-help"><span class="chip id" id="answer-id">答案：—</span></div>
         </div>
         <p class="preview" id="tools-preview" aria-live="polite"></p>
         <div class="editor-buttons wrap">
