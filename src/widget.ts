@@ -103,6 +103,12 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     .answer-line.italic .line-text { font-style: italic; }
     .answer-line.spacer .line-text { min-height: 26px; }
     .workbench { margin-top: 16px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }
+    .workbench > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 14px 18px; cursor: pointer; list-style: none; }
+    .workbench > summary::-webkit-details-marker { display: none; }
+    .workbench > summary::before { content: "▸"; color: var(--muted); transition: transform .15s ease; }
+    .workbench[open] > summary::before { transform: rotate(90deg); }
+    .workbench > summary .editor-help { margin-top: 0; }
+    .workbench[open] > summary { border-bottom: 1px solid var(--line); }
     .editor { padding: 16px 18px 18px; }
     .editor + .editor { border-top: 1px solid var(--line); }
     .editor-head { margin-bottom: 12px; }
@@ -182,7 +188,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
     <section class="sheet-grid" id="pages" aria-label="申論答題紙畫板">
       <div class="empty">請在對話中要求 Police Essay MCP 建立或載入答案，畫板會在這裡顯示。</div>
     </section>
-    <div class="workbench">
+    <details class="workbench" id="workbench">
+      <summary><span class="editor-title">修改答案</span><span class="editor-help">區塊編輯、字句修改、順序與版本；點稿紙任一行也會打開</span></summary>
       <section class="editor" aria-label="答題區塊編輯器">
         <div class="editor-head">
           <div class="editor-title">區塊快速編輯</div>
@@ -251,7 +258,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
         </div>
         <ol class="revisions" id="revisions" aria-label="版本紀錄"></ol>
       </section>
-    </div>
+    </details>
   </main>
   <script>
     (() => {
@@ -290,6 +297,9 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
       const renumberButton = byId("renumber");
       const revisionsButton = byId("load-revisions");
       const revisionList = byId("revisions");
+      const workbench = byId("workbench");
+      // Picking a line on the paper means the user wants to edit it, so open the folded editors.
+      const pickSection = (sectionId) => { selectSection(sectionId); workbench.open = true; };
       let pendingPhrase = null;
       let phraseEpoch = 0;
       let renumberArmed = false;
@@ -844,8 +854,8 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
             if (box.every(Number.isFinite) && box[2] > 0 && box[3] > 0) svg.setAttribute("viewBox", [box[0] - 8, box[1] - 8, box[2] + 16, box[3] + 16].join(" "));
             body.append(document.importNode(svg, true));
             body.querySelectorAll("g[data-section-id]").forEach(row => {
-              row.addEventListener("click", () => selectSection(row.dataset.sectionId));
-              row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSection(row.dataset.sectionId); } });
+              row.addEventListener("click", () => pickSection(row.dataset.sectionId));
+              row.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pickSection(row.dataset.sectionId); } });
             });
             paper.append(body); pages.append(paper); continue;
           }
@@ -861,7 +871,7 @@ export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
             cells.style.setProperty("--columns", String(layout.columns));
             cells.append(makeElement("span", "line-text", line?.text || ""));
             row.append(cells);
-            if (line?.sectionId) row.addEventListener("click", () => selectSection(line.sectionId));
+            if (line?.sectionId) row.addEventListener("click", () => pickSection(line.sectionId));
             body.append(row);
           }
           paper.append(body);
