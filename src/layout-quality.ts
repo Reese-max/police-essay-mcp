@@ -382,7 +382,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
       else if (line.isFirstLineOfParagraph && (classifyNumbering(line.text.trim())?.level ?? 0) >= 3) pointLines.set(key, { start: start(line.text), lines: 1 });
     }
     const longPoints = [...pointLines.values()].filter(point => point.lines > 2);
-    if (longPoints.length) bookNotes.push(`格式提醒：${longPoints.slice(0, 3).map(point => point.start).join("、")}${longPoints.length > 3 ? `等 ${longPoints.length} 項` : ""}重點項超過 2 行；每個重點項寫一到兩行，內容多就拆成更多重點項（各自編號、各成一段），不刪採分點。`);
+    if (longPoints.length) bookNotes.push(`格式提醒：${longPoints.slice(0, 3).map(point => point.start).join("、")}${longPoints.length > 3 ? `等 ${longPoints.length} 項` : ""}重點項超過 2 行；每個重點項寫一到兩行（含編號約 35 字以內），內容多就拆成更多重點項（各自編號、各成一段），不刪採分點。`);
     if (levels.size > 4) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；最多四層 一、→(一)→1.→⑴，儘量不寫到 a.b.c.，請合併最深一層或改寫成句子。`);
     // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
     const bodyText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
