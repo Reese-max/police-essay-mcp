@@ -1,5 +1,5 @@
 // Bump the version whenever the widget's markup or the tools it calls change: hosts cache the template by URI.
-export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v12.html";
+export const ANSWER_SHEET_WIDGET_URI = "ui://widget/police-essay-answer-sheet-v13.html";
 
 export const POLICE_ESSAY_WIDGET_HTML = String.raw`<!doctype html>
 <html lang="zh-Hant">
