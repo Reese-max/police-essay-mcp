@@ -372,6 +372,17 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     if (labels.length) bookNotes.push(`格式提醒：${labels.map(section => `「${section.heading!.trim()}」`).join("、")}是功能標籤；前言、結語不下標題，請移除該節 heading（null），內文保留，引擎會首行空兩格。`);
     const levels = new Set(hierarchyItems.map(item => item.numbering.level));
     if (levels.has(1)) bookNotes.push("格式提醒：整份答案不加總標題編號，不用「壹、」；子題大標請改為「一、」，其下 (一)→1.→⑴，只改編號不改內容。");
+    // User style: each numbered point ((一)/1./⑴) takes one or two lines; a longer point should become more points.
+    const pointLines = new Map<string, { start: string; lines: number }>();
+    for (const line of report.lines) {
+      if (line.isHeading || line.isSpacer || line.isPadding || !line.text.trim()) continue;
+      const key = `${line.sectionId} ${line.paragraphIndex}`;
+      const point = pointLines.get(key);
+      if (point) point.lines++;
+      else if (line.isFirstLineOfParagraph && (classifyNumbering(line.text.trim())?.level ?? 0) >= 3) pointLines.set(key, { start: start(line.text), lines: 1 });
+    }
+    const longPoints = [...pointLines.values()].filter(point => point.lines > 2);
+    if (longPoints.length) bookNotes.push(`格式提醒：${longPoints.slice(0, 3).map(point => point.start).join("、")}${longPoints.length > 3 ? `等 ${longPoints.length} 項` : ""}重點項超過 2 行；每個重點項寫一到兩行，內容多就拆成更多重點項（各自編號、各成一段），不刪採分點。`);
     if (levels.size > 4) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；最多四層 一、→(一)→1.→⑴，儘量不寫到 a.b.c.，請合併最深一層或改寫成句子。`);
     // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
     const bodyText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();

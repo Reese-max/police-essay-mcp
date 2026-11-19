@@ -73,6 +73,14 @@ test("book-format notes: label headings, 壹、 and more than four levels", () =
   assert.equal(notes([{ id: "a", heading: "壹、前言", text: "內容。" }], {}).quality.bookFormatIssues, 0, "older answers are not held to the books");
 });
 
+test("numbered points over two lines are flagged; one- and two-line points pass", () => {
+  const point = (n: number) => notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: `(一)乙：${"丙".repeat(n)}` }, { text: `1.丁：${"戊".repeat(n)}` }] }]);
+  assert.doesNotMatch(point(10).notes, /重點項超過 2 行/);
+  const long = point(80);
+  assert.match(long.notes, /「\(一\)乙：丙.*」、「1\.丁：戊.*」重點項超過 2 行；每個重點項寫一到兩行/);
+  assert.doesNotMatch(notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: `(一)乙：${"丙".repeat(80)}` }] }], {}).notes, /重點項/, "older answers are not held to it");
+});
+
 test("review rv5: independent book notes, headless middle text is body, full-width brackets", () => {
   const both = notes([{ id: "s", heading: "壹、法規依據：", paragraphs: [{ text: "一、點" }, { text: "(一)項" }, { text: "1.目" }, { text: "(1)細目" }] }]);
   assert.match(both.notes, /整份答案不加總標題編號，不用「壹、」；子題大標請改為「一、」/); assert.match(both.notes, /用了 5 層/);
