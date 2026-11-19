@@ -246,19 +246,19 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     const last = filled.at(-1)!;
     const closing = prose(last) ? last : undefined;
     const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
-    const keep = "若因此超頁，前言保留 2 行、結語保留 3 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+    const keep = "若因此超頁，前言、結語各保留 2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
     const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
-    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫 2–3 行點出題旨與答題主軸，不重抄題目。${own}${keep}`);
-    else if (linesOf(lead.id) < 2) notes.push(`結構提醒：前言只有 1 行（${exempt}）；書上建議前言 3–5 行，本文較長時 2–3 行即可，點出題旨與答題主軸。${own}${keep}`);
+    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫兩到三行（40–55 字）點出本題核心與答題方向，不重抄題目。${own}${keep}`);
+    else if (linesOf(lead.id) < 2) notes.push(`結構提醒：前言只有 1 行（${exempt}）；前言約兩到三行（40–55 字），點出題旨與答題主軸。${own}${keep}`);
     const tail = (last.paragraphs?.length ? last.paragraphs.map(p => p.text) : (last.text ?? "").split("\n")).at(-1)?.trim() ?? "";
     const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
     if (!closing && /^(綜上|總之|綜合|總結|結論)/u.test(tail)) {
       notes.push(`結構提醒：最後一節末段${start(tail)}是結語，卻寫在${last.heading?.trim() ? `「${last.heading.trim()}」` : start(sectionText(last))}節內；請用 replace_text 從該節刪去這段，再以 insert_text（省略 afterSectionId）新增不帶 heading 的節放入原文（內容照舊），不要另寫第二段結語。使用者提供的原稿或既有答案只向使用者建議，取得同意後才調整。`);
     } else if (!closing) {
-      notes.push(`結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，以「綜上」統整各點並提出建議或展望，本文較長時 3–4 行即可；${kinds}${own}${keep}`);
+      notes.push(`結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，寫兩到三行（40–55 字）回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`);
     } else {
       const closingLines = linesOf(closing.id);
-      if (closingLines < 3) notes.push(`結構提醒：結語只有 ${closingLines} 行；書上建議結語 4–6 行，本文較長時 3–4 行即可，以「綜上」統整各點並提出建議或展望；${kinds}${own}${keep}`);
+      if (closingLines < 2) notes.push(`結構提醒：結語只有 ${closingLines} 行；結語約兩到三行（40–55 字），回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`);
     }
   }
   return notes;

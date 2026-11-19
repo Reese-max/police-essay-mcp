@@ -6,7 +6,7 @@ import {FileStore} from '../src/storage.js';
 import {createEssayMcpServer} from '../src/server.js';
 import {layoutSections} from '../src/layout.js';
 import {createAnswerDocument} from '../src/domain.js';
-import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION,APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION,REVIEW_REASONING_INSTRUCTION,WRITING_RULES_INSTRUCTION} from '../src/essay-instructions.js';
+import {ESSAY_TEACHING_CASES,TASK_BOUNDARY_INSTRUCTION,APPLICABILITY_INSTRUCTION,MATERIAL_BOUNDARY_INSTRUCTION,REVIEW_REASONING_INSTRUCTION,WRITING_RULES_DIGEST,WRITING_RULES_INSTRUCTION} from '../src/essay-instructions.js';
 import {REVIEW_INSTRUCTION} from '../src/agent-guidance.js';
 import {readFile} from 'node:fs/promises';
 
@@ -24,8 +24,12 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   for(const fragment of ['ans_prompt-case','3','套話','否定','每次修改','stale','freshness=current','語義','not_checked'])assert.ok(text.includes(fragment),fragment);
   assert.ok(text.indexOf('先補漏答')<text.indexOf('依序刪除'));
   const instructions=client.getInstructions()!;
-  assert.ok(instructions.startsWith('【申論寫作規則】'),'server instructions must lead with the writing rules');
+  assert.ok(instructions.startsWith(WRITING_RULES_DIGEST+'\n\n'),'server instructions must lead with the writing rules digest');
+  assert.ok(instructions.slice(0,512).includes('不用「壹、貳、參」'));
+  assert.ok(instructions.slice(0,512).includes('load_exam_paper'));
   assert.ok(instructions.includes(WRITING_RULES_INSTRUCTION));
+  const createTool=(await client.listTools()).tools.find(t=>t.name==='create_answer')!;
+  assert.ok(createTool.description?.startsWith('自行撰寫答案前先呼叫 load_exam_paper'));
   for(const removed of ['不保證已追到本人','涵攝要將具體事實','前言 3–5 行點出題旨','不能以關鍵字出現代替語義核對'])assert.ok(!instructions.includes(removed),removed);
   const reviewTool=(await client.listTools()).tools.find(t=>t.name==='set_answer_review')!;
   assert.ok(reviewTool.description?.includes(REVIEW_INSTRUCTION),'set_answer_review description keeps the review instruction');
