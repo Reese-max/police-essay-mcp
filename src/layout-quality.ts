@@ -248,10 +248,11 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     const last = filled.at(-1)!;
     const closing = prose(last) ? last : undefined;
     const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
-    const keep = "若因此超頁，開頭、結語各 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+    const keep = "若因此超頁，開頭 2–3 句、結語 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
     const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
-    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫一到兩行，用「」框出本題核心概念並說明依此進行的程序或分析，不重抄題目。${own}${keep}`);
-    else if (linesOf(lead.id) > 2) notes.push(`結構提醒：前言 ${linesOf(lead.id)} 行；開頭一到兩行即可：用「」框出本題核心概念，說明依此進行的程序或分析。${own}${keep}`);
+    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫 2–3 句（約 3–5 行）：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析，不重抄題目。${own}${keep}`);
+    else if (linesOf(lead.id) < 2) notes.push(`結構提醒：前言只有 1 行（${exempt}）；開頭寫 2–3 句（約 3–5 行）：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析。${own}${keep}`);
+    else if (linesOf(lead.id) > 5) notes.push(`結構提醒：前言 ${linesOf(lead.id)} 行；開頭 2–3 句（約 3–5 行）即可：先用「」框出本題核心概念並點出其意義或依據，再說明依此進行的程序或分析。${own}${keep}`);
     const tail = (last.paragraphs?.length ? last.paragraphs.map(p => p.text) : (last.text ?? "").split("\n")).at(-1)?.trim() ?? "";
     const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
     if (!closing && /^(綜上|總之|綜合|總結|結論)/u.test(tail)) {

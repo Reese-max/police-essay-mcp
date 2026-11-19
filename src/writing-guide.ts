@@ -4,7 +4,7 @@ export const WRITING_GUIDE_HINT = '\nwritingGuide已附三階段寫作指引與�
 /** Static caller guidance; never inspects an answer or calls a model/source. */
 export function writingGuide() {
   return {
-    version:'essay-guide-20261119.2',
+    version:'essay-guide-20261120.1',
     writingRules:WRITING_RULES_INSTRUCTION,
     limits:{callerGuidanceOnly:true,automaticSemanticVerification:false,automaticSourceVerification:false,
       templateUnchanged:true,paperCapacityLines:44,capacityAppliesTo:'165/166原稿紙；其他模板以回傳template容量為準',recordedEvidenceMaxNoteCharacters:2000},

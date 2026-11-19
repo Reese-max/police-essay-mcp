@@ -12,7 +12,7 @@ test('static guide exposes three stages without caller-only boundary or teaching
  const a=writingGuide() as any;assert.deepEqual(Object.keys(a.stages),['draft','compress','review']);
  assert.equal(a.limits.automaticSemanticVerification,false);assert.equal(a.limits.automaticSourceVerification,false);
  assert.equal(a.limits.paperCapacityLines,44);assert.ok(a.saveInstructions.includes('callerNote'));
- assert.equal(a.version,'essay-guide-20261119.2');assert.equal(a.writingRules,WRITING_RULES_INSTRUCTION);assert.equal(a.paperLayout.sectionExample.heading,'一、權限配置的原則：');assert.ok(a.stages.draft.startsWith('依 writingRules 起草'));
+ assert.equal(a.version,'essay-guide-20261120.1');assert.equal(a.writingRules,WRITING_RULES_INSTRUCTION);assert.equal(a.paperLayout.sectionExample.heading,'一、權限配置的原則：');assert.ok(a.stages.draft.startsWith('依 writingRules 起草'));
  for(const key of ['applicability','materialBoundaries','taskBoundaries','examples','examplesLabel'])assert.ok(!(key in a),key);
  a.issueNoteTemplate.sectionIds.push('not-a-real-finding');
  assert.equal(writingGuide().issueNoteTemplate.sectionIds.length,1);
