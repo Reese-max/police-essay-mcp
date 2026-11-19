@@ -43,7 +43,7 @@ test('actual draft/compress and initialization preserve failure-derived constrai
    const input=`${item.question}\n材料：${item.material}`;
    const response=await client.getPrompt({name:'draft_answer',arguments:{question:input}});
    const text=response.messages.map(m=>m.content.type==='text'?m.content.text:'').join('\n');
-   assert.ok(text.includes(input),'original question and constraints retained');assert.ok(text.includes('題目限定數量'));assert.ok(!text.includes(TASK_BOUNDARY_INSTRUCTION));
+   assert.ok(text.includes(input),'original question and constraints retained');assert.ok(text.includes('題目限定數量'));assert.ok(text.includes('每個各給一個中標分開寫'));assert.ok(text.includes('後面的措施與指標要逐一涵蓋'));assert.ok(text.includes('資訊技術題的理由寫出運作原理'));assert.ok(!text.includes(TASK_BOUNDARY_INSTRUCTION));
   }
   const response=await client.getPrompt({name:'compress_answer',arguments:{answerId:'ans_boundary-case'}});
   assert.ok(response.messages.some(m=>m.content.type==='text'&&m.content.text.includes(TASK_BOUNDARY_INSTRUCTION)));
