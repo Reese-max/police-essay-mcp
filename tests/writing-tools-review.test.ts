@@ -23,6 +23,14 @@ test("numbers in the prose such as 二、三級 are neither counted nor rewritte
   assert.throws(() => renumberItems(answer([{ id: "a", text: "二、三級機關應依規定辦理。" }]).sections), /編號已經是連續的.*未計入/);
 });
 
+test("circled parenthesized numbers keep their style and share the (1) level", () => {
+  const doc = answer([{ id: "a", text: "一、大標：\n(一)中標：\n1.小標：\n⑴甲。\n⑴乙。\n(9)丙。\n⑴丁。" }]);
+  assert.deepEqual(texts(renumberItems(doc.sections).sections[0]),
+    ["一、大標：", "(一)中標：", "1.小標：", "⑴甲。", "⑵乙。", "(3)丙。", "⑷丁。"]);
+  const overflow = answer([{ id: "a", text: Array.from({ length: 21 }, () => "⑴項目").join("\n") }]);
+  assert.throws(() => renumberItems(overflow.sections), /單字元括號數字編號的上限 20/);
+});
+
 test("lists longer than 99 items keep arabic numbers going and refuse Chinese numerals past 99", () => {
   const arabic = answer([{ id: "a", text: Array.from({ length: 101 }, () => "1. 項目").join("\n") }]);
   const renumbered = texts(renumberItems(arabic.sections).sections[0]);

@@ -26,10 +26,14 @@ test('real MCP prompts/get, initialization and workflow expose reasoning and rev
   const instructions=client.getInstructions()!;
   assert.ok(instructions.startsWith(WRITING_RULES_DIGEST+'\n\n'),'server instructions must lead with the writing rules digest');
   assert.ok(instructions.slice(0,512).includes('不用「壹、貳、參」'));
+  assert.ok(instructions.slice(0,512).includes('一、沿用題目用語：'));
+  assert.ok(instructions.slice(0,512).includes('(一)→1.→⑴'));
   assert.ok(instructions.slice(0,512).includes('load_exam_paper'));
   assert.ok(instructions.includes(WRITING_RULES_INSTRUCTION));
   const createTool=(await client.listTools()).tools.find(t=>t.name==='create_answer')!;
   assert.ok(createTool.description?.startsWith('自行撰寫答案前先呼叫 load_exam_paper'));
+  assert.ok(createTool.description?.includes('大標寫「一、沿用題目用語：」，其下 (一)→1.→⑴'));
+  assert.ok(createTool.description?.includes('開頭、結語各為一到兩行'));
   for(const removed of ['不保證已追到本人','涵攝要將具體事實','前言 3–5 行點出題旨','不能以關鍵字出現代替語義核對'])assert.ok(!instructions.includes(removed),removed);
   const reviewTool=(await client.listTools()).tools.find(t=>t.name==='set_answer_review')!;
   assert.ok(reviewTool.description?.includes(REVIEW_INSTRUCTION),'set_answer_review description keeps the review instruction');

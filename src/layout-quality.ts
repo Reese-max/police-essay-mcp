@@ -86,6 +86,9 @@ function classifyNumbering(text: string): Numbering | undefined {
     };
   }
 
+  match = value.match(/^[⑴-⒇]/u);
+  if (match) return { level: 5, family: "parenthesized-arabic", value: match[0].codePointAt(0)! - 0x2473, prefix: match[0] };
+
   match = value.match(/^[（(]([0-9０-９]+)[）)]/u);
   if (match) {
     return { level: 5, family: "parenthesized-arabic", value: Number(asciiDigits(match[1])), prefix: match[0] };
@@ -149,7 +152,7 @@ export function scoreLayout(template: AnswerTemplate, answer: AnswerDocument, re
   return analyzeLayout(template, answer, report).quality;
 }
 
-const LEVEL_NAMES = ["", "壹、", "一、", "(一)", "1.", "(1)", "甲、"];
+const LEVEL_NAMES = ["", "壹、", "一、", "(一)", "1.", "⑴", "甲、"];
 
 /** Actionable zh-TW notes naming the paragraphs behind the structural metrics (for check_layout). */
 export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocument, report: LayoutReport): string[] {
@@ -179,7 +182,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     for (const text of texts) {
       // A 1./(1) item after a sentence end, when the same level already had a smaller number in this paragraph.
       const lastByLevel = new Map<number, number>(), packed: string[] = [];
-      for (const match of text.matchAll(/(^|[。；;：:][」』）)]*)\s*((?:[（(][0-9０-９]+[）)]|[0-9０-９]+[.．、](?![0-9０-９])))/gu)) {
+      for (const match of text.matchAll(/(^|[。；;：:][」』）)]*)\s*((?:[⑴-⒇]|[（(][0-9０-９]+[）)]|[0-9０-９]+[.．、](?![0-9０-９])))/gu)) {
         const item = classifyNumbering(match[2]);
         if (!item || item.level < 4) continue;
         const before = lastByLevel.get(item.level);
@@ -198,7 +201,7 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     if (issue.kind === "headless" && bookHeadless.has(paragraphs[issue.order].sectionId)) continue;
     const at = start(paragraphs[issue.order].text);
     notes.push(issue.kind === "skip"
-      ? `結構提醒：${at}跳過中間層級（應依 (一)→1.→(1) 逐層往下；用到「一、」時其下接 (一)）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
+      ? `結構提醒：${at}跳過中間層級（應依 一、→(一)→1.→⑴ 逐層往下）；建議改用${LEVEL_NAMES[issue.expectedLevel ?? 0] || "上一層"}類編號或補上中間層。`
       : issue.kind === "family"
         ? `結構提醒：${at}與同層前一項的編號樣式不同；同層請用同一種編號。`
         : issue.kind === "headless"
@@ -224,10 +227,9 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
   const points = explicitTotal ? Number(explicitTotal[1]) : leadingTotal ? scores[0] : sum;
   const target = Math.min(report.capacity, points * 1.5);
   if (answer.layoutOptions?.neatFormat && target > 0 && report.totalLines < target * 0.75) {
-    notes.push(`篇幅提醒：目前 ${report.totalLines} 行，明顯少於配分建議約 ${Math.round(target)} 行（配分×1.5，以容量 ${report.capacity} 行為上限）；自行撰寫的新答案建議補充論述或例證，勿加空白湊行；使用者提供的原稿仍須先取得擴寫授權。`);
+    notes.push(`篇幅提醒：目前 ${report.totalLines} 行，明顯少於配分建議約 ${Math.round(target)} 行（配分×1.5，以容量 ${report.capacity} 行為上限）；自行撰寫的新答案請先核對題目採分點是否齊備，已完整則不為填滿答題紙擴寫；使用者提供的原稿仍須先取得擴寫授權。`);
   }
-  // 50招: lead 3–5 lines (2–3 when the body is long), closing longer (3–4 at least); 高分寫作 p.107: lead 3, closing 3–4.
-  // Notes fire only below the floors (lead <2, closing <3 lines); agent-guidance asks for lead 3–5 / closing 4–6.
+  // Current writing rules: lead and closing each take one or two lines.
   // Full essays only; empty sections are skipped and a single-section answer is left to the flattened-structure note.
   const sectionText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
   const filled = [...answer.sections].sort((a, b) => a.order - b.order).filter(section => section.heading?.trim() || sectionText(section));
@@ -246,19 +248,19 @@ export function layoutQualityNotes(template: AnswerTemplate, answer: AnswerDocum
     const last = filled.at(-1)!;
     const closing = prose(last) ? last : undefined;
     const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
-    const keep = "若因此超頁，前言、結語各保留 2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+    const keep = "若因此超頁，開頭、結語各 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
     const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
-    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫兩到三行（40–55 字）點出本題核心與答題方向，不重抄題目。${own}${keep}`);
-    else if (linesOf(lead.id) < 2) notes.push(`結構提醒：前言只有 1 行（${exempt}）；前言約兩到三行（40–55 字），點出題旨與答題主軸。${own}${keep}`);
+    if (!lead) notes.push(`結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫一到兩行，用「」框出本題核心概念並說明依此進行的程序或分析，不重抄題目。${own}${keep}`);
+    else if (linesOf(lead.id) > 2) notes.push(`結構提醒：前言 ${linesOf(lead.id)} 行；開頭一到兩行即可：用「」框出本題核心概念，說明依此進行的程序或分析。${own}${keep}`);
     const tail = (last.paragraphs?.length ? last.paragraphs.map(p => p.text) : (last.text ?? "").split("\n")).at(-1)?.trim() ?? "";
     const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
     if (!closing && /^(綜上|總之|綜合|總結|結論)/u.test(tail)) {
       notes.push(`結構提醒：最後一節末段${start(tail)}是結語，卻寫在${last.heading?.trim() ? `「${last.heading.trim()}」` : start(sectionText(last))}節內；請用 replace_text 從該節刪去這段，再以 insert_text（省略 afterSectionId）新增不帶 heading 的節放入原文（內容照舊），不要另寫第二段結語。使用者提供的原稿或既有答案只向使用者建議，取得同意後才調整。`);
     } else if (!closing) {
-      notes.push(`結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，寫兩到三行（40–55 字）回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`);
+      notes.push(`結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，寫一到兩行回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`);
     } else {
       const closingLines = linesOf(closing.id);
-      if (closingLines < 2) notes.push(`結構提醒：結語只有 ${closingLines} 行；結語約兩到三行（40–55 字），回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`);
+      if (closingLines > 2) notes.push(`結構提醒：結語 ${closingLines} 行；結語一到兩行即可，回扣題目所問，不新增論點。${own}${keep}`);
     }
   }
   return notes;
@@ -357,7 +359,7 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
   const hierarchyIssues = hierarchyIssueList(hierarchyItems);
 
   // The exam books (50招 p.9/p.16, 高分寫作 p.87): lead and closing prose carry no heading, numbering runs
-  // (一)→1.→(1) with at most three levels, and 壹、 is not used. Only new-format answers are held to it.
+  // 一、→(一)→1.→⑴ with at most four levels, and 壹、 is not used. Only new-format answers are held to it.
   const bookNotes: string[] = [];
   const bookHeadless = new Set<string>();
   const start = (text: string) => `「${[...text.trim()].slice(0, 14).join("")}」`;
@@ -369,8 +371,8 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     });
     if (labels.length) bookNotes.push(`格式提醒：${labels.map(section => `「${section.heading!.trim()}」`).join("、")}是功能標籤；前言、結語不下標題，請移除該節 heading（null），內文保留，引擎會首行空兩格。`);
     const levels = new Set(hierarchyItems.map(item => item.numbering.level));
-    if (levels.has(1)) bookNotes.push("格式提醒：答案內標號從 (一) 起算（題號已在題號欄），不用「壹、」；請改為 (一)→1.→(1)，只改編號不改內容。");
-    if (levels.size > 3) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；一般申論最多三層 (一)→1.→(1)，請合併最深一層或改寫成句子。`);
+    if (levels.has(1)) bookNotes.push("格式提醒：整份答案不加總標題編號，不用「壹、」；子題大標請改為「一、」，其下 (一)→1.→⑴，只改編號不改內容。");
+    if (levels.size > 4) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；最多四層 一、→(一)→1.→⑴，儘量不寫到 a.b.c.，請合併最深一層或改寫成句子。`);
     // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
     const bodyText = (section: typeof answer.sections[number]) => (section.paragraphs?.length ? section.paragraphs.map(p => p.text).join("") : section.text ?? "").trim();
     // Empty sections are skipped so a trailing blank one does not turn the real closing into "middle" body text.
@@ -379,14 +381,14 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     const headless = ordered.slice(1, -1).filter(section => !section.heading?.trim() && bodyText(section)
       && !((classifyNumbering(bodyText(section))?.level ?? 9) <= 3));
     for (const section of headless) bookHeadless.add(section.id);
-    if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「(一)○○：」標題：用 replace_text 對該節帶 heading 即可（內文照舊，不必新增或搬移節）；若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
+    if (headless.length) bookNotes.push(`格式提醒：${headless.map(section => start(bodyText(section))).join("、")}在本文中卻沒有大標；本文每個考點請下「一、○○：」標題：用 replace_text 對該節帶 heading 即可（內文照舊，不必新增或搬移節）；若只是上一點的延續就併入上一節。標題獨佔一行會多佔行，因此超頁時精簡該節內文，不要為了省行而不下標題。`);
     // Several numbered items run together in one paragraph ("(1)…。(2)…") should each start their own paragraph.
     // Arabic 1./(1) peers are reported by layoutQualityNotes' "併在同一段" note; this one covers (一)-level peers.
     const packed = paragraphs.filter(paragraph => !paragraph.isHeading && classifyNumbering(firstText(paragraph))
       && /[。；;][」』）)]*\s*[（(][一二三四五六七八九十]+[）)]/u.test(paragraph.text));
     if (packed.length) bookNotes.push(`格式提醒：${packed.map(paragraph => start(paragraph.text)).join("、")}一段內有多個編號項；請每項各成一段（paragraphs），不改內容。`);
     // Full-width brackets are wider than the two cells left of the text line, so their text cannot align there.
-    if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」「(1)」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
+    if (hierarchyItems.some(item => item.numbering.prefix.trimStart().startsWith("（"))) bookNotes.push("格式提醒：括號編號請用半形「(一)」與「⑴」；全形「（一）」太寬，內文無法對齊第 3 格。只改括號，不改內容。");
   }
   const quality: LayoutQuality = {
     fill,
