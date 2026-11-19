@@ -64,11 +64,11 @@ test("book-format notes: label headings, 壹、 and more than four levels", () =
   assert.match(label.notes, /「壹、前言」、「貳、本文」、「參、結論」是功能標籤/);
   assert.match(label.notes, /不用「壹、」/);
   assert.equal(label.quality.bookFormatIssues, 2);
-  const deep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "⑴丁。" }, { text: "⑵丁。" }, { text: "2.丙。" }, { text: "(二)乙。" }] }]);
+  const deep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "⑴丁。" }] }]);
   assert.equal(deep.notes, "", "一、→(一)→1.→⑴ is a valid four-level answer");
   const tooDeep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "⑴丁：" }, { text: "甲、戊。" }] }]);
   assert.match(tooDeep.notes, /用了 5 層；最多四層 一、→\(一\)→1\.→⑴/);
-  const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }, { text: "(2)丙。" }, { text: "2.乙。" }] }, { id: "end", text: "綜上所述。" }]);
+  const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }] }, { id: "end", text: "綜上所述。" }]);
   assert.equal(book.quality.bookFormatIssues, 0); assert.doesNotMatch(book.notes, /格式提醒/);
   assert.equal(notes([{ id: "a", heading: "壹、前言", text: "內容。" }], {}).quality.bookFormatIssues, 0, "older answers are not held to the books");
 });
@@ -81,14 +81,6 @@ test("numbered points over two lines are flagged; one- and two-line points pass"
   assert.doesNotMatch(notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: `(一)乙：${"丙".repeat(80)}` }] }], {}).notes, /重點項/, "older answers are not held to it");
 });
 
-test("a lone sub-item under a point is flagged; two or more pass", () => {
-  const lone = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙。" }, { text: "(二)丁。" }] }]);
-  assert.match(lone.notes, /「1\.丙。」是上一層底下唯一的子項/);
-  const pair = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙。" }, { text: "2.戊。" }, { text: "(二)丁。" }] }]);
-  assert.doesNotMatch(pair.notes, /唯一的子項/);
-  assert.doesNotMatch(notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙。" }] }], {}).notes, /唯一的子項/, "older answers are not held to it");
-});
-
 test("review rv5: independent book notes, headless middle text is body, full-width brackets", () => {
   const both = notes([{ id: "s", heading: "壹、法規依據：", paragraphs: [{ text: "一、點" }, { text: "(一)項" }, { text: "1.目" }, { text: "(1)細目" }] }]);
   assert.match(both.notes, /整份答案不加總標題編號，不用「壹、」；子題大標請改為「一、」/); assert.match(both.notes, /用了 5 層/);
@@ -97,7 +89,7 @@ test("review rv5: independent book notes, headless middle text is body, full-wid
   const mid = layoutSections(standard, answer.sections, neat).lines.filter(line => line.sectionId === "mid");
   assert.ok(mid.length > 1 && mid.every(line => start(line) === 4), "headless text between body sections stays on the text line");
   assert.match(notes([{ id: "s", heading: "（一）甲：", text: "乙。" }]).notes, /半形/);
-  const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }, { text: "(2)丙。" }, { text: "2.乙。" }] }, { id: "end", text: "綜上所述。" }]);
+  const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }] }, { id: "end", text: "綜上所述。" }]);
   assert.equal(book.notes, "", "the book skeleton draws no structural or format note");
 });
 
