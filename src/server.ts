@@ -1,7 +1,7 @@
 import { layoutQualityNotes } from "./layout-quality.js";
 import { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS, REVIEW_INSTRUCTION, SERVER_INSTRUCTIONS, WORKFLOW_RESOURCE_LINES } from "./agent-guidance.js";
 export { PAPER_FORMAT_NOTE, TOOL_DESCRIPTIONS } from "./agent-guidance.js";
-import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION } from "./essay-instructions.js";
+import { DRAFT_INSTRUCTION, COMPRESS_INSTRUCTION, WRITING_RULES_INSTRUCTION, COMPACT_PAPER_INSTRUCTION } from "./essay-instructions.js";
 import { writingGuide, WRITING_GUIDE_HINT } from "./writing-guide.js";
 import { lawReferenceHint, lawReferencesFor } from "./law-references.js";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -28,6 +28,7 @@ import {
   type AnswerSectionInput,
   type AnswerSnapshot,
   type AnswerTemplate,
+  type LayoutReport,
   layoutReportSchema,
   headingStyleInputSchema,
   paragraphFormatInputSchema,
@@ -149,6 +150,14 @@ const sha256 = (value: string) => createHash("sha256").update(value).digest("hex
 function canonicalJson(value: unknown): string {
   return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
     ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+}
+
+async function createQualityNotes(store: EssayStore, answer: AnswerDocument, layout: LayoutReport): Promise<string[]> {
+  // Advisory notes only: a template that cannot load (e.g. missing paper font) must not fail an answer already saved.
+  try {
+    const template = await store.getTemplate(answer.templateId);
+    return layoutQualityNotes(template, answer, layout).filter(note => /^(格式提醒|結構提醒)/u.test(note));
+  } catch { return []; }
 }
 
 async function createReplay(store: EssayStore, answer: AnswerDocument): Promise<PreparedCreate | undefined> {
@@ -984,13 +993,15 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const { current, replayed, linkPending, message, examId } = await commitCreate(store, await prepareCreate(store, request));
       const { id, version, exam, questionNo } = current.answer;
       const lawReferences = lawReferencesFor([await questionWithoutStartExamReferences(store, examId, current.answer)]);
+      const qualityNotes = await createQualityNotes(store, current.answer, current.layout);
       return {
-        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}), ...(lawReferences ? { lawReferences } : {}) },
+        structuredContent: { ...writeResponse(current, responseDetail), ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}), ...(lawReferences ? { lawReferences } : {}), ...(qualityNotes.length ? { qualityNotes } : {}) },
         content: textContent((replayed ? (examId ? `既有答案 ${id}（目前第 ${version} 版），未重複建立。` : `重送：此 idempotencyKey 已建立 ${id}（目前第 ${version} 版），未重複建立。`) : `已建立 ${id}`)
           + `${exam ? `；考試：${exam}` : ""}${questionNo === undefined ? "" : `；第 ${questionNo} 題`}；${summarizeLayout(current.layout)}`
           + (message ? `\n${message}` : "")
           + (request.lineTargets ? `\n各節：${describeLines(planLines(current.answer, current.layout).sections)}\n${planLines(current.answer, current.layout).notes.join("\n")}` : "")
-          + (lawReferences ? lawReferenceHint(lawReferences) : "")),
+          + (lawReferences ? lawReferenceHint(lawReferences) : "")
+          + (qualityNotes.length ? `\n${qualityNotes.join("\n")}` : "")),
       };
     },
   );
@@ -1043,10 +1054,12 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
         try {
           const { current: { answer, layout }, replayed, linkPending, message, examId: linkedExam } = await commitCreate(store, item);
           referenceQuestions.push(await questionWithoutStartExamReferences(store, linkedExam, answer));
+          const qualityNotes = await createQualityNotes(store, answer, layout);
           results.push({ index: index + 1, answerId: answer.id, title: answer.title,
             ...(answer.exam === undefined ? {} : { exam: answer.exam }), ...(answer.questionNo === undefined ? {} : { questionNo: answer.questionNo }),
             version: answer.version, fits: layout.fits, totalLines: layout.totalLines, capacity: layout.capacity,
-            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}) });
+            overflowLines: layout.overflowLines, ...(replayed ? { replayed } : {}), ...(linkPending ? { linkPending } : {}), ...(message ? { message } : {}),
+            ...(qualityNotes.length ? { qualityNotes } : {}) });
         } catch (error) {
           throw new Error(`已完成：${results.map(item => `第 ${item.index} 項 ${item.answerId}${item.replayed ? "（重送）" : ""}`).join("、") || "無"}。\n`
             + `第 ${index + 1} 項建立失敗：${errorMessage(error)}\n使用相同 idempotencyKeys 重試同一批次可避免重複；未提供 key 的已建立項目請勿重送。`);
@@ -1055,7 +1068,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
       const lawReferences = lawReferencesFor(referenceQuestions);
       return { structuredContent: { answers: results, ...(lawReferences ? { lawReferences } : {}) }, content: textContent(results.map(item =>
         `第${item.questionNo ?? item.index}題/${item.title} ${item.answerId} ${item.totalLines}/${item.capacity} 行，`
-        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")).join("\n")
+        + (item.fits ? "符合容量" : `超出 ${item.overflowLines} 行`) + (item.message ? `；${item.message}` : "") + (item.replayed ? "（重送，未重複建立）" : "")
+        + (item.qualityNotes ? `\n${item.qualityNotes.join("\n")}` : "")).join("\n")
         + (lawReferences ? lawReferenceHint(lawReferences) : "")) };
     },
   );
@@ -2110,8 +2124,10 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
           text: [
             `請回答申論題：${question}`,
             scoringPoints ? `採點方向：${scoringPoints}` : "",
+            WRITING_RULES_INSTRUCTION,
             DRAFT_INSTRUCTION,
-            REVIEW_INSTRUCTION,
+            // Review caveats stay out of drafting; they reach the model through set_answer_review.
+            COMPACT_PAPER_INSTRUCTION,
           ].filter(Boolean).join("\n"),
         },
       }],

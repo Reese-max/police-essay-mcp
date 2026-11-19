@@ -31,6 +31,7 @@ test("score length note is neat-only, capacity capped and uses 75 percent thresh
     return layoutQualityNotes(template, answer, layoutSections(template, answer.sections, answer.layoutOptions)).filter(n => n.startsWith("篇幅提醒"));
   };
   assert.equal(check("請論述。（25分）", 19).length, 1);
+  assert.match(check("請論述。（25分）", 19)[0], /不為填滿答題紙擴寫/);
   assert.match(check("請論述。(25 分)", 28)[0], /38 行/);
   assert.equal(check("請論述。（25分）", 29).length, 0);
   assert.equal(check("請論述。（50分）", 33).length, 0);

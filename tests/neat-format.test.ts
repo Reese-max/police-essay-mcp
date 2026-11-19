@@ -32,6 +32,19 @@ test("neatFormat lays out the book's neat skeleton", () => {
   assert.equal(scoreLayout(standard, { ...answer, layoutOptions: neat }, report).misalignedContinuations, 0);
 });
 
+test("⑴ and (1) list items hang their continuation at the same text column", () => {
+  const answer = createAnswerDocument({ templateId: standard.id, title: "hanging", sections: [
+    { id: "circled", text: `⑴${"甲".repeat(30)}` }, { id: "parenthesized", text: `(1)${"乙".repeat(30)}` },
+  ] });
+  const report = layoutSections(standard, answer.sections, neat);
+  for (const id of ["circled", "parenthesized"]) {
+    const lines = report.lines.filter(line => line.sectionId === id);
+    assert.ok(lines.length > 1);
+    assert.ok(lines.slice(1).every(line => start(line) === 4), id);
+  }
+  assert.equal(scoreLayout(standard, { ...answer, layoutOptions: neat }, report).misalignedContinuations, 0);
+});
+
 test("neatFormat leaves explicit indents and answers without the flag alone", () => {
   const sections = [{ id: "s", heading: "(一)標題：", text: "乙".repeat(30), paragraphFormat: { firstLineIndent: 2 } }];
   const answer = createAnswerDocument({ templateId: standard.id, title: "explicit", sections });
@@ -46,21 +59,31 @@ function notes(sections: Parameters<typeof createAnswerDocument>[0]["sections"],
   return { notes: layoutQualityNotes(standard, answer, report).join("\n"), quality: scoreLayout(standard, answer, report) };
 }
 
-test("book-format notes: label headings, 壹、 and more than three levels", () => {
+test("book-format notes: label headings, 壹、 and more than four levels", () => {
   const label = notes([{ id: "a", heading: "壹、前言", text: "內容。" }, { id: "b", heading: "貳、本文", text: "內容。" }, { id: "c", heading: "參、結論", text: "內容。" }]);
   assert.match(label.notes, /「壹、前言」、「貳、本文」、「參、結論」是功能標籤/);
   assert.match(label.notes, /不用「壹、」/);
   assert.equal(label.quality.bookFormatIssues, 2);
-  const deep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "(1)丁。" }] }]);
-  assert.match(deep.notes, /用了 4 層/);
+  const deep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "⑴丁。" }] }]);
+  assert.equal(deep.notes, "", "一、→(一)→1.→⑴ is a valid four-level answer");
+  const tooDeep = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)乙：" }, { text: "1.丙：" }, { text: "⑴丁：" }, { text: "甲、戊。" }] }]);
+  assert.match(tooDeep.notes, /用了 5 層；最多四層 一、→\(一\)→1\.→⑴/);
   const book = notes([{ id: "intro", text: "前言。" }, { id: "a", heading: "(一)甲：", paragraphs: [{ text: "1.乙：" }, { text: "(1)丙。" }] }, { id: "end", text: "綜上所述。" }]);
   assert.equal(book.quality.bookFormatIssues, 0); assert.doesNotMatch(book.notes, /格式提醒/);
   assert.equal(notes([{ id: "a", heading: "壹、前言", text: "內容。" }], {}).quality.bookFormatIssues, 0, "older answers are not held to the books");
 });
 
+test("numbered points over two lines are flagged; one- and two-line points pass", () => {
+  const point = (n: number) => notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: `(一)乙：${"丙".repeat(n)}` }, { text: `1.丁：${"戊".repeat(n)}` }] }]);
+  assert.doesNotMatch(point(10).notes, /重點項超過 2 行/);
+  const long = point(80);
+  assert.match(long.notes, /「\(一\)乙：丙.*」、「1\.丁：戊.*」重點項超過 2 行；每個重點項寫一到兩行/);
+  assert.doesNotMatch(notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: `(一)乙：${"丙".repeat(80)}` }] }], {}).notes, /重點項/, "older answers are not held to it");
+});
+
 test("review rv5: independent book notes, headless middle text is body, full-width brackets", () => {
   const both = notes([{ id: "s", heading: "壹、法規依據：", paragraphs: [{ text: "一、點" }, { text: "(一)項" }, { text: "1.目" }, { text: "(1)細目" }] }]);
-  assert.match(both.notes, /不用「壹、」/); assert.match(both.notes, /用了 5 層/);
+  assert.match(both.notes, /整份答案不加總標題編號，不用「壹、」；子題大標請改為「一、」/); assert.match(both.notes, /用了 5 層/);
   const answer = createAnswerDocument({ templateId: standard.id, title: "mid", sections: [{ id: "intro", text: "前言。" },
     { id: "s1", heading: "(一)甲：", text: "乙。" }, { id: "mid", text: "丙".repeat(40) }, { id: "end", text: "綜上所述。" }] });
   const mid = layoutSections(standard, answer.sections, neat).lines.filter(line => line.sectionId === "mid");
@@ -144,15 +167,15 @@ test("format integrity: packed peers, duplicate headings and literal newlines", 
   }
 });
 
-test("lead and closing floors: lead under 2 lines, closing under 3, full essays only", () => {
+test("lead and closing: one or two lines pass, three lines prompt only for full essays", () => {
   const own = "使用者提供的原稿或既有答案只向使用者建議，取得同意後才增寫。";
-  const keep = "若因此超頁，前言保留 2 行、結語保留 3 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
+  const keep = "若因此超頁，開頭、結語各 1–2 行即可，其餘從本文的套話與重複精簡，不刪必要論證。";
   const exempt = "法科實例題、計算題、名詞解釋題可不寫前言";
-  const shortLead = `結構提醒：前言只有 1 行（${exempt}）；書上建議前言 3–5 行，本文較長時 2–3 行即可，點出題旨與答題主軸。${own}${keep}`;
+  const longLead = (n: number) => `結構提醒：前言 ${n} 行；開頭一到兩行即可：用「」框出本題核心概念，說明依此進行的程序或分析。${own}${keep}`;
   const kinds = "法科實例題、計算題寫明本案結論或計算結果即可，不必加建議；名詞解釋題可略過本則。";
-  const shortClose = (n: number) => `結構提醒：結語只有 ${n} 行；書上建議結語 4–6 行，本文較長時 3–4 行即可，以「綜上」統整各點並提出建議或展望；${kinds}${own}${keep}`;
-  const noLead = `結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫 2–3 行點出題旨與答題主軸，不重抄題目。${own}${keep}`;
-  const noClose = `結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，以「綜上」統整各點並提出建議或展望，本文較長時 3–4 行即可；${kinds}${own}${keep}`;
+  const longClose = (n: number) => `結構提醒：結語 ${n} 行；結語一到兩行即可，回扣題目所問，不新增論點。${own}${keep}`;
+  const noLead = `結構提醒：沒有前言（${exempt}，略過本則）；其他題型請用 insert_text 新增不帶 heading 的節，再以 move_section 移到第一節之前，寫一到兩行，用「」框出本題核心概念並說明依此進行的程序或分析，不重抄題目。${own}${keep}`;
+  const noClose = `結構提醒：沒有結語；請用 insert_text（省略 afterSectionId 即加在最後）新增不帶 heading 的節，寫一到兩行回扣題目所問、收束本文已論證的判斷，不新增論點；${kinds}${own}${keep}`;
   const body = (n: number) => [
     { id: "s1", heading: "(一)第一點：", text: "乙".repeat(n) },
     { id: "s2", heading: "(二)第二點：", text: "丙".repeat(n) },
@@ -167,40 +190,42 @@ test("lead and closing floors: lead under 2 lines, closing under 3, full essays 
   const lead1 = { id: "intro", text: "甲".repeat(15) }, lead2 = { id: "intro", text: "甲".repeat(30) }, lead3 = { id: "intro", text: "甲".repeat(50) };
   const close = (n: number) => ({ id: "end", text: `綜上所述，${"丁".repeat(n)}` });
 
-  // Floors: 1-line lead and 1/2-line closings are reported with their real count; 2-line lead and 3-line closing pass.
-  assert.deepEqual(notesOf([lead1, ...body(110), close(25)], q25), [shortLead, shortClose(2)]);
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", text: "綜上所述，丁丁" }], q25), [shortClose(1)]);
-  assert.deepEqual(notesOf([lead2, ...body(110), close(25)], q25), [shortClose(2)]);
-  assert.deepEqual(notesOf([lead3, ...body(110), close(40)], q25), []);
+  // One or two lines pass; three lines prompt with their real count.
+  assert.deepEqual(notesOf([lead1, ...body(110), { id: "end", text: "綜上所述，丁丁" }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), close(25)], q25), []);
+  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], q25), [longLead(3)]);
+  assert.deepEqual(notesOf([lead1, ...body(110), close(40)], q25), [longClose(3)]);
+  for (const note of [longClose(3), noClose]) { assert.doesNotMatch(note, /4–6 行|以「綜上」統整/); }
   // Missing on one side only; a first section opening with its own (一) is body, not a lead.
-  assert.deepEqual(notesOf([...body(110), close(60)], q25), [noLead]);
-  assert.deepEqual(notesOf([lead3, ...body(110)], q25), [noClose]);
+  assert.deepEqual(notesOf([...body(110), close(25)], q25), [noLead]);
+  assert.deepEqual(notesOf([lead2, ...body(110)], q25), [noClose]);
   assert.deepEqual(notesOf([{ id: "s0", text: `(一)第零點：${"戊".repeat(40)}` }, ...body(110), { id: "s3", heading: "(三)第三點：", text: "己".repeat(40) }], q25), [noLead, noClose]);
+  assert.deepEqual(notesOf([{ id: "s0", text: `一、第零點：${"戊".repeat(40)}` }, ...body(110), { id: "s3", heading: "三、第三點：", text: "己".repeat(40) }], q25), [noLead, noClose]);
   // A closing written as the last section's final 「綜上」 paragraph is moved out, not written twice.
-  assert.deepEqual(notesOf([lead3, body(110)[0], { id: "s2", heading: "(二)第二點：", paragraphs: [{ text: "丙".repeat(110) }, { text: `綜上所述，${"丁".repeat(40)}` }] }], q25),
+  assert.deepEqual(notesOf([lead2, body(110)[0], { id: "s2", heading: "(二)第二點：", paragraphs: [{ text: "丙".repeat(110) }, { text: `綜上所述，${"丁".repeat(40)}` }] }], q25),
     ["結構提醒：最後一節末段「綜上所述，丁丁丁丁丁丁丁丁丁」是結語，卻寫在「(二)第二點：」節內；請用 replace_text 從該節刪去這段，再以 insert_text（省略 afterSectionId）新增不帶 heading 的節放入原文（內容照舊），不要另寫第二段結語。使用者提供的原稿或既有答案只向使用者建議，取得同意後才調整。"]);
   // A 「結論與建議」 heading marks the closing even when its points are listed as (一)(二).
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "(三)結論與建議：", paragraphs: [{ text: `(一)法制面：${"丁".repeat(30)}` }, { text: `(二)實務面：${"戊".repeat(30)}` }] }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)結論與建議：", paragraphs: [{ text: `(一)法制面：${"丁".repeat(10)}` }, { text: `(二)實務面：${"戊".repeat(10)}` }] }], q25), []);
   // Label headings mark the edges and only their body lines count; an empty trailing section is ignored.
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "結論：", text: "丁".repeat(30) }], q25), [shortClose(2)]);
-  assert.deepEqual(notesOf([{ id: "intro", heading: "前言：", text: "甲".repeat(15) }, ...body(110), close(60)], q25), [shortLead]);
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "(三)結論與建議：", text: "丁".repeat(60) }], q25), []);
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "(三)比較與結語：", text: "丁".repeat(60) }], q25), []);
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "(三)本案結論：", text: "丁".repeat(60) }], q25), []);
-  assert.deepEqual(notesOf([lead3, ...body(110), { id: "end", heading: "(三)結論與建議：", text: "丁".repeat(30) }], q25), [shortClose(2)]);
-  assert.deepEqual(notesOf([lead3, ...body(110), close(60), { id: "blank", text: "" }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "結論：", text: "丁".repeat(30) }], q25), []);
+  assert.deepEqual(notesOf([{ id: "intro", heading: "前言：", text: "甲".repeat(15) }, ...body(110), close(25)], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)結論與建議：", text: "丁".repeat(30) }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)比較與結語：", text: "丁".repeat(30) }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)本案結論：", text: "丁".repeat(30) }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), { id: "end", heading: "(三)結論與建議：", text: "丁".repeat(30) }], q25), []);
+  assert.deepEqual(notesOf([lead2, ...body(110), close(25), { id: "blank", text: "" }], q25), []);
   // The book note's "middle text without a 大標" check skips that blank section too.
-  const blankAfter = { ...createAnswerDocument({ templateId: standard.id, title: "blank", question: q25, sections: [lead3, ...body(110), close(60), { id: "blank", text: "" }] as never }), layoutOptions: neat };
+  const blankAfter = { ...createAnswerDocument({ templateId: standard.id, title: "blank", question: q25, sections: [lead2, ...body(110), close(25), { id: "blank", text: "" }] as never }), layoutOptions: neat };
   assert.ok(!layoutQualityNotes(standard, blankAfter, layoutSections(standard, blankAfter.sections, neat)).some(note => note.includes("沒有大標")));
   // Full essays only: 15 points and up, or 20+ lines when the score is unknown; full-width digits count.
-  assert.deepEqual(notesOf([lead1, ...body(110), close(25)], "一、試說明之。（15分）"), [shortLead, shortClose(2)]);
+  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], "一、試說明之。（15分）"), [longLead(3)]);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（14分）"), []);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（１０分）"), []);
-  assert.deepEqual(notesOf([lead1, ...body(110), close(25)], "一、試說明之。（二十五分）"), [shortLead, shortClose(2)]);
+  assert.deepEqual(notesOf([lead3, ...body(110), close(25)], "一、試說明之。（二十五分）"), [longLead(3)]);
   assert.deepEqual(notesOf([lead1, ...body(150), close(25)], "一、試說明之。（十分）"), []);
   assert.deepEqual(notesOf([lead1, ...body(130), close(25)]), []);
-  assert.deepEqual(notesOf([lead2, ...body(130), close(25)]), [shortClose(2)]);
-  assert.deepEqual(notesOf([lead1, ...body(150), close(25)]), [shortLead, shortClose(2)]);
+  assert.deepEqual(notesOf([lead2, ...body(130), close(25)]), []);
+  assert.deepEqual(notesOf([lead3, ...body(150), close(25)]), [longLead(3)]);
   // A single section is left to the flattened-structure note; answers without neatFormat get nothing.
   assert.deepEqual(notesOf([{ id: "x", text: "甲".repeat(500) }], q25), []);
   assert.deepEqual(notesOf([lead1, ...body(110), close(25)], q25, {}), []);

@@ -10,6 +10,7 @@ import { FileStore } from "../src/storage.js";
 import { CloudStore } from "../src/cloud-storage.js";
 import { MemoryFirestore, MemoryStorage } from "./fakes/cloud-clients.js";
 import { withBaseTemplateDefault } from "../scripts/check-mcp-contract.js";
+import { REVIEW_INSTRUCTION } from "../src/agent-guidance.js";
 
 const general = "police_information_essay", paper = "police_information_essay_165", legacyPaper = "police_information_essay_166";
 async function withClient(run: (client: Client, store: FileStore) => Promise<void>) {
@@ -106,7 +107,7 @@ test("MCP names, load messages, defaults, tool descriptions and workflow identif
     const tool = tools.find(t => t.name === name)!;
     assert.equal((tool.inputSchema.properties!.templateId as { default: string }).default, paper);
   }
-  for (const tool of tools) assert.doesNotMatch(tool.description ?? "", /166/);
+  for (const tool of tools) assert.doesNotMatch((tool.description ?? "").replace(REVIEW_INSTRUCTION, ""), /166/);
   assert.match(client.getInstructions()!, /165 原稿紙模板/);
   assert.doesNotMatch(client.getInstructions()!, /166 原稿紙/);
   const workflow = await client.readResource({ uri: "essay://instructions/workflow" });
