@@ -6,7 +6,7 @@
 
 ## 部署目的與不變條件
 
-- 保留現有 Police Essay MCP 的 `/mcp`、`/health`、`/readyz`、原始工具名稱、MCP Apps UI、`ui://widget/police-essay-answer-sheet-v12.html`、預覽與 expectedVersion 編輯語義。
+- 保留現有 Police Essay MCP 的 `/mcp`、`/health`、`/readyz`、原始工具名稱、MCP Apps UI、`ui://widget/police-essay-answer-sheet-v13.html`、預覽與 expectedVersion 編輯語義。
 - 保留正常申論紙與 `police_information_essay_165` 兩種流程；舊 ID `police_information_essay_166` 仍可讀取既有答案，兩個 ID 的顯示名稱均為「165 原稿紙・兩頁申論」；不得以相似字型替代 MOE 5.1 字型通過 165 紙驗收。
 - **沿用既有 ChatGPT App**，但先建立獨立 staging。舊 MCP 保持上線；取得並驗證新服務網址、身份驗證及 165 正式輸出後才安排切換。
 - 測試禁止讀取或遷移舊主機的私人答案、舊金鑰、cookie 或檔案；資料遷移另行備份與獲得使用者確認。
