@@ -704,7 +704,7 @@ function publicToolResult(result: unknown) {
 }
 
 export function createEssayMcpServer(store: EssayStore = new FileStore(),
-  options: { readOnly?: boolean; scopes?: string[]; downloadBaseUrl?: string } = {}): McpServer {
+  options: { readOnly?: boolean; scopes?: string[]; downloadBaseUrl?: string; advertiseScopes?: boolean } = {}): McpServer {
   const server = new McpServer(
     {
       name: "police-essay-answer-sheet",
@@ -719,7 +719,8 @@ export function createEssayMcpServer(store: EssayStore = new FileStore(),
     const description = TOOL_DESCRIPTIONS[name] ?? base.description;
     const config = { ...base, description: FORMATTING_TOOLS.has(name) ? (description ?? "") + PAPER_FORMAT_NOTE : description };
     return server.registerTool(name, options.scopes ? { ...config, _meta: { ...config._meta,
-      securitySchemes: [{ type: "oauth2", scopes: [...new Set(["essay.read", toolScope(name)])] }],
+      // Granted scopes are never requested from the provider, so tools then ask only for a signed-in user.
+      securitySchemes: [{ type: "oauth2", scopes: options.advertiseScopes === false ? [] : [...new Set(["essay.read", toolScope(name)])] }],
     } } : config, (async (...args: unknown[]) => {
       try {
         const result = await (callback as (...args: unknown[]) => unknown)(...args);

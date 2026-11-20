@@ -16,6 +16,7 @@ import { createOAuthVerifier, oauthConfiguration, OAuthError, oauthChallenge,
 export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = process.env) {
   const oauth = oauthConfiguration(env);
   const verifyOAuth = oauth.mode !== "bearer" ? createOAuthVerifier(oauth) : undefined;
+  const advertiseScopes = !(oauth.mode !== "bearer" && oauth.grantedScopes.length);
   const port = Number.parseInt(env.PORT ?? "8787", 10);
   const host = env.HOST ?? "127.0.0.1";
   const maxBodyBytes = Number.parseInt(env.MCP_MAX_BODY_BYTES ?? "2000000", 10);
@@ -105,16 +106,18 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
 
   /**
    * GET /downloads/<handle>/<file name>: the export as an attachment. The random handle is the capability, as with
-   * a signed URL, and expires with the export (24 h); links are only issued to the default (non-OAuth) owner.
+   * a signed URL, and expires with the export (24 h). OAuth users' links carry their owner key
+   * (/u/<owner>/downloads/...) so the export is looked up in that user's own store; the handle stays the capability.
    */
-  async function serveDownload(request: IncomingMessage, response: ServerResponse, handle: string, requestedName: string): Promise<void> {
+  async function serveDownload(request: IncomingMessage, response: ServerResponse, handle: string, requestedName: string,
+    source: EssayStore = store): Promise<void> {
     if (originDenied(request)) {
       reject(response, 403, "Origin not allowed");
       return;
     }
     let artifact: Awaited<ReturnType<EssayStore["readExport"]>>;
     try {
-      artifact = await store.readExport(handle);
+      artifact = await source.readExport(handle);
     } catch (error) {
       if (isStoreNotFound(error)) {
         reject(response, 404, "Download not found or expired");
@@ -188,7 +191,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
         return { scope: principal.scopes.includes("essay.write") ? "owner" : "read", principal };
       } catch (error) {
         const failure = error instanceof OAuthError ? error : new OAuthError();
-        response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, failure, !!request.headers.authorization));
+        response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, failure, !!request.headers.authorization, advertiseScopes));
         reject(response, failure.status, failure.message);
         return;
       }
@@ -225,7 +228,8 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
     const requestStore = principal && store.forPrincipal
       ? store.forPrincipal(principal.ownerKey, !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export")) : store;
     const server = createEssayMcpServer(requestStore, principal
-      ? { readOnly: !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export"), scopes: principal.scopes }
+      ? { readOnly: !principal.scopes.includes("essay.write") && !principal.scopes.includes("essay.export"), scopes: principal.scopes, advertiseScopes,
+        downloadBaseUrl: publicBaseUrl && store.forPrincipal && principal.scopes.includes("essay.export") ? `${publicBaseUrl}/u/${principal.ownerKey}` : undefined }
       : { readOnly: scope === "read", downloadBaseUrl: scope === "owner" ? publicBaseUrl : undefined });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     response.on("close", () => {
@@ -281,7 +285,7 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
             if (uri.protocol === "essay:" && uri.hostname.toLowerCase() === "exports") required = "essay.export";
           }
           if (!principal.scopes.includes(required)) {
-            response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, new OAuthError(403, required)));
+            response.setHeader("www-authenticate", oauthChallenge(oauth.resource!, new OAuthError(403, required), false, advertiseScopes));
             reject(response, 403, "insufficient_scope"); return;
           }
         }
@@ -328,11 +332,15 @@ export function createHttpHandler(store: EssayStore, env: NodeJS.ProcessEnv = pr
       response.end(JSON.stringify(protectedResourceMetadata(oauth)));
       return;
     }
-    const download = /^\/downloads\/([0-9a-f-]{36})\/([^/]+)$/.exec(requestUrl.pathname);
-    // OAuth principals get no links, so the route is off in pure OAuth mode.
-    if (download && publicBaseUrl && oauth.mode !== "oauth" && (request.method === "GET" || request.method === "HEAD")) {
+    const download = /^\/(?:u\/([0-9a-f]{64})\/)?downloads\/([0-9a-f-]{36})\/([^/]+)$/.exec(requestUrl.pathname);
+    // Owner-less links belong to the fixed bearer owner (off in pure OAuth mode); /u/<owner>/ links to an OAuth user's store.
+    const downloadStore = !download ? undefined : download[1]
+      // Not read-only: CloudStore refuses readExport on read credentials; serveDownload only ever calls readExport.
+      ? (oauth.mode !== "bearer" && store.forPrincipal ? store.forPrincipal(download[1], false) : undefined)
+      : (oauth.mode !== "oauth" ? store : undefined);
+    if (download && downloadStore && publicBaseUrl && (request.method === "GET" || request.method === "HEAD")) {
       try {
-        await serveDownload(request, response, download[1], download[2]);
+        await serveDownload(request, response, download[2], download[3], downloadStore);
       } catch {
         reject(response, 500, "Download failed");
       }

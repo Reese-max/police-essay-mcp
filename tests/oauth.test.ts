@@ -305,6 +305,70 @@ test("scope string and scp array are supported; valid scopeless JWTs return 403"
   await assert.rejects(verify(jwt({ scope: undefined }, {}, rotated.privateKey)), (e: unknown) => e instanceof OAuthError && e.status === 401);
 });
 
+test("OAUTH_GRANTED_SCOPES: providers without essay scopes get them for every verified user, kept apart per user", async () => {
+  const base = { AUTH_MODE: "oauth", OAUTH_RESOURCE_URL: resource, OAUTH_ISSUERS: issuer, OAUTH_JWKS_URI: issuer + "/jwks" };
+  assert.deepEqual(oauthConfiguration(base).mode !== "bearer" && oauthConfiguration(base).grantedScopes, []);
+  assert.deepEqual((oauthConfiguration({ ...base, OAUTH_GRANTED_SCOPES: "essay.read, essay.write essay.export" }) as { grantedScopes: string[] }).grantedScopes,
+    ["essay.read", "essay.write", "essay.export"]);
+  assert.throws(() => oauthConfiguration({ ...base, OAUTH_GRANTED_SCOPES: "essay.read openid" }), /may only list/);
+  assert.throws(() => oauthConfiguration({ ...base, OAUTH_GRANTED_SCOPES: "essay.write" }), /must include essay.read/);
+  const verify = createOAuthVerifier({ issuers: [issuer], resource, jwksUri: "https://issuer.example/jwks", grantedScopes: ["essay.read", "essay.write", "essay.export"] }, {
+    now: () => time, fetch: async () => new Response(JSON.stringify({ keys: [{ ...rsa.publicKey.export({ format: "jwk" }), kid: "rsa" }] })) });
+  assert.deepEqual((await verify(jwt({ scope: "openid profile email offline_access" }))).scopes, ["essay.read", "essay.write", "essay.export"]);
+  await assert.rejects(verify(jwt({ scope: "openid", aud: "https://other.example/mcp" })), (e: unknown) => e instanceof OAuthError && e.status === 401);
+
+  const jwks = await jwksFixture();
+  const firestore = new MemoryFirestore(), storage = new MemoryStorage();
+  const store = new CloudStore({ firestore: firestore.client(), storage: storage.client(), environment: "staging", ownerKey: "0".repeat(64), artifactBucket: "synthetic-artifacts" });
+  const server = createServer(createHttpHandler(store, { AUTH_MODE: "oauth", OAUTH_ISSUERS: issuer, OAUTH_RESOURCE_URL: resource, OAUTH_JWKS_URI: jwks.uri,
+    OAUTH_GRANTED_SCOPES: "essay.read essay.write essay.export" }));
+  const url = await listen(server);
+  const clients: Client[] = [];
+  try {
+    assert.deepEqual(await (await fetch(url + "/.well-known/oauth-protected-resource")).json(),
+      { resource, authorization_servers: [issuer], bearer_methods_supported: ["header"] });
+    const challenge = (await fetch(url + "/mcp")).headers.get("www-authenticate")!;
+    assert.equal(challenge, 'Bearer resource_metadata="https://essay.example/.well-known/oauth-protected-resource"');
+    const alice = await connect(url, jwt({ scope: "openid profile email offline_access" })); clients.push(alice);
+    const tools = (await alice.listTools()).tools;
+    assert.equal(tools.length, 32);
+    assert.deepEqual((tools.find(t => t.name === "create_answer")!._meta as { securitySchemes: unknown }).securitySchemes, [{ type: "oauth2", scopes: [] }]);
+    const created = await alice.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "Alice only", sections: [{ id: "s1", text: "甲。" }] } });
+    assert.equal(created.isError, undefined);
+    assert.ok(JSON.stringify((await alice.callTool({ name: "list_answers", arguments: {} })).structuredContent).includes("Alice only"));
+    const bob = await connect(url, jwt({ sub: "bob", scope: "openid" })); clients.push(bob);
+    const listed = await bob.callTool({ name: "list_answers", arguments: {} });
+    assert.ok(!JSON.stringify(listed.structuredContent).includes("Alice only"), "another user's answers stay invisible");
+  } finally {
+    for (const client of clients) await client.close();
+    await close(server); await close(jwks.server);
+  }
+});
+
+test("OAuth users get download links into their own store; another user's key or a bare link does not reach it", async () => {
+  const jwks = await jwksFixture();
+  const firestore = new MemoryFirestore(), storage = new MemoryStorage();
+  const store = new CloudStore({ firestore: firestore.client(), storage: storage.client(), environment: "staging", ownerKey: "0".repeat(64), artifactBucket: "synthetic-artifacts" });
+  const server = createServer();
+  const url = await listen(server);
+  server.on("request", createHttpHandler(store, { AUTH_MODE: "oauth", OAUTH_ISSUERS: issuer, OAUTH_RESOURCE_URL: resource, OAUTH_JWKS_URI: jwks.uri,
+    OAUTH_GRANTED_SCOPES: "essay.read essay.write essay.export", ESSAY_PUBLIC_BASE_URL: url }));
+  const alice = await connect(url, jwt({ scope: "openid" }));
+  try {
+    const created = await alice.callTool({ name: "create_answer", arguments: { templateId: "police_information_essay", title: "下載", sections: [{ id: "s1", text: "甲乙丙。" }] } });
+    const answerId = (created.structuredContent as { answer: { id: string } }).answer.id;
+    const exported = await alice.callTool({ name: "export_answer", arguments: { answerId, formats: ["txt"] } });
+    const link = (exported.structuredContent as { files: Array<{ downloadUrl?: string }> }).files[0].downloadUrl!;
+    const aliceKey = principalOwnerKey(issuer, "alice");
+    assert.ok(link.startsWith(url + "/u/" + aliceKey + "/downloads/"), link);
+    const ok = await fetch(link); assert.equal(ok.status, 200); assert.match(await ok.text(), /甲乙丙/);
+    assert.equal((await fetch(link.replace(aliceKey, principalOwnerKey(issuer, "bob")))).status, 404, "another owner's store has no such export");
+    assert.equal((await fetch(link.replace("/u/" + aliceKey, ""))).status, 401, "bare links are off in pure OAuth mode");
+  } finally {
+    await alice.close(); await close(server); await close(jwks.server);
+  }
+});
+
 test("OAUTH_REQUIRE_AT_JWT is opt-in and configurable backoff defaults to 30 seconds", async () => {
   const env = { AUTH_MODE: "oauth", OAUTH_RESOURCE_URL: resource, OAUTH_ISSUERS: issuer, OAUTH_JWKS_URI: issuer + "/jwks" };
   const defaults = oauthConfiguration(env);
