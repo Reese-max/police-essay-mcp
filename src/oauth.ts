@@ -39,7 +39,13 @@ export function oauthConfiguration(env = process.env) {
   const jwksUri = trustedUrl(env.OAUTH_JWKS_URI ?? "");
   const refreshBackoffMs = Number(env.OAUTH_JWKS_BACKOFF_SECONDS ?? "30") * 1000;
   if (!Number.isFinite(refreshBackoffMs) || refreshBackoffMs <= 0 || refreshBackoffMs > 300_000) throw new Error("OAUTH_JWKS_BACKOFF_SECONDS must be between 1 and 300.");
-  return { mode: mode as "oauth" | "both", resource, issuers, jwksUri, refreshBackoffMs,
+  // Providers without custom scopes (e.g. WorkOS AuthKit issues only openid/profile/email): every verified user gets these,
+  // which is safe because CloudStore keeps each user's answers apart by issuer+sub. Unset keeps scopes from the token only.
+  const grantedScopes = (env.OAUTH_GRANTED_SCOPES ?? "").split(/[\s,]+/u).filter(Boolean);
+  if (grantedScopes.some(scope => !(OAUTH_SCOPES as readonly string[]).includes(scope)))
+    throw new Error("OAUTH_GRANTED_SCOPES may only list essay.read, essay.write and essay.export.");
+  if (grantedScopes.length && !grantedScopes.includes("essay.read")) throw new Error("OAUTH_GRANTED_SCOPES must include essay.read.");
+  return { mode: mode as "oauth" | "both", resource, issuers, jwksUri, refreshBackoffMs, grantedScopes,
     requireAtJwt: strictBoolean(env.OAUTH_REQUIRE_AT_JWT, "OAUTH_REQUIRE_AT_JWT") };
 }
 function strictBoolean(value: string | undefined, name: string): boolean {
@@ -47,17 +53,18 @@ function strictBoolean(value: string | undefined, name: string): boolean {
   if (value === "true") return true;
   throw new Error(`${name} must be "true" or "false".`);
 }
-export function protectedResourceMetadata(config: { resource: string; issuers: string[] }) {
+export function protectedResourceMetadata(config: { resource: string; issuers: string[]; grantedScopes?: string[] }) {
+  // Granted scopes are not requested from the provider, so they are not advertised either.
   return { resource: config.resource, authorization_servers: config.issuers,
-    scopes_supported: [...OAUTH_SCOPES], bearer_methods_supported: ["header"] };
+    ...(config.grantedScopes?.length ? {} : { scopes_supported: [...OAUTH_SCOPES] }), bearer_methods_supported: ["header"] };
 }
-export function oauthChallenge(resource: string, error?: OAuthError, invalidToken = false): string {
+export function oauthChallenge(resource: string, error?: OAuthError, invalidToken = false, advertiseScope = true): string {
   const metadata = new URL("/.well-known/oauth-protected-resource", resource).href;
-  return 'Bearer resource_metadata="' + metadata + '", scope="' + (error?.scope ?? "essay.read")
-    + '"' + (error?.status === 403 ? ', error="insufficient_scope"' : invalidToken ? ', error="invalid_token"' : '');
+  return 'Bearer resource_metadata="' + metadata + '"' + (advertiseScope ? ', scope="' + (error?.scope ?? "essay.read") + '"' : '')
+    + (error?.status === 403 ? ', error="insufficient_scope"' : invalidToken ? ', error="invalid_token"' : '');
 }
 type Jwk = JsonWebKey & { kid?: string; alg?: string; use?: string; key_ops?: string[] };
-export function createOAuthVerifier(config: { issuers: string[]; resource: string; jwksUri: string; refreshBackoffMs?: number; requireAtJwt?: boolean }, options: {
+export function createOAuthVerifier(config: { issuers: string[]; resource: string; jwksUri: string; refreshBackoffMs?: number; requireAtJwt?: boolean; grantedScopes?: string[] }, options: {
   now?: () => number; ttlMs?: number; timeoutMs?: number; fetch?: typeof fetch;
 } = {}) {
   const now = options.now ?? Date.now;
@@ -130,7 +137,8 @@ export function createOAuthVerifier(config: { issuers: string[]; resource: strin
         header.alg === "ES256" ? { key, dsaEncoding: "ieee-p1363" } : key, signature)) throw new OAuthError();
       const scopeClaims: unknown[] = typeof claims.scope === "string" ? claims.scope.split(/\s+/)
         : Array.isArray(claims.scp) ? claims.scp : [];
-      const scopes = scopeClaims.filter((s): s is string => typeof s === "string" && OAUTH_SCOPES.includes(s as typeof OAUTH_SCOPES[number]));
+      const scopes = [...new Set([...scopeClaims.filter((s): s is string => typeof s === "string" && OAUTH_SCOPES.includes(s as typeof OAUTH_SCOPES[number])),
+        ...(config.grantedScopes ?? [])])];
       if (!scopes.length) throw new OAuthError(403);
       return { issuer: claims.iss, sub: claims.sub, ownerKey: principalOwnerKey(claims.iss, claims.sub), scopes };
     } catch (error) { throw error instanceof OAuthError ? error : new OAuthError(); }
