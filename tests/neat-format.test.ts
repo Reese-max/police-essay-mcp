@@ -95,6 +95,12 @@ test("pros and cons written as sentences are flagged; keyword lists pass", () =>
   const keywords = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)優點：低風險、快速初篩、便於比對。" }, { text: "(二)缺點：難證實際行為、易受混淆。" }] }]);
   assert.doesNotMatch(keywords.notes, /寫成句子/);
   assert.doesNotMatch(notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)優點：不執行樣本，感染風險低。" }, { text: "(二)缺點：甲、乙。" }] }], {}).notes, /寫成句子/, "older answers are not held to it");
+
+  // Items listed under a bare 優點／缺點 point are held to the same keyword form; a short "靜態：" label is allowed.
+  const nested = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)優點：" }, { text: "1.靜態：無感染風險，可離線重複分析。" }, { text: "2.動態：見真實行為、還原功能。" }, { text: "(二)缺點：" }, { text: "1.靜態：難見執行行為、易受加殼影響。" }, { text: "2.動態：須隔離環境；可能遭規避。" }] }]);
+  assert.match(nested.notes, /「1\.靜態：無感染風險，可離線」、「2\.動態：須隔離環境；可能遭」寫成句子/);
+  const nestedOk = notes([{ id: "a", heading: "一、甲：", paragraphs: [{ text: "(一)優點：" }, { text: "1.靜態：無感染風險、可離線重複分析。" }, { text: "2.動態：見真實行為、還原功能。" }, { text: "(二)適用：" }, { text: "1.初篩：先比對雜湊值，再決定是否執行。" }, { text: "2.鑑定：須留存紀錄。" }] }]);
+  assert.doesNotMatch(nestedOk.notes, /寫成句子/, "only items under 優點／缺點 are checked");
 });
 
 test("review rv5: independent book notes, headless middle text is body, full-width brackets", () => {

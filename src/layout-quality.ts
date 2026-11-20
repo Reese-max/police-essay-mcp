@@ -398,13 +398,24 @@ function analyzeLayout(template: AnswerTemplate, answer: AnswerDocument, report:
     }
     const lone = [...children.values()].filter(entry => entry.count === 1);
     if (lone.length) bookNotes.push(`格式提醒：${lone.slice(0, 3).map(entry => start(firstText(paragraphs[entry.first]))).join("、")}${lone.length > 3 ? `等 ${lone.length} 處` : ""}是上一層底下唯一的子項；子項至少兩項才分層，只有一項就併回上一層的內文或再補一項。`);
-    // Pros and cons are keyword lists ("優點：甲、乙、丙。"), not sentences.
-    const prosCons = paragraphs.filter(paragraph => {
-      const text = firstText(paragraph).trim();
-      const rest = text.slice(classifyNumbering(text)?.prefix.length ?? 0).trim();
-      const found = /^(?:優點|缺點|優勢|劣勢|限制)[：:](.+)$/u.exec(rest);
-      return !!found && /[，,；;]/u.test(found[1]);
-    });
+    // Pros and cons are keyword lists ("優點：甲、乙、丙。"), not sentences: on the 優點／缺點 line itself, and in the
+    // items listed under a bare "(一)優點：" (each may carry a short label such as "1.靜態：").
+    const PROS_CONS = /^(?:優點|缺點|優勢|劣勢|限制)[：:]?/u;
+    const restOf = (text: string) => text.slice(classifyNumbering(text)?.prefix.length ?? 0).trim();
+    const sentence = (text: string) => /[，,；;]/u.test(text);
+    const prosCons: typeof paragraphs = [];
+    let under: number | undefined;
+    for (const item of hierarchyItems) {
+      const paragraph = paragraphs[item.order];
+      const rest = restOf(firstText(paragraph).trim());
+      if (under !== undefined && item.numbering.level <= under) under = undefined;
+      const label = PROS_CONS.exec(rest);
+      if (label) {
+        const tail = rest.slice(label[0].length).trim();
+        if (tail) { if (sentence(tail)) prosCons.push(paragraph); }
+        else under = item.numbering.level;
+      } else if (under !== undefined && sentence(rest.replace(/^[^：:，,；;。]{1,8}[：:]/u, ""))) prosCons.push(paragraph);
+    }
     if (prosCons.length) bookNotes.push(`格式提醒：${prosCons.slice(0, 3).map(paragraph => start(firstText(paragraph))).join("、")}寫成句子；優缺點請以頓號並列關鍵詞，寫成「優點：甲、乙、丙。」「缺點：丁、戊、己。」，不用逗號、分號串成句子。`);
     if (levels.size > 4) bookNotes.push(`格式提醒：編號用了 ${levels.size} 層；最多四層 一、→(一)→1.→⑴，儘量不寫到 a.b.c.，請合併最深一層或改寫成句子。`);
     // 50招 p.8: one 大標 per point. Body text between the lead and closing sections needs its own heading.
